@@ -9,7 +9,7 @@ TBD.
 ## Setup Instructions and Submodules
 
 1. Clone the repository with all submodules recursively:       
-`git clone https://github.com/cg-tuwien/TAA_STAR.git . --recursive` (to check out into `.`)
+`git clone https://github.com/cg-tuwien/TAA-STAR.git . --recursive` (to check out into `.`)
 2. Open `taa.sln` with Visual Studio 2019, set `taa` as the startup project, build and run
 
 You might want to have all submodules checked-out to their `master` branch. You can do so using:      
