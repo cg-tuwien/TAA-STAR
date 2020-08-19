@@ -1,0 +1,35 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.28531.58
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "gears-vk", "gears_vk\visual_studio\gears_vk\gears-vk.vcxproj", "{602F842F-50C1-466D-8696-1707937D8AB9}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "taa", "taa.vcxproj", "{85DA2900-B09A-4479-9BBB-58DA19716B43}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug_Vulkan|x64 = Debug_Vulkan|x64
+		Publish_Vulkan|x64 = Publish_Vulkan|x64
+		Release_Vulkan|x64 = Release_Vulkan|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Debug_Vulkan|x64.ActiveCfg = Debug_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Debug_Vulkan|x64.Build.0 = Debug_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Publish_Vulkan|x64.ActiveCfg = Publish_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Publish_Vulkan|x64.Build.0 = Publish_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Release_Vulkan|x64.ActiveCfg = Release_Vulkan|x64
+		{602F842F-50C1-466D-8696-1707937D8AB9}.Release_Vulkan|x64.Build.0 = Release_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Debug_Vulkan|x64.ActiveCfg = Debug_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Debug_Vulkan|x64.Build.0 = Debug_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Publish_Vulkan|x64.ActiveCfg = Publish_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Publish_Vulkan|x64.Build.0 = Publish_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Release_Vulkan|x64.ActiveCfg = Release_Vulkan|x64
+		{85DA2900-B09A-4479-9BBB-58DA19716B43}.Release_Vulkan|x64.Build.0 = Release_Vulkan|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A8961D43-F08D-46E3-B3BB-29BA8AA39C3E}
+	EndGlobalSection
+EndGlobal

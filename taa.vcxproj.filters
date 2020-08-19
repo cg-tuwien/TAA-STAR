@@ -1,0 +1,74 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="assets">
+      <UniqueIdentifier>{24240a51-8fdb-478f-8c1c-27cbca7adc3f}</UniqueIdentifier>
+      <SourceControlFiles>False</SourceControlFiles>
+    </Filter>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{1d345cf5-0451-42e0-83a8-6a3f5a7203ca}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="precompiled_headers">
+      <UniqueIdentifier>{a498e4bc-580a-49d7-9a8e-ec57803fdcd4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="assets\terrain">
+      <UniqueIdentifier>{fed4a046-39e4-46e5-b573-7fa5fc2b6e77}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\cg_stdafx.cpp">
+      <Filter>precompiled_headers</Filter>
+    </ClCompile>
+    <ClCompile Include="source\main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\cg_stdafx.hpp">
+      <Filter>precompiled_headers</Filter>
+    </ClInclude>
+    <ClInclude Include="source\cg_targetver.hpp">
+      <Filter>precompiled_headers</Filter>
+    </ClInclude>
+    <ClInclude Include="source\helper_functions.hpp" />
+    <ClInclude Include="source\taa.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="gears_vk\assets\sponza_and_terrain.fscene">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="shaders\sky_gradient.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\sky_gradient.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\blinnphong_and_normal_mapping.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\transform_and_pass_on.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="gears_vk\assets\1st_party\models\sphere.obj">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="shaders\lighting_pass.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\lighting_pass.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\taa.comp">
+      <Filter>shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
+      <Filter>assets\terrain</Filter>
+    </Image>
+    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg">
+      <Filter>assets\terrain</Filter>
+    </Image>
+    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg">
+      <Filter>assets\terrain</Filter>
+    </Image>
+  </ItemGroup>
+</Project>
