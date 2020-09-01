@@ -34,7 +34,7 @@
     <ClInclude Include="source\helper_functions.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="gears_vk\assets\sponza_and_terrain.fscene" />
+    <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\lighting_pass.frag" />
     <None Include="shaders\lighting_pass.vert" />

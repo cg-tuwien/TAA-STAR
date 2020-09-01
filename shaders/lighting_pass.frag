@@ -87,7 +87,7 @@ layout(set = 1, binding = 0) uniform MatricesAndUserInput {
 	mat4 mProjMatrix;
 	// transformation matrix which tranforms to camera's position
 	mat4 mCamPos;
-	// x = tessellation factor, y = displacement strength, z and w unused
+	// x = tessellation factor, y = displacement strength, z = use lighting, w unused
 	vec4 mUserInput;
 } uboMatUsr;
 
@@ -146,6 +146,14 @@ vec4 sample_from_specular_texture(int matIndex, vec2 uv)
 {
 	int texIndex = materialsBuffer.materials[matIndex].mSpecularTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mSpecularTexOffsetTiling;
+	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
+	return texture(textures[texIndex], texCoords);
+}
+
+vec4 sample_from_emissive_texture(int matIndex, vec2 uv) // ac
+{
+	int texIndex = materialsBuffer.materials[matIndex].mEmissiveTexIndex;
+	vec4 offsetTiling = materialsBuffer.materials[matIndex].mEmissiveTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
 	return texture(textures[texIndex], texCoords);
 }
@@ -255,25 +263,46 @@ void main()
 
 	vec3  diffTexColor = sample_from_diffuse_texture(matIndex, uv).rgb;
 	float specTexValue = sample_from_specular_texture(matIndex, uv).r;
+	vec3  emissiveTexColor = sample_from_emissive_texture(matIndex, uv).rgb; // ac
+
+	// ac: hack, because emissiveTexColor is white now, if there is no texture assigned
+	//if (emissiveTexColor == vec3(1)) emissiveTexColor = vec3(0);
 
 	// Initialize all the colors:
 	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb * diffTexColor;
-	vec3 emissive   = materialsBuffer.materials[matIndex].mEmissiveColor.rgb;
+	//vec3 emissive   = materialsBuffer.materials[matIndex].mEmissiveColor.rgb;
+	vec3 emissive   = materialsBuffer.materials[matIndex].mEmissiveColor.rgb * emissiveTexColor; // ac
+	//vec3 emissive   = emissiveTexColor; // ac
 	vec3 diff       = materialsBuffer.materials[matIndex].mDiffuseReflectivity.rgb * diffTexColor;
 	vec3 spec       = materialsBuffer.materials[matIndex].mSpecularReflectivity.rgb * specTexValue;
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
 
-	// Calculate ambient illumination:
-	vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
-	for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
-		ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
+	if (uboMatUsr.mUserInput.z != 0) {
+		// Calculate ambient illumination:
+		vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
+		for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
+			ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
+		}
+
+		// Calculate diffuse and specular illumination from all light sources:
+		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
+
+		// Add all together:
+		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, 1.0);
+
+		// FIXME: emissive is wrong (bus windows, light rods have 1,1,1 ?)
+		// -> there is a emissive texture!
+
+	} else {
+		//oFragColor = vec4(/* diff + */ emissive, 1.0);
+		oFragColor = vec4(diff, 1.0);
+
+		//oFragColor = vec4(normalVS, 1.0);
+
+		//float alpha = sample_from_diffuse_texture(matIndex, uv).a;
+		//oFragColor = vec4(diffTexColor, alpha);
+		//if (alpha < 1.0) oFragColor = vec4(1,0,1,1);
 	}
-
-	// Calculate diffuse and specular illumination from all light sources:
-	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
-
-	// Add all together:
-	oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, 1.0);
 }
 // -------------------------------------------------------
 

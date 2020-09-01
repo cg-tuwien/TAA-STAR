@@ -6,8 +6,9 @@
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 
-layout(early_fragment_tests) in;
-layout(post_depth_coverage) in;
+// ac: disable this, otherwise discarded fragments write to depth buffer!
+//layout(early_fragment_tests) in;
+//layout(post_depth_coverage) in;
 
 // ###### MATERIAL DATA ##################################
 // Material data struct definition:
@@ -96,7 +97,7 @@ layout(set = 1, binding = 0) uniform MatricesAndUserInput {
 	mat4 mProjMatrix;
 	// transformation matrix which tranforms to camera's position
 	mat4 mCamPos;
-	// x = tessellation factor, y = displacement strength, z and w unused
+	// x = tessellation factor, y = displacement strength, z = use lighting, w unused
 	vec4 mUserInput;
 } uboMatUsr;
 
@@ -156,6 +157,17 @@ vec4 sample_from_normals_texture()
 	return texture(textures[texIndex], texCoords);
 }
 
+// ac:
+vec4 sample_from_diffuse_texture()
+{
+	int matIndex = pushConstants.mMaterialIndex;
+	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
+	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
+	return texture(textures[texIndex], texCoords);
+}
+
+
 // Re-orthogonalizes the first vector w.r.t. the second vector (Gram-Schmidt process)
 vec3 re_orthogonalize(vec3 first, vec3 second)
 {
@@ -195,6 +207,9 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	// ac: discard transparent parts (hack to at least see transparency in the deferred shading setup - not really nice)
+	if (sample_from_diffuse_texture().a < 0.5) { discard; return; }
+
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	float l = length(normalVS.xy);
 	vec2 sphericalVS = vec2((l == 0) ? 0 : acos(clamp(normalVS.x / l, -1, 1)), asin(normalVS.z));

@@ -12,7 +12,7 @@
       <UniqueIdentifier>{a498e4bc-580a-49d7-9a8e-ec57803fdcd4}</UniqueIdentifier>
     </Filter>
     <Filter Include="assets\terrain">
-      <UniqueIdentifier>{fed4a046-39e4-46e5-b573-7fa5fc2b6e77}</UniqueIdentifier>
+      <UniqueIdentifier>{f36a9860-d83a-4a9f-a747-a02ecec28e0e}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -32,9 +32,6 @@
     <ClInclude Include="source\taa.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="gears_vk\assets\sponza_and_terrain.fscene">
-      <Filter>assets</Filter>
-    </None>
     <None Include="shaders\sky_gradient.frag">
       <Filter>shaders</Filter>
     </None>
@@ -58,6 +55,9 @@
     </None>
     <None Include="shaders\taa.comp">
       <Filter>shaders</Filter>
+    </None>
+    <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene">
+      <Filter>assets</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

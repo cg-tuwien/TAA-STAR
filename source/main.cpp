@@ -46,7 +46,8 @@ class wookiee : public gvk::invokee
 		avk::buffer mNormalsBuffer;
 		avk::buffer mTangentsBuffer;
 		avk::buffer mBitangentsBuffer;
-		push_constant_data_per_drawcall mPushConstants;
+		//push_constant_data_per_drawcall mPushConstants;
+		std::vector<push_constant_data_per_drawcall> mPushConstantsVector;
 
 		std::vector<uint32_t> mIndices;
 		std::vector<glm::vec3> mPositions;
@@ -58,6 +59,8 @@ class wookiee : public gvk::invokee
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
 	static const uint32_t cConcurrentFrames = 3u;
+
+	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
 
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
@@ -85,7 +88,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_matrices_and_user_input()
 	{
 		// Update the matrices in render() because here we can be sure that mQuakeCam's updates of the current frame are available:
-		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, 0.f, 0.f } };
+		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, mUseLighting ? 1.f : 0.f, 0.f } };
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
@@ -107,6 +110,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update_lightsources()
 	{
+		// overwrite ambient and directional light
+		auto lights = helpers::get_lights();
+		int idxAmb = helpers::get_lightsource_type_begin_index(gvk::lightsource_type::ambient);
+		int idxDir = helpers::get_lightsource_type_begin_index(gvk::lightsource_type::directional);
+		lights[idxAmb] = gvk::lightsource::create_ambient(mAmbLight.col * mAmbLight.boost, "ambient light");
+		lights[idxDir] = gvk::lightsource::create_directional(mDirLight.dir, mDirLight.intensity * mDirLight.boost, "directional light");
+
 		lightsource_data updatedData {
 			glm::uvec4{
 				helpers::get_lightsource_type_begin_index(gvk::lightsource_type::ambient),
@@ -120,7 +130,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				helpers::get_lightsource_type_begin_index(gvk::lightsource_type::spot),
 				helpers::get_lightsource_type_end_index(gvk::lightsource_type::spot)
 			},
-			gvk::convert_for_gpu_usage<std::array<gvk::lightsource_gpu_data, 128>>(helpers::get_lights(), mQuakeCam.view_matrix())
+			gvk::convert_for_gpu_usage<std::array<gvk::lightsource_gpu_data, 128>>(lights /* helpers::get_lights() */, mQuakeCam.view_matrix())
 		};
 		updatedData.mRangesPointSpot[1] = updatedData.mRangesPointSpot[0] + std::min(updatedData.mRangesPointSpot[1] - updatedData.mRangesPointSpot[0], static_cast<uint32_t>(mMaxPointLightCount));
 		updatedData.mRangesPointSpot[3] = updatedData.mRangesPointSpot[2] + std::min(updatedData.mRangesPointSpot[3] - updatedData.mRangesPointSpot[2], static_cast<uint32_t>(mMaxSpotLightCount));
@@ -303,10 +313,93 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 	}
 
+	// ac: output info about the scene structure
+	void print_scene_debug_info(gvk::orca_scene_t& aScene, bool withMeshNames = false)
+	{
+		auto &models = aScene.models();
+		std::cout << "Scene debug info" << std::endl;
+		std::cout << "#models " << models.size() << std::endl;
+		for (int iModel = 0; iModel < models.size(); iModel++) {
+			auto assimpScene = models[iModel].mLoadedModel->handle();
+			std::cout << "Model #" << iModel << ", (" << assimpScene->mNumMeshes << " meshes):" << std::endl;
+			int meshCount = 0;
+			lukeMeshWalker(assimpScene, withMeshNames, assimpScene->mRootNode, meshCount);
+			std::cout << "Total # meshes in scene graph:" << meshCount << std::endl;
+		}
+	}
+
+	void lukeMeshWalker(const aiScene *aiscene, bool withMeshNames, aiNode *node, int &meshCount) {
+		std::string fullName = node->mName.C_Str();
+		aiNode *n = node->mParent;
+		while (n) {
+			fullName.insert(0, "/");
+			fullName.insert(0, n->mName.C_Str());
+			n = n ->mParent;
+		}
+		std::string meshNames;
+		std::cout << fullName << ":\t" << node->mNumMeshes << " meshes:";
+		for (size_t i = 0; i < node->mNumMeshes; i++) {
+			std::cout << " " << node->mMeshes[i];
+			if (withMeshNames) {
+				if (meshNames.length()) meshNames.append(",");
+				meshNames.append("\"");
+				meshNames.append(aiscene->mMeshes[node->mMeshes[i]]->mName.C_Str());
+				meshNames.append("\"");
+			}
+		}
+
+		if (withMeshNames) {
+			std::cout << " (" << meshNames << ")" << std::endl;
+		} else {
+			std::cout << std::endl;
+		}
+
+		meshCount += node->mNumMeshes;
+		for (size_t iChild = 0; iChild < node->mNumChildren; iChild++)
+			lukeMeshWalker(aiscene, withMeshNames, node->mChildren[iChild], meshCount);
+	}
+
+	// Create a vector of transformation matrices for each instance of a given mesh id inside a model
+	std::vector<glm::mat4> get_mesh_instance_transforms(const gvk::model &m, int meshId, const glm::mat4 &baseTransform) {
+		std::vector<glm::mat4> transforms;
+		collect_mesh_transforms_from_node(meshId, m->handle()->mRootNode, baseTransform, transforms);
+		return transforms;
+	}
+
+	void collect_mesh_transforms_from_node(int meshId, aiNode * node, const glm::mat4 &accTransform, std::vector<glm::mat4> &transforms) {
+		glm::mat4 newAccTransform = accTransform * aiMat4_to_glmMat4(node->mTransformation);
+
+		for (size_t i = 0; i < node->mNumMeshes; i++) {
+			if (node->mMeshes[i] == meshId) {
+				transforms.push_back(newAccTransform);
+			}
+		}
+		for (size_t iChild = 0; iChild < node->mNumChildren; iChild++)
+			collect_mesh_transforms_from_node(meshId, node->mChildren[iChild], newAccTransform, transforms);
+	}
+
+	static glm::mat4 aiMat4_to_glmMat4(const aiMatrix4x4 &ai) {
+		glm::mat4 g;
+		g[0][0] = ai[0][0]; g[0][1] = ai[1][0]; g[0][2] = ai[2][0]; g[0][3] = ai[3][0];
+		g[1][0] = ai[0][1]; g[1][1] = ai[1][1]; g[1][2] = ai[2][1]; g[1][3] = ai[3][1];
+		g[2][0] = ai[0][2]; g[2][1] = ai[1][2]; g[2][2] = ai[2][2]; g[2][3] = ai[3][2];
+		g[3][0] = ai[0][3]; g[3][1] = ai[1][3]; g[3][2] = ai[2][3]; g[3][3] = ai[3][3];
+		return g;
+	}
+
+
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
 	{
+		double t0 = glfwGetTime();
+		std::cout << "Loading scene..." << std::endl;
+
 		// Load a scene (in ORCA format) from file:
-		auto scene = gvk::orca_scene_t::load_from_file("assets/sponza_and_terrain.fscene", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace);
+		auto scene = gvk::orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace);
+
+		double tLoad = glfwGetTime();
+
+		// print scene graph
+		//print_scene_debug_info(scene);
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
 		helpers::set_terrain_material_config(scene);
@@ -316,6 +409,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		assert(cgb::settings::gEnableBufferDeviceAddress);
 		bufferUsageFlags |= vk::BufferUsageFlagBits::eShaderDeviceAddressKHR;
 #endif
+
+		std::cout << "Parsing scene\r"; std::cout.flush();
+
+
+		int counter = 0, counterlimit = 0; // 200;
 
 		// Get all the different materials from the whole scene:
 		auto distinctMaterialsOrca = scene->distinct_material_configs_for_all_models();
@@ -336,35 +434,88 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					continue;
 				}
 
+				//// Create a draw call for all those gathered meshes, once per ORCA-instance:
+				//for (size_t i = 0; i < modelData.mInstances.size(); ++i) {
+				//	auto [vertices, indices] = gvk::get_vertices_and_indices(modelRefAndMeshIndices);
+				//	auto texCoords = gvk::get_2d_texture_coordinates(modelRefAndMeshIndices, 0);
+				//	auto normals = gvk::get_normals(modelRefAndMeshIndices);
+				//	auto tangents = gvk::get_tangents(modelRefAndMeshIndices);
+				//	auto bitangents = gvk::get_bitangents(modelRefAndMeshIndices);
+				//	auto& ref = mDrawCalls.emplace_back(drawcall_data {
+				//		// Create all the GPU buffers, but don't fill yet:
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
+				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
+				//		push_constant_data_per_drawcall {
+				//			gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling),
+				//			materialIndex // Assign material at the given index to this draw call
+				//		}
+				//	});
+				//	ref.mIndices = std::move(indices);
+				//	ref.mPositions = std::move(vertices);
+				//	ref.mTexCoords = std::move(texCoords);
+				//	ref.mNormals = std::move(normals);
+				//	ref.mTangents = std::move(tangents);
+				//	ref.mBitangents = std::move(bitangents);
+				//}
+
 				// Create a draw call for all those gathered meshes, once per ORCA-instance:
+				// ac: scene graph fix, quick & dirty for now
+				// - use one drawcall per mesh (or more drawcalls if the mesh appears in multiple nodes); don't combine meshes
+				// TODO: combine meshes that are unique
+				// TODO: use instanced drawing?
 				for (size_t i = 0; i < modelData.mInstances.size(); ++i) {
-					auto [vertices, indices] = gvk::get_vertices_and_indices(modelRefAndMeshIndices);
-					auto texCoords = gvk::get_2d_texture_coordinates(modelRefAndMeshIndices, 0);
-					auto normals = gvk::get_normals(modelRefAndMeshIndices);
-					auto tangents = gvk::get_tangents(modelRefAndMeshIndices);
-					auto bitangents = gvk::get_bitangents(modelRefAndMeshIndices);
-					auto& ref = mDrawCalls.emplace_back(drawcall_data {
-						// Create all the GPU buffers, but don't fill yet:
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
-						gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
-						push_constant_data_per_drawcall {
-							gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling),
-							materialIndex // Assign material at the given index to this draw call
+					for (auto& pair : modelRefAndMeshIndices) {
+						for (auto meshIndex : std::get<std::vector<size_t>>(pair)) {
+
+							counter++;
+							std::cout << "Parsing scene " << counter << "\r"; std::cout.flush();
+
+							std::vector<size_t> tmpMeshIndexVector = { meshIndex };
+							std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> singleMesh_modelRefAndMeshIndices = { std::make_tuple(std::cref(modelData.mLoadedModel), tmpMeshIndexVector) };
+
+							// get all the common (per-mesh) properties
+							auto [vertices, indices] = gvk::get_vertices_and_indices(singleMesh_modelRefAndMeshIndices);
+							auto texCoords = gvk::get_2d_texture_coordinates(singleMesh_modelRefAndMeshIndices, 0);
+							auto normals = gvk::get_normals(singleMesh_modelRefAndMeshIndices);
+							auto tangents = gvk::get_tangents(singleMesh_modelRefAndMeshIndices);
+							auto bitangents = gvk::get_bitangents(singleMesh_modelRefAndMeshIndices);
+
+							// collect all the instances of the mesh (it may appear in multiple nodes, thus using different transforms)
+							auto modelBaseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
+							auto transforms = get_mesh_instance_transforms(modelData.mLoadedModel, meshIndex, modelBaseTransform);
+							//std::cout << "Mesh " << meshIndex << ": " << transforms.size() << " transforms" << std::endl;
+
+							// build push constants (per mesh-instance) vector
+							std::vector<push_constant_data_per_drawcall> pcvec;
+							for (auto tform : transforms) pcvec.push_back(push_constant_data_per_drawcall{ tform, materialIndex });
+
+							auto& ref = mDrawCalls.emplace_back(drawcall_data{
+								// Create all the GPU buffers, but don't fill yet:
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
+								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
+								pcvec
+								});
+							ref.mIndices = std::move(indices);
+							ref.mPositions = std::move(vertices);
+							ref.mTexCoords = std::move(texCoords);
+							ref.mNormals = std::move(normals);
+							ref.mTangents = std::move(tangents);
+							ref.mBitangents = std::move(bitangents);
 						}
-					});
-					ref.mIndices = std::move(indices);
-					ref.mPositions = std::move(vertices);
-					ref.mTexCoords = std::move(texCoords);
-					ref.mNormals = std::move(normals);
-					ref.mTangents = std::move(tangents);
-					ref.mBitangents = std::move(bitangents);
+					}
 				}
 			}
+			if (counter > counterlimit && counterlimit > 0) break;
 		}
+		std::cout << std::endl;
 
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
@@ -383,6 +534,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			avk::memory_usage::device, {},
 			avk::storage_buffer_meta::create_from_data(mMaterialData)
 		);
+
+		// ac: get the dir light source from the scene file
+		auto dirLights = scene->directional_lights();
+		if (dirLights.size()) {
+			mDirLight.dir       = dirLights[0].mDirection;
+			mDirLight.intensity = dirLights[0].mIntensity;
+			mDirLight.boost     = 1.f;
+		}
+
+
+		double tParse = glfwGetTime();
+		printf("Loading took %.1f sec, parsing took %.1f sec, total = %.1f sec\n", tLoad-t0, tParse-tLoad, tParse-t0);
 	}
 
 	void upload_materials_and_vertex_data_to_gpu()
@@ -502,22 +665,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// Record all the draw calls into this command buffer:
 			for (auto& drawCall : mDrawCalls) {
-				// Set model/material-specific data for this draw call in the form of push constants:
-				mModelsCommandBuffer[i]->push_constants(
-					mPipelineFirstPass->layout(),	// Push constants must match the pipeline's layout
-					drawCall.mPushConstants // Push the actual data
-				);
+				// Issue a separate drawcall for each transform stored in drawCall.mPushConstantsVector ; ac: TODO: make that an instanced draw ?
+				for (auto pushc : drawCall.mPushConstantsVector) {
 
-				// Bind the vertex input buffers in the right order (corresponding to the layout
-				// specifiers in the vertex shader) and issue the actual draw call:
-				mModelsCommandBuffer[i]->draw_indexed(
-					*drawCall.mIndexBuffer,
-					*drawCall.mPositionsBuffer,
-					*drawCall.mTexCoordsBuffer,
-					*drawCall.mNormalsBuffer,
-					*drawCall.mTangentsBuffer,
-					*drawCall.mBitangentsBuffer
-				);
+					// Set model/material-specific data for this draw call in the form of push constants:
+					mModelsCommandBuffer[i]->push_constants(
+						mPipelineFirstPass->layout(),	// Push constants must match the pipeline's layout
+						pushc							// Push the actual data
+					);
+
+					// Bind the vertex input buffers in the right order (corresponding to the layout
+					// specifiers in the vertex shader) and issue the actual draw call:
+					mModelsCommandBuffer[i]->draw_indexed(
+						*drawCall.mIndexBuffer,
+						*drawCall.mPositionsBuffer,
+						*drawCall.mTexCoordsBuffer,
+						*drawCall.mNormalsBuffer,
+						*drawCall.mTangentsBuffer,
+						*drawCall.mBitangentsBuffer
+					);
+				}
 			}
 
 			// Move on to next subpass, synchronizing all data to be written to memory,
@@ -608,6 +775,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				
 				ImGui::SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
 				ImGui::SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
+
+				ImGui::ColorEdit3("dir col", &mDirLight.intensity.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
+				ImGui::InputFloat3("dir light", &mDirLight.dir.x);
+				ImGui::SliderFloat("dir boost", &mDirLight.boost, 0.f, 1.f);
+
+				ImGui::ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
+				ImGui::SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
+
+				ImGui::Checkbox("use lights", &mUseLighting);
 				
 				ImGui::SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
@@ -650,7 +826,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Add the camera to the composition (and let it handle the updates)
 		mQuakeCam.set_translation({ 0.0f, 1.0f, 0.0f });
-		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f);
+		//mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f);
+		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 5000.0f); // ac testing far plane
 		mOriginalProjMat = mQuakeCam.projection_matrix();
 		current_composition()->add_element(mQuakeCam);
 
@@ -706,7 +883,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
-		helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
+		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
 	}
 
 	void render() override
@@ -739,8 +916,8 @@ private: // v== Member variables ==v
 	glm::mat4 mOriginalProjMat;
 	gvk::quake_camera mQuakeCam;
 
-	int mMaxPointLightCount = std::numeric_limits<int>::max();
-	int mMaxSpotLightCount = std::numeric_limits<int>::max();
+	int mMaxPointLightCount = 0; // std::numeric_limits<int>::max();
+	int mMaxSpotLightCount  = 0; // std::numeric_limits<int>::max();
 	
 	// Data for the matrices UBO
 	float mNormalMappingStrength = 0.7f;
@@ -773,11 +950,43 @@ private: // v== Member variables ==v
 
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
+
+	bool mUseLighting = true; // to en/disable light processing in shader
+	struct { glm::vec3 dir, intensity; float boost; } mDirLight = { {1.f,1.f,1.f}, { 1.f,1.f,1.f }, 1.f }; // this is overwritten with the dir light from the .fscene file
+	struct { glm::vec3 col; float boost; } mAmbLight = { {1.f, 1.f, 1.f}, 0.1f };
+
 };
 
-int main() // <== Starting point ==
+int main(int argc, char **argv) // <== Starting point ==
 {
 	try {
+		// Parse command line
+		// first parameter starting without dash is scene filename
+		bool badCmd = false;
+		bool disableValidation = false;
+		std::string sceneFileName = "";
+		for (int i = 1; i < argc; i++) {
+			if (0 == strncmp("-", argv[i], 1)) {
+				if (0 == _stricmp(argv[i], "-novalidation")) {
+					disableValidation = true;
+				} else {
+					badCmd = true;
+					break;
+				}
+			} else {
+				if (sceneFileName.length()) {
+					badCmd = true;
+					break;
+				}
+				sceneFileName = argv[i];
+			}
+		}
+		if (badCmd) {
+			printf("Usage: %s [-novalidation] [orca scene file path]\n", argv[0]);
+			return EXIT_FAILURE;
+		}
+
+
 		// Create a window and open it
 		auto mainWnd = gvk::context().create_window("TAA-STAR");
 		mainWnd->set_resolution({ 1920, 1080 });
@@ -799,12 +1008,23 @@ int main() // <== Starting point ==
 		// Create another element for drawing the UI with ImGui
 		auto ui = gvk::imgui_manager(singleQueue);
 
+		// ac: disable validation layers via command line (renderdoc crashes when they are enabled....)
+		gvk::validation_layers val_layers = {};
+		if (disableValidation) {
+			val_layers.mLayers.clear();
+			LOG_INFO("Validation layers disabled via command line parameter.");
+		}
+
+		// set scene file name
+		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
+
 		// GO:
 		gvk::start(
 			gvk::application_name("TAA-STAR"),
 			mainWnd,
 			chewbacca,
-			ui
+			ui,
+			val_layers
 		);
 	}
 	catch (gvk::logic_error&) {}

@@ -1,3 +1,4 @@
 [submodule "gears_vk"]
 	path = gears_vk
 	url = https://github.com/cg-tuwien/Gears-Vk
+	ignore = dirty
