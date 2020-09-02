@@ -23,6 +23,13 @@ To update the submodules on a daily basis, use one of the following commands:
 
 To contribute to either of the submodules, please do so via pull requests and follow the ["Contributing Guidelines" from Gears-Vk](https://github.com/cg-tuwien/Gears-Vk/blob/master/CONTRIBUTING.md). Every time you check something in, make sure that the correct submodule-commits (may also reference forks) are referenced so that one can always get a compiling and working version by cloning as described in step 1!
 
+## Scene Setup
+
+1. Download the Emerald Square scene from https://developer.nvidia.com/orca/nvidia-emerald-square
+2. Extract it to a (new) folder of your choice
+3. Copy the file `extras/EmeraldSquare_Day.fscene` from the repository into that folder
+4. Launch the program: `taa.exe -nomip <full path to the .fscene file in your Emerald-Square-folder>`
+
 ## Documentation 
 
 TBD.
