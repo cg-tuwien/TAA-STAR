@@ -4,6 +4,12 @@
 #include "helper_functions.hpp"
 #include "taa.hpp"
 
+/* TODO:
+	- forward rendering
+	- shadows?
+*/
+
+
 class wookiee : public gvk::invokee
 {
 	// Struct definition for data used as UBO across different pipelines, containing matrices and user input
@@ -61,6 +67,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	static const uint32_t cConcurrentFrames = 3u;
 
 	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
+	bool mDisableMip = false;
 
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
@@ -523,7 +530,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		//   2) Image samplers (which contain images and samplers) of all the used textures, already uploaded to the GPU.
 		std::tie(mMaterialData, mImageSamplers) = gvk::convert_for_gpu_usage(
 			distinctMaterialConfigs, false,
-			avk::image_usage::general_texture,
+			mDisableMip ? avk::image_usage::general_image : avk::image_usage::general_texture,
 			[](){ return avk::to_filter_mode(gvk::context().physical_device().getProperties().limits.maxSamplerAnisotropy, true); }(), // set to max. anisotropy
 			avk::border_handling_mode::repeat,
 			avk::sync::wait_idle(true)
@@ -893,8 +900,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		update_lightsources();
 
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
-		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex]);
-		mQueue->submit(mModelsCommandBuffer[inFlightIndex]);
+		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
 
 		// anti_asiasing::render() will be invoked after this
 	}
@@ -964,11 +971,16 @@ int main(int argc, char **argv) // <== Starting point ==
 		// first parameter starting without dash is scene filename
 		bool badCmd = false;
 		bool disableValidation = false;
+		bool disableMip = false;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strncmp("-", argv[i], 1)) {
 				if (0 == _stricmp(argv[i], "-novalidation")) {
 					disableValidation = true;
+					LOG_INFO("Validation layers disabled via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-nomip")) {
+					disableMip = true;
+					LOG_INFO("Mip-mapping disabled via command line parameter.");
 				} else {
 					badCmd = true;
 					break;
@@ -982,7 +994,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-novalidation] [-nomip] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
@@ -1010,13 +1022,11 @@ int main(int argc, char **argv) // <== Starting point ==
 
 		// ac: disable validation layers via command line (renderdoc crashes when they are enabled....)
 		gvk::validation_layers val_layers = {};
-		if (disableValidation) {
-			val_layers.mLayers.clear();
-			LOG_INFO("Validation layers disabled via command line parameter.");
-		}
+		if (disableValidation) val_layers.mLayers.clear();
 
-		// set scene file name
+		// set scene file name and other command line params
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
+		chewbacca.mDisableMip = disableMip;
 
 		// GO:
 		gvk::start(
