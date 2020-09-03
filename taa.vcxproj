@@ -36,6 +36,8 @@
   <ItemGroup>
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
+    <None Include="shaders\fwd_opaque.frag" />
+    <None Include="shaders\fwd_transparent.frag" />
     <None Include="shaders\lighting_pass.frag" />
     <None Include="shaders\lighting_pass.vert" />
     <None Include="shaders\sky_gradient.frag" />

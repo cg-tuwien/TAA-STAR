@@ -290,8 +290,6 @@ void main()
 		// Add all together:
 		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, 1.0);
 
-		// FIXME: emissive is wrong (bus windows, light rods have 1,1,1 ?)
-		// -> there is a emissive texture!
 
 	} else {
 		//oFragColor = vec4(/* diff + */ emissive, 1.0);

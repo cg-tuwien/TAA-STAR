@@ -59,6 +59,12 @@
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene">
       <Filter>assets</Filter>
     </None>
+    <None Include="shaders\fwd_opaque.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\fwd_transparent.frag">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">

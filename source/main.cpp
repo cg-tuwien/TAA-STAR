@@ -7,8 +7,15 @@
 /* TODO:
 	- forward rendering
 	- shadows?
+	- rename mDrawCalls to something more appropriate (mMeshInfo?)
+	- wtf? why does Sponza "crash" in debug mode due to alloc limit, but not in release mode?
+
+	- history frame image format is RGBA8_SRGB, current frame is RGBA16_FLOAT.. is this ok???
+
+	hedges?
 */
 
+#define FORWARD_RENDERING 1
 
 class wookiee : public gvk::invokee
 {
@@ -61,6 +68,8 @@ class wookiee : public gvk::invokee
 		std::vector<glm::vec3> mNormals;
 		std::vector<glm::vec3> mTangents;
 		std::vector<glm::vec3> mBitangents;
+
+		bool hasTransparency; // ac
 	};
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
@@ -169,17 +178,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto depthAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[1], 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+#if (!FORWARD_RENDERING)
 			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[2], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
 			auto matIdAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[3], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+#endif
 
 			// Before we are attaching the images to a framebuffer, we have to "wrap" them with an image view:
 			auto colorAttachmentView = context().create_image_view(std::move(colorAttachment));
 			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
 			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+#if (!FORWARD_RENDERING)
 			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
 			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
+#endif
 
 			// Create the renderpass only once, ...
 			if (0 == i) {
@@ -198,10 +211,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//   2nd parameter: What shall be done before rendering starts? Shall the image be cleared or maybe its contents be preserved (a.k.a. "load")?
 						//   3rd parameter: How are we going to use this attachment in the subpasses?
 						//   4th parameter: What shall be done when the last subpass has finished? => Store the image contents?
+#if FORWARD_RENDERING
+						attachment::declare_for(colorAttachmentView, on_load::load,         color(0) -> color(0),			on_store::store),
+						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> depth_stencil(),	on_store::store),
+#else
 						attachment::declare_for(colorAttachmentView, on_load::load,         unused() -> color(0), on_store::store),
 						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> input(0), on_store::store),
 						attachment::declare_for(uvNrmAttachmentView, on_load::clear,        color(0) -> input(1), on_store::store),
 						attachment::declare_for(matIdAttachmentView, on_load::clear,        color(1) -> input(2), on_store::store)
+#endif
 					},
 					[](avk::renderpass_sync& aRpSync){
 						// Synchronize with everything that comes BEFORE:
@@ -231,9 +249,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mFramebuffer[i] = context().create_framebuffer(
 				mRenderpass,
 				          colorAttachmentView,
-				std::move(depthAttachmentView),
+				std::move(depthAttachmentView)
+#if (!FORWARD_RENDERING)
+				,
 				std::move(uvNrmAttachmentView),
 				std::move(matIdAttachmentView)
+#endif
 			);
 			mFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 
@@ -366,6 +387,34 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			lukeMeshWalker(aiscene, withMeshNames, node->mChildren[iChild], meshCount);
 	}
 
+	uint32_t colToUint32(glm::vec4 col) {
+		glm::ivec4 c(col * 255.f);
+		return ((c.r & 0xff) << 24) | ((c.g & 0xff) << 16) | ((c.b & 0xff) << 8) | (c.a & 0xff);
+	}
+
+	std::string baseName(std::string path) {
+		return path.substr(path.find_last_of("/\\") + 1);
+	}
+
+	// ac: print material properties
+	void print_material_debug_info(gvk::orca_scene_t& aScene) {
+		auto distinctMaterialsOrca = aScene.distinct_material_configs_for_all_models(true);
+		std::cout << "Material debug info" << std::endl;
+		int cnt = 0;
+		for (const auto& pair : distinctMaterialsOrca) {
+			cnt++;
+			auto mc = pair.first;
+			std::cout << "Material " << cnt << "/" << distinctMaterialsOrca.size() << ": \"" << mc.mName << "\":" << std::endl;
+			if (mc.mShadingModel.length())				{ std::cout << " Shading model:     " << mc.mShadingModel << std::endl;						}
+			if (mc.mTransparentColor != glm::vec4(0))	{ std::cout << " Transparent color: "; printf("%.8x\n", colToUint32(mc.mTransparentColor));	}
+			if (mc.mEmissiveColor    != glm::vec4(0))	{ std::cout << " Emissive color:    "; printf("%.8x\n", colToUint32(mc.mEmissiveColor));	}
+			if (mc.mDiffuseTex.length())				{ std::cout << " Diffuse tex:       " << baseName(mc.mDiffuseTex) << std::endl;				}
+			if (mc.mEmissiveTex.length())				{ std::cout << " Emissive tex:      " << baseName(mc.mEmissiveTex) << std::endl;			}
+			if (mc.mOpacity != 1.f)						{ std::cout << " Opacity:           " << mc.mOpacity << std::endl;							}
+			if (mc.mTwosided)							{ std::cout << " Twosided:          TRUE" << std::endl;										}
+		}
+	}
+
 	// Create a vector of transformation matrices for each instance of a given mesh id inside a model
 	std::vector<glm::mat4> get_mesh_instance_transforms(const gvk::model &m, int meshId, const glm::mat4 &baseTransform) {
 		std::vector<glm::mat4> transforms;
@@ -394,6 +443,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		return g;
 	}
 
+	bool has_material_transparency(const gvk::material_config &mat) {
+		// In Emerald Square v4, all materials with transparent parts are named "*.DoubleSided"
+		return (std::string::npos != mat.mName.find(".DoubleSided"));
+	}
 
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
 	{
@@ -407,6 +460,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// print scene graph
 		//print_scene_debug_info(scene);
+		//print_material_debug_info(scene);
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
 		helpers::set_terrain_material_config(scene);
@@ -431,6 +485,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
 			distinctMaterialConfigs.push_back(pair.first);
 			assert (static_cast<size_t>(materialIndex + 1) == distinctMaterialConfigs.size());
+
+			bool materialHasTransparency = has_material_transparency(pair.first);
 
 			for (const auto& modelAndMeshIndices : pair.second) {
 				// Gather the model reference and the mesh indices of the same material in a vector:
@@ -516,6 +572,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							ref.mNormals = std::move(normals);
 							ref.mTangents = std::move(tangents);
 							ref.mBitangents = std::move(bitangents);
+
+							ref.hasTransparency = materialHasTransparency;
 						}
 					}
 				}
@@ -641,6 +699,67 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 	}
 
+	void prepare_forward_rendering_pipelines()
+	{
+		using namespace avk;
+		using namespace gvk;
+
+		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
+			// Specify which shaders the pipeline consists of (type is inferred from the extension):
+			"shaders/transform_and_pass_on.vert",
+			"shaders/fwd_opaque.frag",
+			// The next lines define the format and location of the vertex shader inputs:
+			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
+			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
+			// Some further settings:
+			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, 0u, // Use this pipeline for subpass #0 of the specified renderpass
+			//
+			// The following define additional data which we'll pass to the pipeline:
+			//   We'll pass two matrices to our vertex shader via push constants:
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[0])
+		);
+
+		// this is almost the same, except for alpha blending (and backface culling? depth write?)
+		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
+			"shaders/transform_and_pass_on.vert",
+			"shaders/fwd_transparent.frag",
+
+			cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
+			cfg::culling_mode::disabled,
+			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... leave it on
+
+			// The next lines define the format and location of the vertex shader inputs:
+			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
+			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
+			// Some further settings:
+			cfg::front_face::define_front_faces_to_be_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			//cfg::culling_mode::disabled,
+			//cfg::depth_test::disabled(),
+			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
+			//
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[0])
+		);
+	}
+
 	// Record actual draw calls for all the drawcall-data that we have
 	// gathered in load_and_prepare_scene() into a command buffer
 	void record_command_buffer_for_models()
@@ -651,6 +770,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto* wnd = gvk::context().main_window();
 		auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
 		
+#if FORWARD_RENDERING
+		const auto &firstPipe  = mPipelineFwdOpaque;
+		const auto &secondPipe = mPipelineFwdTransparent;
+#else
+		const auto &firstPipe  = mPipelineFirstPass;
+		const auto &secondPipe = mPipelineLightingPass;
+#endif
+
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
 			mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
@@ -658,7 +785,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			helpers::record_timing_interval_start(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
 
 			// Bind the descriptors for descriptor sets 0 and 1 before starting to render with a pipeline
-			mModelsCommandBuffer[i]->bind_descriptors(mPipelineFirstPass->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
+			mModelsCommandBuffer[i]->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
@@ -667,18 +794,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// Draw using our pipeline for the first pass (Initially this is the only
 			//   pass. After task 2 has been implemented, this is the G-Buffer pass):
-			mModelsCommandBuffer[i]->bind_pipeline(mPipelineFirstPass);
-			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(mPipelineFirstPass->get_renderpass(), mFramebuffer[i]);
+			mModelsCommandBuffer[i]->bind_pipeline(firstPipe);
+			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
 			// Record all the draw calls into this command buffer:
 			for (auto& drawCall : mDrawCalls) {
+				// In forward rendering, only render opaque geometry in the first pass
+#if FORWARD_RENDERING
+				if (drawCall.hasTransparency) continue;
+#endif
 				// Issue a separate drawcall for each transform stored in drawCall.mPushConstantsVector ; ac: TODO: make that an instanced draw ?
 				for (auto pushc : drawCall.mPushConstantsVector) {
 
 					// Set model/material-specific data for this draw call in the form of push constants:
 					mModelsCommandBuffer[i]->push_constants(
-						mPipelineFirstPass->layout(),	// Push constants must match the pipeline's layout
-						pushc							// Push the actual data
+						firstPipe->layout(),	// Push constants must match the pipeline's layout
+						pushc					// Push the actual data
 					);
 
 					// Bind the vertex input buffers in the right order (corresponding to the layout
@@ -694,11 +825,33 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 			}
 
+#if FORWARD_RENDERING
+			mModelsCommandBuffer[i]->next_subpass();
+			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
+			for (auto& drawCall : mDrawCalls) {
+				// render only transparent geometry
+				if (!drawCall.hasTransparency) continue;
+				for (auto pushc : drawCall.mPushConstantsVector) {
+					mModelsCommandBuffer[i]->push_constants(
+						firstPipe->layout(),	// Push constants must match the pipeline's layout
+						pushc					// Push the actual data
+					);
+					mModelsCommandBuffer[i]->draw_indexed(
+						*drawCall.mIndexBuffer,
+						*drawCall.mPositionsBuffer,
+						*drawCall.mTexCoordsBuffer,
+						*drawCall.mNormalsBuffer,
+						*drawCall.mTangentsBuffer,
+						*drawCall.mBitangentsBuffer
+					);
+				}
+			}
+#else
 			// Move on to next subpass, synchronizing all data to be written to memory,
 			// and to be made visible to the next subpass, which uses it as input.
 			mModelsCommandBuffer[i]->next_subpass();
-			mModelsCommandBuffer[i]->bind_pipeline(mPipelineLightingPass);
-			mModelsCommandBuffer[i]->bind_descriptors(mPipelineLightingPass->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
+			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
+			mModelsCommandBuffer[i]->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
@@ -710,6 +863,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
 			mModelsCommandBuffer[i]->draw_indexed(quadIndices, quadVertices);
+#endif
 
 			helpers::record_timing_interval_end(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
 			mModelsCommandBuffer[i]->end_render_pass();
@@ -828,7 +982,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
 		load_and_prepare_scene();
+#if FORWARD_RENDERING
+		prepare_forward_rendering_pipelines();
+#else
 		prepare_deferred_shading_pipelines();
+#endif
 		record_command_buffer_for_models();
 
 		// Add the camera to the composition (and let it handle the updates)
@@ -843,14 +1001,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		upload_materials_and_vertex_data_to_gpu();
 
 		std::array<image_view*, cConcurrentFrames> srcDepthImages;
-		std::array<image_view*, cConcurrentFrames> srcUvNrmImages;
-		std::array<image_view*, cConcurrentFrames> srcMatIdImages;
+//		std::array<image_view*, cConcurrentFrames> srcUvNrmImages;
+//		std::array<image_view*, cConcurrentFrames> srcMatIdImages;
 		std::array<image_view, cConcurrentFrames> srcColorImages;
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
 			srcDepthImages[i] = &mFramebuffer[i]->image_view_at(1);
-			srcUvNrmImages[i] = &mFramebuffer[i]->image_view_at(2);
-			srcMatIdImages[i] = &mFramebuffer[i]->image_view_at(3);
+//			srcUvNrmImages[i] = &mFramebuffer[i]->image_view_at(2);
+//			srcMatIdImages[i] = &mFramebuffer[i]->image_view_at(3);
 			srcColorImages[i] = mFramebuffer[i]->image_view_at(0);
 		}
 
@@ -954,6 +1112,10 @@ private: // v== Member variables ==v
 	// Different pipelines used for (deferred) shading:
 	avk::graphics_pipeline mPipelineFirstPass;
 	avk::graphics_pipeline mPipelineLightingPass;
+
+	// Pipelines for forward rendering:
+	avk::graphics_pipeline mPipelineFwdOpaque;
+	avk::graphics_pipeline mPipelineFwdTransparent;
 
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
