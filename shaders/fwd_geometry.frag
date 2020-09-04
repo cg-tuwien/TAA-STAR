@@ -6,6 +6,10 @@
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 
+// ac: specialization constant to differentiate between opaque pass (0) and transparent pass (1)
+layout(constant_id = 1) const uint transparentPass = 0;
+
+
 // ac: disable this, otherwise discarded fragments write to depth buffer!
 //layout(early_fragment_tests) in;
 //layout(post_depth_coverage) in;
@@ -307,26 +311,27 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
-	// ac: discard transparent parts (hack to at least see transparency in the deferred shading setup - not really nice)
-	if (sample_from_diffuse_texture().a < 0.5) { discard; return; }
-
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	vec3 positionVS = fs_in.positionVS;
 	int matIndex = pushConstants.mMaterialIndex;
 
-	vec4  diffTexRGBA      = sample_from_diffuse_texture().rgba;
-	float alpha = diffTexRGBA.a;
-
-	vec3  diffTexColor     = diffTexRGBA.rgb;
+	vec4  diffTexColorRGBA = sample_from_diffuse_texture().rgba;
 	float specTexValue     = sample_from_specular_texture().r;
 	vec3  emissiveTexColor = sample_from_emissive_texture().rgb;
 
+	float alpha = (transparentPass == 1) ? diffTexColorRGBA.a : 1.0;
+
+	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write
+	if (alpha < 0.5) { discard; return; }
+
+
 	// Initialize all the colors:
-	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColor;
+	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColorRGBA.rgb;
 	vec3 emissive   = materialsBuffer.materials[matIndex].mEmissiveColor.rgb        * emissiveTexColor; // TODO: check if we really want to multiply with emissive color (is typically vec3(0.5) for emerald square)
-	vec3 diff       = materialsBuffer.materials[matIndex].mDiffuseReflectivity.rgb  * diffTexColor;
+	vec3 diff       = materialsBuffer.materials[matIndex].mDiffuseReflectivity.rgb  * diffTexColorRGBA.rgb;
 	vec3 spec       = materialsBuffer.materials[matIndex].mSpecularReflectivity.rgb * specTexValue;
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
+
 
 	if (uboMatUsr.mUserInput.z != 0) {
 		// Calculate ambient illumination:
@@ -343,7 +348,14 @@ void main()
 
 
 	} else {
+		//oFragColor = vec4(/* diff + */ emissive, 1.0);
 		oFragColor = vec4(diff, alpha);
+
+		//oFragColor = vec4(normalVS, 1.0);
+
+		//float alpha = sample_from_diffuse_texture(matIndex, uv).a;
+		//oFragColor = vec4(diffTexColor, alpha);
+		//if (alpha < 1.0) oFragColor = vec4(1,0,1,1);
 	}
 }
 // -------------------------------------------------------

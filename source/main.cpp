@@ -704,10 +704,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
+		const uint32_t specConstId_transparentPass = 1u; // corresponds to shader: layout(constant_id = 1) const uint transparentPass
+
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
 			"shaders/transform_and_pass_on.vert",
-			"shaders/fwd_opaque.frag",
+			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
@@ -729,14 +731,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
 
-		// this is almost the same, except for alpha blending (and backface culling? depth write?)
+		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
 			"shaders/transform_and_pass_on.vert",
-			"shaders/fwd_transparent.frag",
+			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
 
 			cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
 			cfg::culling_mode::disabled,
-			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... leave it on
+			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha > 0.5)
 
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
@@ -748,8 +750,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// Some further settings:
 			cfg::front_face::define_front_faces_to_be_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			//cfg::culling_mode::disabled,
-			//cfg::depth_test::disabled(),
 			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
 			//
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants

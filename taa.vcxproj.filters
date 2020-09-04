@@ -59,10 +59,7 @@
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene">
       <Filter>assets</Filter>
     </None>
-    <None Include="shaders\fwd_opaque.frag">
-      <Filter>shaders</Filter>
-    </None>
-    <None Include="shaders\fwd_transparent.frag">
+    <None Include="shaders\fwd_geometry.frag">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

@@ -208,7 +208,7 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 void main()
 {
 	// ac: discard transparent parts (hack to at least see transparency in the deferred shading setup - not really nice)
-	if (sample_from_diffuse_texture().a < 0.5) { discard; return; }
+	//if (sample_from_diffuse_texture().a < 0.5) { discard; return; }
 
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	float l = length(normalVS.xy);
