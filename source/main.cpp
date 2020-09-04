@@ -12,7 +12,8 @@
 
 	- history frame image format is RGBA8_SRGB, current frame is RGBA16_FLOAT.. is this ok???
 
-	hedges?
+	NOTES:
+	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
 #define FORWARD_RENDERING 1
@@ -77,6 +78,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
 	bool mDisableMip = false;
+	bool mUseAlphaBlending = true;
 
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
@@ -104,7 +106,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_matrices_and_user_input()
 	{
 		// Update the matrices in render() because here we can be sure that mQuakeCam's updates of the current frame are available:
-		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, mUseLighting ? 1.f : 0.f, 0.f } };
+		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, mUseLighting ? 1.f : 0.f, mAlphaThreshold } };
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
@@ -738,7 +740,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
 			cfg::culling_mode::disabled,
-			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha > 0.5)
+			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
+			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
 
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
@@ -758,6 +761,35 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
+
+		// alternative pipeline - render transparency with simple alpha test only, no blending
+		mPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
+			"shaders/transform_and_pass_on.vert",
+			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
+
+			cfg::culling_mode::disabled,
+			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
+			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
+
+			// The next lines define the format and location of the vertex shader inputs:
+			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
+			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
+																							// Some further settings:
+			cfg::front_face::define_front_faces_to_be_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
+							 //
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[0])
+		);
+
 	}
 
 	// Record actual draw calls for all the drawcall-data that we have
@@ -768,11 +800,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace gvk;
 
 		auto* wnd = gvk::context().main_window();
-		auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
-		
+		//auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
+		auto& commandPool = context().get_command_pool_for_resettable_command_buffers(*mQueue); // ac: we may need to re-record
+
+		mAlphaBlendingActive = mUseAlphaBlending;
+
 #if FORWARD_RENDERING
 		const auto &firstPipe  = mPipelineFwdOpaque;
-		const auto &secondPipe = mPipelineFwdTransparent;
+		const auto &secondPipe = mUseAlphaBlending ? mPipelineFwdTransparent : mPipelineFwdTransparentNoBlend;
 #else
 		const auto &firstPipe  = mPipelineFirstPass;
 		const auto &secondPipe = mPipelineLightingPass;
@@ -780,7 +815,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+			if (!mDidAllocCommandBuffers) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
 			mModelsCommandBuffer[i]->begin_recording();
 			helpers::record_timing_interval_start(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
 
@@ -869,6 +904,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->end_render_pass();
 			mModelsCommandBuffer[i]->end_recording();
 		}
+
+		mDidAllocCommandBuffers = true;
 	}
 
 	void setup_ui_callback()
@@ -945,7 +982,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				ImGui::SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
 				ImGui::Checkbox("use lights", &mUseLighting);
-				
+
+				ImGui::SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
+				ImGui::Checkbox("alpha blending", &mUseAlphaBlending);
+
 				ImGui::SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
 				ImGui::Separator();
@@ -1048,6 +1088,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
+		// re-record command buffers if necessary
+		if (mUseAlphaBlending != mAlphaBlendingActive) {
+			gvk::context().device().waitIdle();
+			record_command_buffer_for_models();
+		}
+
 		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
 	}
 
@@ -1116,6 +1162,7 @@ private: // v== Member variables ==v
 	// Pipelines for forward rendering:
 	avk::graphics_pipeline mPipelineFwdOpaque;
 	avk::graphics_pipeline mPipelineFwdTransparent;
+	avk::graphics_pipeline mPipelineFwdTransparentNoBlend;
 
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
@@ -1124,6 +1171,9 @@ private: // v== Member variables ==v
 	struct { glm::vec3 dir, intensity; float boost; } mDirLight = { {1.f,1.f,1.f}, { 1.f,1.f,1.f }, 1.f }; // this is overwritten with the dir light from the .fscene file
 	struct { glm::vec3 col; float boost; } mAmbLight = { {1.f, 1.f, 1.f}, 0.1f };
 
+	float mAlphaThreshold = 0.001f; // alpha threshold for rendering transparent parts
+	bool mAlphaBlendingActive;
+	bool mDidAllocCommandBuffers = false;
 };
 
 int main(int argc, char **argv) // <== Starting point ==
@@ -1134,6 +1184,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool badCmd = false;
 		bool disableValidation = false;
 		bool disableMip = false;
+		bool disableAlphaBlending = false;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strncmp("-", argv[i], 1)) {
@@ -1143,6 +1194,9 @@ int main(int argc, char **argv) // <== Starting point ==
 				} else if (0 == _stricmp(argv[i], "-nomip")) {
 					disableMip = true;
 					LOG_INFO("Mip-mapping disabled via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-noblend")) {
+					disableAlphaBlending = true;
+					LOG_INFO("Alpha-blending disabled via command line parameter.");
 				} else {
 					badCmd = true;
 					break;
@@ -1189,6 +1243,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		// set scene file name and other command line params
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
 		chewbacca.mDisableMip = disableMip;
+		chewbacca.mUseAlphaBlending = !disableAlphaBlending;
 
 		// GO:
 		gvk::start(

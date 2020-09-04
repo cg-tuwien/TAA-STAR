@@ -101,7 +101,7 @@ layout(set = 1, binding = 0) uniform MatricesAndUserInput {
 	mat4 mProjMatrix;
 	// transformation matrix which tranforms to camera's position
 	mat4 mCamPos;
-	// x = tessellation factor, y = displacement strength, z = use lighting, w unused
+	// x = tessellation factor, y = displacement strength, z = use lighting, w = alpha threshold
 	vec4 mUserInput;
 } uboMatUsr;
 
@@ -322,7 +322,7 @@ void main()
 	float alpha = (transparentPass == 1) ? diffTexColorRGBA.a : 1.0;
 
 	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write
-	if (alpha < 0.5) { discard; return; }
+	if (transparentPass == 1 && alpha < uboMatUsr.mUserInput.w) { discard; return; }
 
 
 	// Initialize all the colors:
