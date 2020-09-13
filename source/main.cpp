@@ -1183,6 +1183,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		// first parameter starting without dash is scene filename
 		bool badCmd = false;
 		bool disableValidation = false;
+		bool forceValidation = false;
 		bool disableMip = false;
 		bool disableAlphaBlending = false;
 		std::string sceneFileName = "";
@@ -1191,6 +1192,9 @@ int main(int argc, char **argv) // <== Starting point ==
 				if (0 == _stricmp(argv[i], "-novalidation")) {
 					disableValidation = true;
 					LOG_INFO("Validation layers disabled via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-validation")) {
+					forceValidation = true;
+					LOG_INFO("Validation layers enforced via command line parameter.");
 				} else if (0 == _stricmp(argv[i], "-nomip")) {
 					disableMip = true;
 					LOG_INFO("Mip-mapping disabled via command line parameter.");
@@ -1210,7 +1214,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [-nomip] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-novalidation] [-validation] [-nomip] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
@@ -1238,12 +1242,14 @@ int main(int argc, char **argv) // <== Starting point ==
 
 		// ac: disable validation layers via command line (renderdoc crashes when they are enabled....)
 		gvk::validation_layers val_layers = {};
+		val_layers.enable_in_release_mode(forceValidation); // note: in release, this doesn't enable the debug callback, but val.errors are dumped to the console
 		if (disableValidation) val_layers.mLayers.clear();
 
 		// set scene file name and other command line params
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
 		chewbacca.mDisableMip = disableMip;
 		chewbacca.mUseAlphaBlending = !disableAlphaBlending;
+
 
 		// GO:
 		gvk::start(
