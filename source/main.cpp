@@ -5,7 +5,10 @@
 #include "taa.hpp"
 
 /* TODO:
-	- forward rendering
+	- ok forward rendering
+
+	- fix changed lighting flags in deferred shader
+
 	- shadows?
 	- rename mDrawCalls to something more appropriate (mMeshInfo?)
 	- wtf? why does Sponza "crash" in debug mode due to alloc limit, but not in release mode?
@@ -17,6 +20,8 @@
 */
 
 #define FORWARD_RENDERING 1
+
+// NOTE: in the png version of EmeraldSquare the blue channel seems to be inverted for normalmap textures!
 
 class wookiee : public gvk::invokee
 {
@@ -80,6 +85,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mDisableMip = false;
 	bool mUseAlphaBlending = true;
 
+	bool mFlipTexturesInLoader = false;
+	bool mFlipUvWithAssimp = false;
+	bool mFlipManually = true;
+
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
 		, mAntiAliasing{ &aQueue }
@@ -106,7 +115,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_matrices_and_user_input()
 	{
 		// Update the matrices in render() because here we can be sure that mQuakeCam's updates of the current frame are available:
-		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, mUseLighting ? 1.f : 0.f, mAlphaThreshold } };
+		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold } };
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
@@ -456,7 +465,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		std::cout << "Loading scene..." << std::endl;
 
 		// Load a scene (in ORCA format) from file:
-		auto scene = gvk::orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace /*| aiProcess_FlipUVs */);
+		auto scene = gvk::orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | (mFlipUvWithAssimp ? aiProcess_FlipUVs : 0) );
 
 		double tLoad = glfwGetTime();
 
@@ -549,6 +558,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							auto tangents = gvk::get_tangents(singleMesh_modelRefAndMeshIndices);
 							auto bitangents = gvk::get_bitangents(singleMesh_modelRefAndMeshIndices);
 
+							// flippedy-flip
+							if (mFlipManually) {
+								for (auto &c : texCoords)	c.y = 1.0f - c.y;
+								for (auto &c : normals)		c = -c;
+								// TODO: check if we need to do anything for tangents, bitangents...
+							}
+
 							// collect all the instances of the mesh (it may appear in multiple nodes, thus using different transforms)
 							auto modelBaseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
 							auto transforms = get_mesh_instance_transforms(modelData.mLoadedModel, meshIndex, modelBaseTransform);
@@ -590,6 +606,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		//   2) Image samplers (which contain images and samplers) of all the used textures, already uploaded to the GPU.
 		std::tie(mMaterialData, mImageSamplers) = gvk::convert_for_gpu_usage(
 			distinctMaterialConfigs, false,
+			mFlipTexturesInLoader,
 			mDisableMip ? avk::image_usage::general_image : avk::image_usage::general_texture,
 			[](){ return avk::to_filter_mode(gvk::context().physical_device().getProperties().limits.maxSamplerAnisotropy, true); }(), // set to max. anisotropy
 			avk::border_handling_mode::repeat,
@@ -956,6 +973,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				ImGui::Text("%.3f ms/Anti Aliasing",        mAntiAliasing.duration());
 				ImGui::Text("%.1f FPS", ImGui::GetIO().Framerate);
 
+				// ac: print camera position
+				glm::vec3 p = mQuakeCam.translation();
+				ImGui::Text("Camera at %.1f %.1f %.1f", p.x, p.y, p.z);
+
 				static std::vector<float> accum; // accumulate (then average) 10 frames
 				accum.push_back(ImGui::GetIO().Framerate);
 				static std::vector<float> values;
@@ -981,7 +1002,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				ImGui::ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
 				ImGui::SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
-				ImGui::Checkbox("use lights", &mUseLighting);
+				ImGui::Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0");
 
 				ImGui::SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
 				ImGui::Checkbox("alpha blending", &mUseAlphaBlending);
@@ -1167,7 +1188,7 @@ private: // v== Member variables ==v
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
 
-	bool mUseLighting = true; // to en/disable light processing in shader
+	int mLightingMode = 0; // 0 = typical; 1 = no lights, just diff color;  2 = debug
 	struct { glm::vec3 dir, intensity; float boost; } mDirLight = { {1.f,1.f,1.f}, { 1.f,1.f,1.f }, 1.f }; // this is overwritten with the dir light from the .fscene file
 	struct { glm::vec3 col; float boost; } mAmbLight = { {1.f, 1.f, 1.f}, 0.1f };
 
