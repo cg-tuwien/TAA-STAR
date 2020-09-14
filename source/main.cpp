@@ -455,8 +455,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	bool has_material_transparency(const gvk::material_config &mat) {
+		bool res = false;
+
 		// In Emerald Square v4, all materials with transparent parts are named "*.DoubleSided"
-		return (std::string::npos != mat.mName.find(".DoubleSided"));
+		res |= (std::string::npos != mat.mName.find(".DoubleSided"));
+
+		// In Sponza with plants: materials "leaf" and "Material__57" (vase plants)
+		res |= mat.mName == "leaf";
+		res |= mat.mName == "Material__57";
+
+		return res;
 	}
 
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
@@ -471,7 +479,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// print scene graph
 		//print_scene_debug_info(scene);
-		//print_material_debug_info(scene);
+		print_material_debug_info(scene);
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
 		helpers::set_terrain_material_config(scene);
