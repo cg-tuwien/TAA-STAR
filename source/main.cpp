@@ -456,7 +456,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		std::cout << "Loading scene..." << std::endl;
 
 		// Load a scene (in ORCA format) from file:
-		auto scene = gvk::orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace);
+		auto scene = gvk::orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace /*| aiProcess_FlipUVs */);
 
 		double tLoad = glfwGetTime();
 
