@@ -7,6 +7,15 @@
 /* TODO:
 	- ok forward rendering
 
+	! Determine whether to do the normal-flip automatically?
+
+	Normals-Problem:
+	Sponza uses pngs, normal maps have 3 components with flat = (127,127,255)
+	Emerald Square uses dds in BC5 RG format -> 2 components only: flat = (127,127)
+
+	Some vertical brick rows at the outer buildings look weird w.r.t. normalmapping; even the diff textures are misaligned
+
+
 	- fix changed lighting flags in deferred shader
 
 	- shadows?
@@ -85,9 +94,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mDisableMip = false;
 	bool mUseAlphaBlending = true;
 
-	bool mFlipTexturesInLoader = false;
-	bool mFlipUvWithAssimp = false;
-	bool mFlipManually = true;
+	bool mFlipTexturesInLoader	= false;
+	bool mFlipUvWithAssimp		= false;
+	bool mFlipManually			= true;
 
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
@@ -479,7 +488,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// print scene graph
 		//print_scene_debug_info(scene);
-		print_material_debug_info(scene);
+		//print_material_debug_info(scene);
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
 		helpers::set_terrain_material_config(scene);
@@ -561,17 +570,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 							// get all the common (per-mesh) properties
 							auto [vertices, indices] = gvk::get_vertices_and_indices(singleMesh_modelRefAndMeshIndices);
-							auto texCoords = gvk::get_2d_texture_coordinates(singleMesh_modelRefAndMeshIndices, 0);
+							auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(singleMesh_modelRefAndMeshIndices, 0)
+														   : gvk::get_2d_texture_coordinates        (singleMesh_modelRefAndMeshIndices, 0);
 							auto normals = gvk::get_normals(singleMesh_modelRefAndMeshIndices);
 							auto tangents = gvk::get_tangents(singleMesh_modelRefAndMeshIndices);
 							auto bitangents = gvk::get_bitangents(singleMesh_modelRefAndMeshIndices);
 
 							// flippedy-flip
-							if (mFlipManually) {
-								for (auto &c : texCoords)	c.y = 1.0f - c.y;
-								for (auto &c : normals)		c = -c;
-								// TODO: check if we need to do anything for tangents, bitangents...
-							}
+							//if (mFlipManually) {
+							//	for (auto &c : texCoords)	c.y = 1.0f - c.y;
+
+							//}
 
 							// collect all the instances of the mesh (it may appear in multiple nodes, thus using different transforms)
 							auto modelBaseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
@@ -1010,7 +1019,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				ImGui::ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
 				ImGui::SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
-				ImGui::Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0");
+				ImGui::Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
 
 				ImGui::SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
 				ImGui::Checkbox("alpha blending", &mUseAlphaBlending);

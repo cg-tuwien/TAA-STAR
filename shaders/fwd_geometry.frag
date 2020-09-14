@@ -6,6 +6,9 @@
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 
+// substitute missing z in normal map by +1.0 ?
+#define NORMALMAP_FIX_MISSING_Z 1
+
 // ac: specialization constant to differentiate between opaque pass (0) and transparent pass (1)
 layout(constant_id = 1) const uint transparentPass = 0;
 
@@ -157,7 +160,11 @@ vec4 sample_from_normals_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	vec4 normalSample = texture(textures[texIndex], texCoords);
+#if NORMALMAP_FIX_MISSING_Z
+	if (normalSample.z == 0.0) normalSample.z = 1.0;	// double-check if z is zero, so this should still work with full .rgb textures
+#endif
+	return normalSample;
 }
 
 vec4 sample_from_diffuse_texture()
@@ -353,9 +360,15 @@ void main()
 	} else if (uboMatUsr.mUserInput.z < 2.f) {
 		// don't use lights
 		oFragColor = vec4(diff, alpha);
-	} else {
-		// show normals
+	} else if (uboMatUsr.mUserInput.z < 3.f) {
+		// Debug: show normals
 		vec3 normalWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
+		oFragColor = vec4(normalWS.xyz, 1.0);
+	} else {
+		oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;
+
+		// Debug2: show geometry normals (not affected by normal mapping)
+		vec3 normalWS = normalize(mat3(inverse(transpose(pushConstants.mModelMatrix))) * normalize(fs_in.normalOS));
 		oFragColor = vec4(normalWS.xyz, 1.0);
 	}
 }
