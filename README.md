@@ -17,9 +17,10 @@ You might want to have all submodules checked-out to their `master` branch. You 
 There are two submodules: One under `gears_vk/` (referencing https://github.com/cg-tuwien/Gears-Vk) and another under `gears_vk/auto_vk/` (referencing https://github.com/cg-tuwien/Auto-Vk).    
 
 To update the submodules on a daily basis, use one of the following commands:
-* `git submodule update --recursive`
-* `git submodule foreach "(git checkout master; git pull)&"`
-* TBD which one is the most practicable (credits: [StackOverflow question](https://stackoverflow.com/questions/1030169/easy-way-to-pull-latest-of-all-git-submodules))
+* ~~`git submodule update --recursive`~~
+* ~~`git submodule foreach "(git checkout master; git pull)&"`~~
+* ~~TBD which one is the most practicable (credits: [StackOverflow question](https://stackoverflow.com/questions/1030169/easy-way-to-pull-latest-of-all-git-submodules))~~
+* `git submodule foreach --recursive 'git checkout master && git pull'`
 
 To contribute to either of the submodules, please do so via pull requests and follow the ["Contributing Guidelines" from Gears-Vk](https://github.com/cg-tuwien/Gears-Vk/blob/master/CONTRIBUTING.md). Every time you check something in, make sure that the correct submodule-commits (may also reference forks) are referenced so that one can always get a compiling and working version by cloning as described in step 1!
 
