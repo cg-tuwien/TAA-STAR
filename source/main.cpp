@@ -8,6 +8,7 @@
 	- ok forward rendering
 
 	! Determine whether to do the normal-flip automatically?
+	! Setting z=1 is likely not 100% correct. Do a projection to the +z hemisphere instead? Compare results with .png normal map, this looks good!
 
 	Normals-Problem:
 	Sponza uses pngs, normal maps have 3 components with flat = (127,127,255)

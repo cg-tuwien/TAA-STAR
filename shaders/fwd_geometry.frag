@@ -6,8 +6,9 @@
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 
-// substitute missing z in normal map by +1.0 ?
-#define NORMALMAP_FIX_MISSING_Z 1
+
+#define NORMALMAP_FIX_MISSING_Z 1	// substitute missing z in normal map by +1.0 ? 
+#define NORMALMAP_FIX_SIMPLE 0		// use simple method (set z=1)? (if not: project .xy to +z hemisphere to obtain normal)
 
 // ac: specialization constant to differentiate between opaque pass (0) and transparent pass (1)
 layout(constant_id = 1) const uint transparentPass = 0;
@@ -161,9 +162,18 @@ vec4 sample_from_normals_texture()
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
 	vec4 normalSample = texture(textures[texIndex], texCoords);
-#if NORMALMAP_FIX_MISSING_Z
-	if (normalSample.z == 0.0) normalSample.z = 1.0;	// double-check if z is zero, so this should still work with full .rgb textures
-#endif
+	#if NORMALMAP_FIX_MISSING_Z
+		if (normalSample.z == 0.0) {	// double-check if z is zero, so this should still work with full .rgb textures, where .z is set
+			#if NORMALMAP_FIX_SIMPLE
+				normalSample.z = 1.0;
+			#else
+				// project to +z hemisphere
+				vec3 v = vec3(normalSample.xy * 2.0 - 1.0, 0.0);
+				v.z = sqrt(1.0 - v.x * v.x + v.y * v.y);
+				normalSample.xyz = normalize(v) * 0.5 + 0.5; // probably don't need normalize()...
+			#endif
+		}
+	#endif
 	return normalSample;
 }
 
@@ -365,11 +375,11 @@ void main()
 		vec3 normalWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
 		oFragColor = vec4(normalWS.xyz, 1.0);
 	} else {
-		oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;
-
 		// Debug2: show geometry normals (not affected by normal mapping)
 		vec3 normalWS = normalize(mat3(inverse(transpose(pushConstants.mModelMatrix))) * normalize(fs_in.normalOS));
 		oFragColor = vec4(normalWS.xyz, 1.0);
+
+		//oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;
 	}
 }
 // -------------------------------------------------------
