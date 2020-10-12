@@ -243,6 +243,7 @@ public:
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
 				ImGui::Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				ImGui::SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
+				if (ImGui::Button("reset")) mResetHistory = true;
 				ImGui::End();
 			});
 		}
@@ -261,9 +262,12 @@ public:
 		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
 		assert (nullptr != quakeCamera);
 
+		float effectiveAlpha = mResetHistory ? 1.f : mAlpha;
+		mResetHistory = false;
+
 		mHistoryViewMatrices[inFlightIndex] = quakeCamera->view_matrix();
 		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
-		mTaaPushConstants.mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mAlpha);
+		mTaaPushConstants.mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, effectiveAlpha);
 		mTaaPushConstants.mColorClampingOrClipping = mColorClampingOrClipping;
 		mTaaPushConstants.mDepthCulling = mDepthCulling;
 		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
@@ -366,6 +370,7 @@ private:
 	bool mTextureLookupUnjitter = false;
 	int mSampleDistribution = 0;
 	float mAlpha = 0.1f;
+	bool mResetHistory = false;
 
 	// Source color images per frame in flight:
 	std::array<avk::image_view_t*, CF> mSrcColor;
