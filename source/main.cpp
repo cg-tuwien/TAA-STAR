@@ -1279,16 +1279,16 @@ int main(int argc, char **argv) // <== Starting point ==
 		// Create another element for drawing the UI with ImGui
 		auto ui = gvk::imgui_manager(singleQueue);
 
-		// ac: disable validation layers via command line (renderdoc crashes when they are enabled....)
-		gvk::validation_layers val_layers = {};
-		val_layers.enable_in_release_mode(forceValidation); // note: in release, this doesn't enable the debug callback, but val.errors are dumped to the console
-		if (disableValidation) val_layers.mLayers.clear();
-
 		// set scene file name and other command line params
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
 		chewbacca.mDisableMip = disableMip;
 		chewbacca.mUseAlphaBlending = !disableAlphaBlending;
 
+		auto modifyValidationFunc = [&](gvk::validation_layers &val_layers) {
+			// ac: disable or enforce validation layers via command line (renderdoc crashes when they are enabled....)
+			val_layers.enable_in_release_mode(forceValidation); // note: in release, this doesn't enable the debug callback, but val.errors are dumped to the console
+			if (disableValidation) val_layers.mLayers.clear();
+		};
 
 		// GO:
 		gvk::start(
@@ -1296,7 +1296,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			mainWnd,
 			chewbacca,
 			ui,
-			val_layers
+			modifyValidationFunc
 		);
 	}
 	catch (gvk::logic_error&) {}
