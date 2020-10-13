@@ -136,6 +136,13 @@ void main()
 
 	vec3 antiAliased = currentColor * alpha + historyColor * (1 - alpha);
 
+	#if 0
+	// show size of colour bounding box
+	vec3 tmp = rgbMax - rgbMin;
+	//antiAliased = tmp;
+	antiAliased = vec3(tmp.x * tmp.y * tmp.z);
+	#endif
+
 	// write rgb into uResult
 	// - imageStore() cannot handle sRGB images
 	// - we write sRGB values into an RGB image and copy the image into an sRGB image later as a workaround
