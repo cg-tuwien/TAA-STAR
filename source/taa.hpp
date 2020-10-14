@@ -102,7 +102,16 @@ public:
 		if (mJitterSlowMotion > 0) aFrameId /= mJitterSlowMotion;
 		if (mFixedJitterIndex >= 0) aFrameId = mFixedJitterIndex;
 
-		return sampleOffsetValues[aFrameId % numSampleOffsets] * mJitterExtraScale;
+		auto pos = sampleOffsetValues[aFrameId % numSampleOffsets];
+
+		if (mJitterRotateDegrees != 0.f) {
+			float s = sin(glm::radians(mJitterRotateDegrees));
+			float c = cos(glm::radians(mJitterRotateDegrees));
+			pos = glm::vec2(pos.x * c - pos.y * s, pos.x * s + pos.y * c);
+		}
+
+
+		return pos * mJitterExtraScale;
 	}
 
 	void save_history_proj_matrix(glm::mat4 aProjMatrix, gvk::window::frame_id_t aFrameId)
@@ -253,10 +262,11 @@ public:
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
 				if (Button("reset")) mResetHistory = true;
-				if (CollapsingHeader("Debug")) {
-					SliderInt("jitter lock", &mFixedJitterIndex, -1, 16);
-					InputFloat("jitter scale", &mJitterExtraScale, 0.f, 0.f, "%.0f");
-					InputInt("jitter slowdown", &mJitterSlowMotion);
+				if (CollapsingHeader("Jitter debug")) {
+					SliderInt ("lock",		&mFixedJitterIndex, -1, 16);
+					InputFloat("scale",		&mJitterExtraScale, 0.f, 0.f, "%.0f");
+					InputInt  ("slowdown",	&mJitterSlowMotion);
+					InputFloat("rotate",	&mJitterRotateDegrees);
 				}
 				End();
 			});
@@ -407,8 +417,9 @@ private:
 	avk::compute_pipeline mTaaPipeline;
 	push_constants_for_taa mTaaPushConstants;
 
-	// for debugging: fixed jitter offset (-1 = not locked)
+	// jitter debugging
 	int mFixedJitterIndex = -1;
 	float mJitterExtraScale = 1.0f;
 	int mJitterSlowMotion = 1;
+	float mJitterRotateDegrees = 0.f;
 };
