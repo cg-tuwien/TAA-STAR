@@ -40,7 +40,7 @@ namespace rdoc {
 		currentDevice = device; // store, so we don't need to pass it in every time
 
 		pfnDebugMarkerSetObjectNameEXT = reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(vkGetDeviceProcAddr(device, "vkDebugMarkerSetObjectNameEXT"));
-		printf(pfnDebugMarkerSetObjectNameEXT ? "Debugmarkers inited\n" : "!!! Failed to init debugmarkers; did you request VK_EXT_debug_marker ?\n");
+		if (!pfnDebugMarkerSetObjectNameEXT) printf("WARN: Failed to init debugmarkers; did you request device extension \"VK_EXT_debug_marker\" ?\n");
 	}
 
 	bool active()			{ return rdoc_api; }

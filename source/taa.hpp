@@ -70,8 +70,8 @@ public:
 		);
 		const static auto sUniform4HelixSampleOffsets = avk::make_array<glm::vec2>(
 			sPxSizeNDC * glm::vec2(-0.25f, -0.25f),
-			sPxSizeNDC * glm::vec2( 0.25f, -0.25f),
 			sPxSizeNDC * glm::vec2( 0.25f,  0.25f),
+			sPxSizeNDC * glm::vec2( 0.25f, -0.25f),
 			sPxSizeNDC * glm::vec2(-0.25f,  0.25f)
 		);
 		const static auto sHalton23x8SampleOffsets = halton_2_3<8>(sPxSizeNDC);
@@ -99,7 +99,10 @@ public:
 			break;
 		}
 		
-		return sampleOffsetValues[aFrameId % numSampleOffsets];
+		if (mJitterSlowMotion > 0) aFrameId /= mJitterSlowMotion;
+		if (mFixedJitterIndex >= 0) aFrameId = mFixedJitterIndex;
+
+		return sampleOffsetValues[aFrameId % numSampleOffsets] * mJitterExtraScale;
 	}
 
 	void save_history_proj_matrix(glm::mat4 aProjMatrix, gvk::window::frame_id_t aFrameId)
@@ -236,19 +239,26 @@ public:
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this](){
-				ImGui::Begin("Anti-Aliasing Settings");
-				ImGui::SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
-				ImGui::SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
-				ImGui::Checkbox("enabled", &mTaaEnabled);
+				using namespace ImGui;
+
+				Begin("Anti-Aliasing Settings");
+				SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
+				SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
+				Checkbox("enabled", &mTaaEnabled);
 				static const char* sColorClampingClippingValues[] = { "nope", "clamping", "clipping" };
-				ImGui::Combo("color clamping/clipping", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
-				ImGui::Checkbox("depth culling", &mDepthCulling);
-				ImGui::Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
+				Combo("color clamping/clipping", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+				Checkbox("depth culling", &mDepthCulling);
+				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
-				ImGui::Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
-				ImGui::SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
-				if (ImGui::Button("reset")) mResetHistory = true;
-				ImGui::End();
+				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
+				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
+				if (Button("reset")) mResetHistory = true;
+				if (CollapsingHeader("Debug")) {
+					SliderInt("jitter lock", &mFixedJitterIndex, -1, 16);
+					InputFloat("jitter scale", &mJitterExtraScale, 0.f, 0.f, "%.0f");
+					InputInt("jitter slowdown", &mJitterSlowMotion);
+				}
+				End();
 			});
 		}
 		else {
@@ -396,4 +406,9 @@ private:
 	
 	avk::compute_pipeline mTaaPipeline;
 	push_constants_for_taa mTaaPushConstants;
+
+	// for debugging: fixed jitter offset (-1 = not locked)
+	int mFixedJitterIndex = -1;
+	float mJitterExtraScale = 1.0f;
+	int mJitterSlowMotion = 1;
 };
