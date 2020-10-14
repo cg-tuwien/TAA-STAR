@@ -1220,6 +1220,7 @@ int main(int argc, char **argv) // <== Starting point ==
 	try {
 		// Parse command line
 		// first parameter starting without dash is scene filename
+		// -- (double-dash) terminates command line, everything after (including scene file name) is ignored
 		bool badCmd = false;
 		bool disableValidation = false;
 		bool forceValidation = false;
@@ -1227,7 +1228,9 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
-			if (0 == strncmp("-", argv[i], 1)) {
+			if (0 == strcmp("--", argv[i])) {
+				break;
+			} else if (0 == strncmp("-", argv[i], 1)) {
 				if (0 == _stricmp(argv[i], "-novalidation")) {
 					disableValidation = true;
 					LOG_INFO("Validation layers disabled via command line parameter.");
