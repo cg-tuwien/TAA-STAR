@@ -28,6 +28,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="source\debug_helper.hpp" />
+    <ClInclude Include="source\renderdoc_app.h" />
     <ClInclude Include="source\taa.hpp" />
     <ClInclude Include="source\cg_stdafx.hpp" />
     <ClInclude Include="source\cg_targetver.hpp" />

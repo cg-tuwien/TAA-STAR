@@ -1,8 +1,12 @@
+#include "debug_helper.hpp"
+
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
 #include "helper_functions.hpp"
 #include "taa.hpp"
+
+#include <string>
 
 /* TODO:
 	- ok forward rendering
@@ -30,8 +34,6 @@
 */
 
 #define FORWARD_RENDERING 1
-
-// NOTE: in the png version of EmeraldSquare the blue channel seems to be inverted for normalmap textures!
 
 class wookiee : public gvk::invokee
 {
@@ -199,11 +201,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto depthAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[1], 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+
+			// label them for Renderdoc
+			rdoc::labelImage(colorAttachment->handle(), "colorAttachment", i);
+			rdoc::labelImage(depthAttachment->handle(), "depthAttachment", i);
+
 #if (!FORWARD_RENDERING)
 			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[2], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
 			auto matIdAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[3], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+
+			rdoc::labelImage(uvNrmAttachment->handle(), "uvNrmAttachment", i);
+			rdoc::labelImage(matIdAttachment->handle(), "matIdAttachment", i);
 #endif
 
 			// Before we are attaching the images to a framebuffer, we have to "wrap" them with an image view:
@@ -1052,6 +1062,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace gvk;
 
 		auto* wnd = context().main_window();
+
+		// init Renderdoc debug markers
+		rdoc::init_debugmarkers(context().device());
+
 		
 		// Create a descriptor cache that helps us to conveniently create descriptor sets:
 		mDescriptorCache = gvk::context().create_descriptor_cache();
@@ -1217,6 +1231,9 @@ private: // v== Member variables ==v
 
 int main(int argc, char **argv) // <== Starting point ==
 {
+	// Init Renderdoc API
+	rdoc::init();
+
 	try {
 		// Parse command line
 		// first parameter starting without dash is scene filename
@@ -1293,12 +1310,17 @@ int main(int argc, char **argv) // <== Starting point ==
 			if (disableValidation) val_layers.mLayers.clear();
 		};
 
+		// request VK_EXT_debug_marker (ONLY if running from RenderDoc!) for object labeling
+		gvk::required_device_extensions dev_extensions;
+		for (auto ext : rdoc::required_device_extensions()) dev_extensions.add_extension(ext);
+
 		// GO:
 		gvk::start(
 			gvk::application_name("TAA-STAR"),
 			mainWnd,
 			chewbacca,
 			ui,
+			dev_extensions,
 			modifyValidationFunc
 		);
 	}
@@ -1306,4 +1328,9 @@ int main(int argc, char **argv) // <== Starting point ==
 	catch (gvk::runtime_error&) {}
 	catch (avk::logic_error&) {}
 	catch (avk::runtime_error&) {}
+
+	//if (rdoc::active()) {
+	//	printf("Press Enter to close console window\n");
+	//	system("pause");
+	//}
 }

@@ -6,6 +6,8 @@
 
 #include "helper_functions.hpp"
 
+#include "debug_helper.hpp"
+
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
 // are created CF-times, once for each concurrent frame.
@@ -148,11 +150,13 @@ public:
 			mResultImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
+			rdoc::labelImage(mResultImages[i]->get_image().handle(), "taa.mResultImages", i);
 			layoutTransitions.emplace_back(std::move(mResultImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
 			mResultImagesSrgb[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Srgb, 1, avk::memory_usage::device, avk::image_usage::general_image)
 			);
+			rdoc::labelImage(mResultImagesSrgb[i]->get_image().handle(), "taa.mResultImagesSrgb", i);
 			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 		}
 
