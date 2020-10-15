@@ -63,7 +63,8 @@ namespace rdoc {
 		}
 	}
 
-	void labelImage(VkImage image, const char *name, int optionalIndex = -1) { labelObject(uint64_t(image), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT, name, optionalIndex); }
+	void labelImage (VkImage image,   const char *name, int optionalIndex = -1) { labelObject(uint64_t(image),  VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,  name, optionalIndex); }
+	void labelBuffer(VkBuffer buffer, const char *name, int optionalIndex = -1) { labelObject(uint64_t(buffer), VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT, name, optionalIndex); }
 
 	std::vector<const char*> required_device_extensions() { if (rdoc_api) return { "VK_EXT_debug_marker" }; else return {}; }
 }
@@ -78,6 +79,7 @@ namespace rdoc {
 	void end_capture()		{}
 	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int optionalIndex = -1) {}
 	void labelImage(VkImage image, const char *name, int optionalIndex = -1) {}
+	void labelBuffer(VkBuffer buffer, const char *name, int optionalIndex = -1) {}
 	std::vector<const char*> required_device_extensions() { return {}; }
 }
 

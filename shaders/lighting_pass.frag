@@ -189,7 +189,7 @@ void main()
 	vec3 spec       = materialsBuffer.materials[matIndex].mSpecularReflectivity.rgb * specTexValue;
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
 
-	if (uboMatUsr.mUserInput.z != 0) {
+	if (uboMatUsr.mUserInput.z < 1.f) {
 		// Calculate ambient illumination:
 		vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
 		for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
@@ -202,16 +202,13 @@ void main()
 		// Add all together:
 		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, 1.0);
 
-
-	} else {
-		//oFragColor = vec4(/* diff + */ emissive, 1.0);
+	} else if (uboMatUsr.mUserInput.z < 2.f) {
+		// don't use lights
 		oFragColor = vec4(diff, 1.0);
 
-		//oFragColor = vec4(normalVS, 1.0);
-
-		//float alpha = sample_from_diffuse_texture(matIndex, uv).a;
-		//oFragColor = vec4(diffTexColor, alpha);
-		//if (alpha < 1.0) oFragColor = vec4(1,0,1,1);
+	} else {
+		// other debug modes not used here
+		oFragColor = vec4(1,0,1,1);
 	}
 }
 // -------------------------------------------------------

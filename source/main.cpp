@@ -123,6 +123,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				avk::memory_usage::host_coherent, {},
 				avk::uniform_buffer_meta::create_from_data(mMatricesAndUserInput)
 			);
+			rdoc::labelBuffer(mMatricesUserInputBuffer[i]->handle(), "mMatricesUserInputBuffer", i);
 			mMatricesUserInputBuffer[i]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		}
 	}
@@ -155,6 +156,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				avk::memory_usage::host_coherent, {},
 				avk::uniform_buffer_meta::create_from_size(sizeof(lightsource_data))
 			);
+			rdoc::labelBuffer(mLightsourcesBuffer[i]->handle(), "mLightsourcesBuffer", i);
 		}
 	}
 
@@ -664,6 +666,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mDirLight.dir       = dirLights[0].mDirection;
 			mDirLight.intensity = dirLights[0].mIntensity;
 			mDirLight.boost     = 1.f;
+		} else {
+			// if nothing is in the scene file, use the default from helpers::
+			auto lights = helpers::get_lights();
+			int idxDir  = helpers::get_lightsource_type_begin_index(gvk::lightsource_type::directional);
+			int idxDir2 = helpers::get_lightsource_type_end_index(gvk::lightsource_type::directional);
+			if (idxDir < idxDir2) {
+				mDirLight.dir = lights[idxDir].mDirection;
+				mDirLight.intensity = lights[idxDir].mColor;
+				mDirLight.boost     = 1.f;
+			}
 		}
 
 
