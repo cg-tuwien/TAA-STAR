@@ -4,7 +4,7 @@
 #extension GL_EXT_post_depth_coverage : enable
 // -------------------------------------------------------
 
-#include "shader_common_main.h"
+#include "shader_common_main.glsl"
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 

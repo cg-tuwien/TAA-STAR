@@ -1,3 +1,5 @@
+//? #version 460
+// above line is just for the VS GLSL language integration plugin
 
 // Uniform buffer containing camera matrices and user input:
 // It is updated every frame.
@@ -10,6 +12,9 @@
 	mat4 mCamPos;																									\
 	/* x = tessellation factor, y = displacement strength, z = use lighting/show normals, w = alpha threshold */	\
 	vec4 mUserInput;																								\
+																													\
+	float mLodBias;																									\
+	float pad1, pad2, pad3;																							\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

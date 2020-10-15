@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 // -------------------------------------------------------
 
-#include "shader_common_main.h"
+#include "shader_common_main.glsl"
 
 layout (location = 0) in vec3 aVertexPosition;
 

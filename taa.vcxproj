@@ -28,7 +28,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="shaders\shader_common_main.h" />
+    <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="source\debug_helper.hpp" />
     <ClInclude Include="source\renderdoc_app.h" />
     <ClInclude Include="source\taa.hpp" />

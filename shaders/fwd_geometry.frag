@@ -4,7 +4,7 @@
 #extension GL_EXT_post_depth_coverage : enable
 // -------------------------------------------------------
 
-#include "shader_common_main.h"
+#include "shader_common_main.glsl"
 
 #define TAU 6.28318530718 // TAU = 2 * PI
 
@@ -69,13 +69,23 @@ layout (location = 0) out vec4 oFragColor;
 
 // ###### HELPER FUNCTIONS ###############################
 
+#define SAMPLE_TEXTURE(t,u) sample_texture_with_load_bias((t),(u))
+//#define SAMPLE_TEXTURE(t,u) texture((t),(u))
+
+vec4 sample_texture_with_load_bias(in sampler2D tex, in vec2 uv) {
+	// ideally we'd set a the lod bias when creating the sampler
+	// this is not suitable here though, because we want to experiment with dynamic values
+	float lod = textureQueryLod(tex, uv).y + uboMatUsr.mLodBias;
+	return textureLod(tex, uv, lod);
+}
+
 vec4 sample_from_normals_texture()
 {
 	int matIndex = pushConstants.mMaterialIndex;
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	vec4 normalSample = texture(textures[texIndex], texCoords);
+	vec4 normalSample = SAMPLE_TEXTURE(textures[texIndex], texCoords);
 	#if NORMALMAP_FIX_MISSING_Z
 		if (normalSample.z == 0.0) {	// double-check if z is zero, so this should still work with full .rgb textures, where .z is set
 			#if NORMALMAP_FIX_SIMPLE
@@ -97,7 +107,7 @@ vec4 sample_from_diffuse_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 vec4 sample_from_specular_texture()
@@ -106,7 +116,7 @@ vec4 sample_from_specular_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mSpecularTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mSpecularTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 vec4 sample_from_emissive_texture()
@@ -115,7 +125,7 @@ vec4 sample_from_emissive_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mEmissiveTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mEmissiveTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 

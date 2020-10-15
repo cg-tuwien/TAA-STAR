@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 // -------------------------------------------------------
 
-#include "shader_common_main.h"
+#include "shader_common_main.glsl"
 
 // ###### VERTEX SHADER/PIPELINE INPUT DATA ##############
 // Several vertex attributes (These are the buffers passed

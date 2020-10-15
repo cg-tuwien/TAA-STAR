@@ -3,7 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 // -------------------------------------------------------
 
-#include "shader_common_main.h"
+#include "shader_common_main.glsl"
 
 // ###### MATERIAL DATA ##################################
 // The actual material buffer (of type MaterialGpuData):

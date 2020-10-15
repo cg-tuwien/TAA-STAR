@@ -33,7 +33,7 @@
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
-#define FORWARD_RENDERING 1
+#define FORWARD_RENDERING 0
 
 class wookiee : public gvk::invokee
 {
@@ -48,6 +48,9 @@ class wookiee : public gvk::invokee
 		glm::mat4 mCamPos;
 		// x = unused, y = normal mapping strength, z and w unused
 		glm::vec4 mUserInput;
+
+		float mLodBias;
+		float pad1, pad2, pad3;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -127,7 +130,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_matrices_and_user_input()
 	{
 		// Update the matrices in render() because here we can be sure that mQuakeCam's updates of the current frame are available:
-		mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold } };
+		//mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold } };
+
+		matrices_and_user_input mMatricesAndUserInput = {};
+		mMatricesAndUserInput.mViewMatrix	= mQuakeCam.view_matrix();
+		mMatricesAndUserInput.mProjMatrix	= mQuakeCam.projection_matrix();
+		mMatricesAndUserInput.mCamPos		= glm::translate(mQuakeCam.translation());
+		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
+		mMatricesAndUserInput.mLodBias		= mLodBias;
+
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
@@ -962,6 +973,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this](){
 
+				using namespace ImGui;
+
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
 				static auto texIdsAndDescriptions = [&](){
 
@@ -992,21 +1005,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				auto inFlightIndex = context().main_window()->in_flight_index_for_frame();
 
-				ImGui::Begin("Info & Settings");
-				ImGui::SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-				ImGui::SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
-				ImGui::Text("%.3f ms/frame", 1000.0f / ImGui::GetIO().Framerate);
-				ImGui::Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
-				ImGui::Text("%.3f ms/mModelsCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mModelsCommandBuffer{} time", inFlightIndex)));
-				ImGui::Text("%.3f ms/Anti Aliasing",        mAntiAliasing.duration());
-				ImGui::Text("%.1f FPS", ImGui::GetIO().Framerate);
+				Begin("Info & Settings");
+				SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
+				SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
+				Text("%.3f ms/frame", 1000.0f / GetIO().Framerate);
+				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
+				Text("%.3f ms/mModelsCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mModelsCommandBuffer{} time", inFlightIndex)));
+				Text("%.3f ms/Anti Aliasing",        mAntiAliasing.duration());
+				Text("%.1f FPS", GetIO().Framerate);
 
 				// ac: print camera position
 				glm::vec3 p = mQuakeCam.translation();
-				ImGui::Text("Camera at %.1f %.1f %.1f", p.x, p.y, p.z);
+				Text("Camera at %.1f %.1f %.1f", p.x, p.y, p.z);
 
 				static std::vector<float> accum; // accumulate (then average) 10 frames
-				accum.push_back(ImGui::GetIO().Framerate);
+				accum.push_back(GetIO().Framerate);
 				static std::vector<float> values;
 				if (accum.size() == 10) {
 					values.push_back(std::accumulate(std::begin(accum), std::end(accum), 0) / 10.0f);
@@ -1015,40 +1028,41 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (values.size() > 90) { // Display up to 90(*10) history frames
 					values.erase(values.begin());
 				}
-				ImGui::PlotLines("FPS", values.data(), values.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 150.0f));
+				PlotLines("FPS", values.data(), values.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 150.0f));
 
-				ImGui::TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
-				ImGui::TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
 				
-				ImGui::SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
-				ImGui::SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
+				SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
+				SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
 
-				ImGui::ColorEdit3("dir col", &mDirLight.intensity.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
-				ImGui::InputFloat3("dir light", &mDirLight.dir.x);
-				ImGui::SliderFloat("dir boost", &mDirLight.boost, 0.f, 1.f);
+				ColorEdit3("dir col", &mDirLight.intensity.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
+				InputFloat3("dir light", &mDirLight.dir.x);
+				SliderFloat("dir boost", &mDirLight.boost, 0.f, 1.f);
 
-				ImGui::ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine();
-				ImGui::SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
+				ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
+				SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
-				ImGui::Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
+				Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
 
-				ImGui::SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
-				ImGui::Checkbox("alpha blending", &mUseAlphaBlending);
+				SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
+				Checkbox("alpha blending", &mUseAlphaBlending);
+				InputFloat("lod bias", &mLodBias);
 
-				ImGui::SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
+				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
-				ImGui::Separator();
+				Separator();
 
 				for (auto& tpl : texIdsAndDescriptions) {
 					auto texId = std::get<std::optional<ImTextureID>>(tpl);
 					auto description = std::get<std::string>(tpl);
 					if (texId.has_value()) {
-						ImGui::Image(texId.value(), ImVec2(192, 108)); ImGui::SameLine();
+						Image(texId.value(), ImVec2(192, 108)); SameLine();
 					}
-					ImGui::Text(description.c_str());
+					Text(description.c_str());
 				}
 
-				ImGui::End();
+				End();
 			});
 		}
 		else {
@@ -1227,6 +1241,7 @@ private: // v== Member variables ==v
 	float mAlphaThreshold = 0.001f; // alpha threshold for rendering transparent parts
 	bool mAlphaBlendingActive;
 	bool mDidAllocCommandBuffers = false;
+	float mLodBias;
 };
 
 int main(int argc, char **argv) // <== Starting point ==
