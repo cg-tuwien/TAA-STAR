@@ -1,6 +1,20 @@
 //? #version 460
 // above line is just for the VS GLSL language integration plugin
 
+// ----- helper functions
+
+// Sample textures with LOD-bias (prerequiste: uboMatUsr.mLodBias must exist)
+
+// ideally we'd set a the lod bias when creating the sampler
+// this is not suitable here though, because we want to experiment with dynamic values
+
+#define SAMPLE_TEXTURE(t,u) textureLod((t),(u),(textureQueryLod((t), (u)).y + uboMatUsr.mLodBias))
+//#define SAMPLE_TEXTURE(t,u) texture((t),(u))
+
+
+
+// ----- uniform declarations
+
 // Uniform buffer containing camera matrices and user input:
 // It is updated every frame.
 #define UNIFORMDEF_MatricesAndUserInput uniform MatricesAndUserInput {												\
@@ -32,7 +46,7 @@
 	MaterialGpuData materials[];				\
 }
 
-// ----- structure definitions
+// ----- uniform structure definitions
 
 struct LightsourceGpuData
 {

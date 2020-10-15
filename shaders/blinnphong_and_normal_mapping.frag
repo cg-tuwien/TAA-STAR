@@ -65,7 +65,7 @@ vec4 sample_from_normals_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 // ac:
@@ -75,7 +75,7 @@ vec4 sample_from_diffuse_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 
@@ -118,9 +118,6 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
-	// ac: discard transparent parts (hack to at least see transparency in the deferred shading setup - not really nice)
-	//if (sample_from_diffuse_texture().a < 0.5) { discard; return; }
-
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	float l = length(normalVS.xy);
 	vec2 sphericalVS = vec2((l == 0) ? 0 : acos(clamp(normalVS.x / l, -1, 1)), asin(normalVS.z));

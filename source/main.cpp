@@ -33,7 +33,7 @@
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
-#define FORWARD_RENDERING 0
+#define FORWARD_RENDERING 1
 
 class wookiee : public gvk::invokee
 {

@@ -32,9 +32,7 @@
     <ClInclude Include="source\taa.hpp" />
     <ClInclude Include="source\renderdoc_app.h" />
     <ClInclude Include="source\debug_helper.hpp" />
-    <ClInclude Include="shaders\shader_common_main.glsl">
-      <Filter>shaders</Filter>
-    </ClInclude>
+    <ClInclude Include="shaders\shader_common_main.glsl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">

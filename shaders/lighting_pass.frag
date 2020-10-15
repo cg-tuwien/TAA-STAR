@@ -51,7 +51,7 @@ vec4 sample_from_diffuse_texture(int matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 vec4 sample_from_specular_texture(int matIndex, vec2 uv)
@@ -59,7 +59,7 @@ vec4 sample_from_specular_texture(int matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mSpecularTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mSpecularTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 vec4 sample_from_emissive_texture(int matIndex, vec2 uv) // ac
@@ -67,7 +67,7 @@ vec4 sample_from_emissive_texture(int matIndex, vec2 uv) // ac
 	int texIndex = materialsBuffer.materials[matIndex].mEmissiveTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mEmissiveTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
 // Calculates the light attenuation dividend for the given attenuation vector.

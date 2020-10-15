@@ -69,16 +69,6 @@ layout (location = 0) out vec4 oFragColor;
 
 // ###### HELPER FUNCTIONS ###############################
 
-#define SAMPLE_TEXTURE(t,u) sample_texture_with_load_bias((t),(u))
-//#define SAMPLE_TEXTURE(t,u) texture((t),(u))
-
-vec4 sample_texture_with_load_bias(in sampler2D tex, in vec2 uv) {
-	// ideally we'd set a the lod bias when creating the sampler
-	// this is not suitable here though, because we want to experiment with dynamic values
-	float lod = textureQueryLod(tex, uv).y + uboMatUsr.mLodBias;
-	return textureLod(tex, uv, lod);
-}
-
 vec4 sample_from_normals_texture()
 {
 	int matIndex = pushConstants.mMaterialIndex;
