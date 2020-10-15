@@ -379,7 +379,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSkyboxCommandBuffer[i]->bind_descriptors(mSkyboxPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({  // Bind the descriptors which describe resources used by shaders.
 				descriptor_binding(0, 0, mMatricesUserInputBuffer[i])                                  // In this case, we have one uniform buffer as resource (we have also declared that during mSkyboxPipeline creation).
 			}));
+#pragma warning( push )
+#pragma warning( disable : 4267)
 			mSkyboxCommandBuffer[i]->draw_indexed(*mSphereIndexBuffer, *mSphereVertexBuffer); // Record the draw call
+#pragma warning( pop )
 			mSkyboxCommandBuffer[i]->end_render_pass();
 			helpers::record_timing_interval_end(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
 			mSkyboxCommandBuffer[i]->end_recording(); // Done recording. We're not going to modify this command buffer anymore.
@@ -780,7 +783,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
 			"shaders/transform_and_pass_on.vert",
+#pragma warning( push )
+#pragma warning( disable : 4267)
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
+#pragma warning( pop )
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
@@ -918,6 +924,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					// Bind the vertex input buffers in the right order (corresponding to the layout
 					// specifiers in the vertex shader) and issue the actual draw call:
+#pragma warning( push )
+#pragma warning( disable : 4267)
 					mModelsCommandBuffer[i]->draw_indexed(
 						*drawCall.mIndexBuffer,
 						*drawCall.mPositionsBuffer,
@@ -926,6 +934,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						*drawCall.mTangentsBuffer,
 						*drawCall.mBitangentsBuffer
 					);
+#pragma warning( pop )
 				}
 			}
 
@@ -940,6 +949,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						firstPipe->layout(),	// Push constants must match the pipeline's layout
 						pushc					// Push the actual data
 					);
+#pragma warning( push )
+#pragma warning( disable : 4267)
 					mModelsCommandBuffer[i]->draw_indexed(
 						*drawCall.mIndexBuffer,
 						*drawCall.mPositionsBuffer,
@@ -948,6 +959,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						*drawCall.mTangentsBuffer,
 						*drawCall.mBitangentsBuffer
 					);
+#pragma warning( pop )
 				}
 			}
 #else
@@ -985,7 +997,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this]() {
-				/*
+
 				using namespace ImGui;
 
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
@@ -1033,13 +1045,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				accum.push_back(GetIO().Framerate);
 				static std::vector<float> values;
 				if (accum.size() == 10) {
-					values.push_back(std::accumulate(std::begin(accum), std::end(accum), 0) / 10.0f);
+					values.push_back(std::accumulate(std::begin(accum), std::end(accum), 0.0f) / 10.0f);
 					accum.clear();
 				}
 				if (values.size() > 90) { // Display up to 90(*10) history frames
 					values.erase(values.begin());
 				}
-				PlotLines("FPS", values.data(), values.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 150.0f));
+				PlotLines("FPS", values.data(), static_cast<int>(values.size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 150.0f));
 
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
@@ -1085,7 +1097,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				End();
-				*/
 			});
 		}
 		else {
