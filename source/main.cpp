@@ -4,6 +4,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include "helper_functions.hpp"
+
 #include "taa.hpp"
 
 #include <string>
@@ -608,7 +609,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 							// collect all the instances of the mesh (it may appear in multiple nodes, thus using different transforms)
 							auto modelBaseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
-							auto transforms = get_mesh_instance_transforms(modelData.mLoadedModel, meshIndex, modelBaseTransform);
+							auto transforms = get_mesh_instance_transforms(modelData.mLoadedModel, static_cast<int>(meshIndex), modelBaseTransform);
 							//std::cout << "Mesh " << meshIndex << ": " << transforms.size() << " transforms" << std::endl;
 
 							// build push constants (per mesh-instance) vector
@@ -984,7 +985,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this]() {
-
+				/*
 				using namespace ImGui;
 
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
@@ -1084,6 +1085,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				End();
+				*/
 			});
 		}
 		else {

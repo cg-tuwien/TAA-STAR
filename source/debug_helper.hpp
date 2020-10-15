@@ -48,7 +48,7 @@ namespace rdoc {
 	void start_capture()	{ if (rdoc_api && !capturingActive) { rdoc_api->StartFrameCapture(NULL, NULL); capturingActive = true;  } }
 	void end_capture()		{ if (rdoc_api &&  capturingActive) { rdoc_api->EndFrameCapture  (NULL, NULL); capturingActive = false; } }
 
-	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int optionalIndex = -1) {
+	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int64_t optionalIndex = -1) {
 		if (!pfnDebugMarkerSetObjectNameEXT) return;
 		VkDebugMarkerObjectNameInfoEXT nameInfo = {};
 		nameInfo.sType			= VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT;
@@ -64,8 +64,8 @@ namespace rdoc {
 		}
 	}
 
-	void labelImage (VkImage image,   const char *name, int optionalIndex = -1) { labelObject(uint64_t(image),  VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,  name, optionalIndex); }
-	void labelBuffer(VkBuffer buffer, const char *name, int optionalIndex = -1) { labelObject(uint64_t(buffer), VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT, name, optionalIndex); }
+	void labelImage (VkImage image,   const char *name, int64_t optionalIndex = -1) { labelObject(uint64_t(image),  VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,  name, optionalIndex); }
+	void labelBuffer(VkBuffer buffer, const char *name, int64_t optionalIndex = -1) { labelObject(uint64_t(buffer), VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT, name, optionalIndex); }
 
 	std::vector<const char*> required_device_extensions() { if (rdoc_api) return { "VK_EXT_debug_marker" }; else return {}; }
 }
@@ -78,9 +78,9 @@ namespace rdoc {
 	bool active()			{ return false; }
 	void start_capture()	{}
 	void end_capture()		{}
-	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int optionalIndex = -1) {}
-	void labelImage(VkImage image, const char *name, int optionalIndex = -1) {}
-	void labelBuffer(VkBuffer buffer, const char *name, int optionalIndex = -1) {}
+	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int64_t optionalIndex = -1) {}
+	void labelImage(VkImage image, const char *name, int64_t optionalIndex = -1) {}
+	void labelBuffer(VkBuffer buffer, const char *name, int64_t optionalIndex = -1) {}
 	std::vector<const char*> required_device_extensions() { return {}; }
 }
 

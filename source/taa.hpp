@@ -51,7 +51,7 @@ public:
 	static std::array<glm::vec2, Len> halton_2_3(glm::vec2 aScale) {
 		std::array<glm::vec2, Len> result;
 		for (size_t i = 0; i < Len; i++) {
-			result[i] = aScale * glm::vec2{ halton(i + 1, 2) - 0.5f, halton(i + 1, 3) - 0.5f };
+			result[i] = aScale * glm::vec2{ halton(int(i) + 1, 2) - 0.5f, halton(int(i) + 1, 3) - 0.5f };
 		}
 		return result;
 	}
