@@ -19,6 +19,7 @@ class taa : public gvk::invokee
 		int mColorClampingOrClipping;
 		VkBool32 mDepthCulling;
 		VkBool32 mTextureLookupUnjitter;
+		VkBool32 mBypassHistoryUpdate;
 	};
 
 	struct matrices_for_taa {
@@ -99,8 +100,9 @@ public:
 			break;
 		}
 		
-		if (mJitterSlowMotion > 0) aFrameId /= mJitterSlowMotion;
+		if (mJitterSlowMotion  > 1) aFrameId /= mJitterSlowMotion;
 		if (mFixedJitterIndex >= 0) aFrameId = mFixedJitterIndex;
+
 
 		auto pos = sampleOffsetValues[aFrameId % numSampleOffsets];
 
@@ -286,6 +288,16 @@ public:
 		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
 		assert (nullptr != quakeCamera);
 
+		// jitter-slow motion -> bypass history update on unchanged frames
+		if (mJitterSlowMotion > 1) {
+			static gvk::window::frame_id_t lastJitterIndex = 0;
+			auto thisJitterIndex = gvk::context().main_window()->current_frame() / mJitterSlowMotion;
+			mBypassHistoryUpdate = (thisJitterIndex == lastJitterIndex);
+			lastJitterIndex = thisJitterIndex;
+		} else {
+			mBypassHistoryUpdate = false;
+		}
+
 		float effectiveAlpha = mResetHistory ? 1.f : mAlpha;
 		mResetHistory = false;
 
@@ -295,6 +307,7 @@ public:
 		mTaaPushConstants.mColorClampingOrClipping = mColorClampingOrClipping;
 		mTaaPushConstants.mDepthCulling = mDepthCulling;
 		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
+		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -422,4 +435,5 @@ private:
 	float mJitterExtraScale = 1.0f;
 	int mJitterSlowMotion = 1;
 	float mJitterRotateDegrees = 0.f;
+	bool mBypassHistoryUpdate = false; // used by slow motion
 };

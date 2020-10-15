@@ -23,6 +23,7 @@ namespace rdoc {
 	RENDERDOC_API_1_1_2* rdoc_api = nullptr;
 	PFN_vkDebugMarkerSetObjectNameEXT pfnDebugMarkerSetObjectNameEXT = VK_NULL_HANDLE;
 	VkDevice currentDevice = VK_NULL_HANDLE;
+	bool capturingActive = false;
 
 	void init() {
 		if (HMODULE mod = GetModuleHandleA("renderdoc.dll")) {
@@ -44,8 +45,8 @@ namespace rdoc {
 	}
 
 	bool active()			{ return rdoc_api; }
-	void start_capture()	{ if (rdoc_api) rdoc_api->StartFrameCapture(NULL, NULL); }
-	void end_capture()		{ if (rdoc_api) rdoc_api->EndFrameCapture(NULL, NULL); }
+	void start_capture()	{ if (rdoc_api && !capturingActive) { rdoc_api->StartFrameCapture(NULL, NULL); capturingActive = true;  } }
+	void end_capture()		{ if (rdoc_api &&  capturingActive) { rdoc_api->EndFrameCapture  (NULL, NULL); capturingActive = false; } }
 
 	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int optionalIndex = -1) {
 		if (!pfnDebugMarkerSetObjectNameEXT) return;

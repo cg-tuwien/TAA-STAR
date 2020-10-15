@@ -17,6 +17,7 @@ layout(push_constant) uniform PushConstants {
 	int mColorClampingOrClipping;
 	bool mDepthCulling;
 	bool mTextureLookupUnjitter;
+	bool mBypassHistoryUpdate;
 } pushConstants;
 
 layout(set = 1, binding = 0) uniform Matrices {
@@ -95,6 +96,11 @@ void main()
 {
 	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
 	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uCurrentFrame, 0);
+
+	if (pushConstants.mBypassHistoryUpdate) {
+		imageStore(uResult, iuv, vec4(rgb2srgb(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
+		return;
+	}
 	
 	vec3 currentColor;
 	vec3 rgbMin;

@@ -983,12 +983,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
 		if(nullptr != imguiManager) {
-			imguiManager->add_callback([this](){
+			imguiManager->add_callback([this]() {
 
 				using namespace ImGui;
 
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
-				static auto texIdsAndDescriptions = [&](){
+				static auto texIdsAndDescriptions = [&]() {
 
 					// Gather all the framebuffer attachments to display them
 					std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
@@ -997,13 +997,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						if (mFramebuffer[0]->image_view_at(i)->get_image().config().samples != vk::SampleCountFlagBits::e1) {
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
-						}
-						else {
+						} else {
 							if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
-							}
-							else {
+							} else {
 								v.emplace_back(
 									ImGui_ImplVulkan_AddTexture(smplr->handle(), mFramebuffer[0]->image_view_at(i)->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
 									fmt::format("Attachment #{}", i)
@@ -1023,7 +1021,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				Text("%.3f ms/frame", 1000.0f / GetIO().Framerate);
 				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
 				Text("%.3f ms/mModelsCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mModelsCommandBuffer{} time", inFlightIndex)));
-				Text("%.3f ms/Anti Aliasing",        mAntiAliasing.duration());
+				Text("%.3f ms/Anti Aliasing", mAntiAliasing.duration());
 				Text("%.1f FPS", GetIO().Framerate);
 
 				// ac: print camera position
@@ -1044,7 +1042,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
-				
+
 				SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
 				SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
 
@@ -1063,15 +1061,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
-				Separator();
+				static int captureNumFrames = 1;
+				if (rdoc::active()) {
+					Separator();
+					if (Button("capture") && !mCaptureFramesLeft && captureNumFrames > 0) { mCaptureFramesLeft = captureNumFrames; mStartCapture = true; }
+					SameLine();
+					PushItemWidth(60);
+					InputInt("frames", &captureNumFrames);
+					PopItemWidth();
+				}
 
-				for (auto& tpl : texIdsAndDescriptions) {
-					auto texId = std::get<std::optional<ImTextureID>>(tpl);
-					auto description = std::get<std::string>(tpl);
-					if (texId.has_value()) {
-						Image(texId.value(), ImVec2(192, 108)); SameLine();
+				//Separator();
+				if (CollapsingHeader("Images")) {
+					for (auto& tpl : texIdsAndDescriptions) {
+						auto texId = std::get<std::optional<ImTextureID>>(tpl);
+						auto description = std::get<std::string>(tpl);
+						if (texId.has_value()) {
+							Image(texId.value(), ImVec2(192, 108)); SameLine();
+						}
+						Text(description.c_str());
 					}
-					Text(description.c_str());
 				}
 
 				End();
@@ -1178,6 +1187,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void render() override
 	{
+		// renderdoc capturing
+		if (mStartCapture) {
+			mStartCapture = false;
+			rdoc::start_capture();
+		} else if (mCaptureFramesLeft) {
+			mCaptureFramesLeft--;
+			if (!mCaptureFramesLeft) rdoc::end_capture();
+		}
+
+
 		auto mainWnd = gvk::context().main_window();
 		update_matrices_and_user_input();
 		update_lightsources();
@@ -1254,6 +1273,9 @@ private: // v== Member variables ==v
 	bool mAlphaBlendingActive;
 	bool mDidAllocCommandBuffers = false;
 	float mLodBias;
+
+	bool mStartCapture;
+	int mCaptureFramesLeft = 0;
 };
 
 int main(int argc, char **argv) // <== Starting point ==
