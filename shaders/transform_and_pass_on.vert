@@ -2,6 +2,8 @@
 #extension GL_GOOGLE_include_directive : enable
 // -------------------------------------------------------
 
+#include "shader_common_main.h"
+
 // ###### VERTEX SHADER/PIPELINE INPUT DATA ##############
 // Several vertex attributes (These are the buffers passed
 // to command_buffer_t::draw_indexed in the same order):
@@ -20,16 +22,8 @@ layout(push_constant) uniform PushConstants {
 
 // "mMatrices" uniform buffer containing camera matrices:
 // It is updated every frame.
-layout(set = 1, binding = 0) uniform MatricesAndUserInput {
-	// view matrix as returned from quake_camera
-	mat4 mViewMatrix;
-	// projection matrix as returned from quake_camera
-	mat4 mProjMatrix;
-	// transformation matrix which tranforms to camera's position
-	mat4 mCamPos;
-	// x = tessellation factor, y = displacement strength, z and w unused
-	vec4 mUserInput;
-} uboMatUsr;
+layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
+
 // -------------------------------------------------------
 
 // ###### DATA PASSED ON ALONG THE PIPELINE ##############

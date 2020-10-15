@@ -1,19 +1,14 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
+// -------------------------------------------------------
+
+#include "shader_common_main.h"
 
 layout (location = 0) in vec3 aVertexPosition;
 
 layout (location = 0) out vec3 vSphereCoords;
 
-layout(set = 0, binding = 0) uniform MatricesAndUserInput {
-	// view matrix as returned from quake_camera
-	mat4 mViewMatrix;
-	// projection matrix as returned from quake_camera
-	mat4 mProjMatrix;
-	// transformation matrix which tranforms to camera's position
-	mat4 mCamPos;
-	// x = tessellation factor, y = displacement strength, z and w unused
-	vec4 mUserInput;
-} uboMatUsr;
+layout(set = 0, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 
 
 void main()
