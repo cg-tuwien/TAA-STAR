@@ -9,6 +9,7 @@ layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
 layout(set = 0, binding = 5, r16f) writeonly uniform restrict image2D uResult;
+layout(set = 0, binding = 6, r16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
 // ###### PUSH CONSTANTS AND UBOs ########################
@@ -99,6 +100,7 @@ void main()
 
 	if (pushConstants.mBypassHistoryUpdate) {
 		imageStore(uResult, iuv, vec4(rgb2srgb(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
+		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
 	
@@ -142,13 +144,6 @@ void main()
 
 	vec3 antiAliased = currentColor * alpha + historyColor * (1 - alpha);
 
-	#if 0
-	// show size of colour bounding box
-	vec3 tmp = rgbMax - rgbMin;
-	//antiAliased = tmp;
-	antiAliased = vec3(tmp.x * tmp.y * tmp.z);
-	#endif
-
 	// write rgb into uResult
 	// - imageStore() cannot handle sRGB images
 	// - we write sRGB values into an RGB image and copy the image into an sRGB image later as a workaround
@@ -156,6 +151,12 @@ void main()
 	vec3 srgb = rgb2srgb(antiAliased);
 
 	imageStore(uResult, iuv, vec4(srgb, 1.0));
+
+
+	// size of colour bounding box
+	vec3 tmp = rgbMax - rgbMin;
+	imageStore(uDebug,  iuv, vec4(tmp, tmp.x * tmp.y * tmp.z));
+
 }
 // -------------------------------------------------------
 

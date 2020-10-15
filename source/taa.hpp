@@ -172,6 +172,12 @@ public:
 			);
 			rdoc::labelImage(mResultImagesSrgb[i]->get_image().handle(), "taa.mResultImagesSrgb", i);
 			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
+			mDebugImages[i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mDebugImages[i]->get_image().handle(), "taa.mDebugImages", i);
+			layoutTransitions.emplace_back(std::move(mDebugImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 		}
 
 		std::vector<std::reference_wrapper<avk::command_buffer_t>> commandBufferReferences;
@@ -227,6 +233,7 @@ public:
 			descriptor_binding(0, 3, *mResultImagesSrgb[0]),
 			descriptor_binding(0, 4, *mSrcDepth[0]),
 			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
 			descriptor_binding(1, 0, mMatricesBuffer[0]),
 			push_constant_binding_data { shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -352,6 +359,7 @@ public:
 				descriptor_binding(0, 3, *mResultImagesSrgb[inFlightLastIndex]),
 				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),
 				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),
+				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),
 				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
 			}));
 			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
@@ -417,6 +425,7 @@ private:
 	// Copying the result images into actually the same result images (but only sRGB format)
 	// is a rather stupid workaround. It is also quite resource-intensive... Life's hard!
 	std::array<avk::image_view, CF> mResultImagesSrgb;
+	std::array<avk::image_view, CF> mDebugImages;
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;
 	std::array<glm::mat4, CF> mHistoryViewMatrices;
