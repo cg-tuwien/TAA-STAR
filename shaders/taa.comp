@@ -15,10 +15,12 @@ layout(set = 0, binding = 6, r16f) writeonly uniform restrict image2D uDebug;
 // ###### PUSH CONSTANTS AND UBOs ########################
 layout(push_constant) uniform PushConstants {
 	vec4 mJitterAndAlpha;
-	int mColorClampingOrClipping;
+	int  mColorClampingOrClipping;
 	bool mDepthCulling;
 	bool mTextureLookupUnjitter;
 	bool mBypassHistoryUpdate;
+	int  mDebugMode;
+	float mDebugScale;
 } pushConstants;
 
 layout(set = 1, binding = 0) uniform Matrices {
@@ -103,6 +105,10 @@ void main()
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
+
+	bool rejected  = false;
+	bool rectified = false;
+	vec3 rectified_diff;
 	
 	vec3 currentColor;
 	vec3 rgbMin;
@@ -122,14 +128,19 @@ void main()
 	vec2 jitter = pushConstants.mJitterAndAlpha.xy;
 	float alpha = pushConstants.mJitterAndAlpha.a;
 
+	// ---- history rejection ----
 	// cull by depth
 	if (pushConstants.mDepthCulling) {
 		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
 			alpha = 1;
+			rejected = true;
 		}
 	}
+
+	// ---- history rectification ----
+	vec3 origHistorColor = historyColor;
 
 	// clip color
 	switch (pushConstants.mColorClampingOrClipping) {
@@ -142,6 +153,11 @@ void main()
 			break;
 	}
 
+	rectified_diff = historyColor - origHistorColor;
+	rectified = any(greaterThan(abs(rectified_diff), vec3(0.001)));
+
+
+	// ---- blending ----
 	vec3 antiAliased = currentColor * alpha + historyColor * (1 - alpha);
 
 	// write rgb into uResult
@@ -152,10 +168,20 @@ void main()
 
 	imageStore(uResult, iuv, vec4(srgb, 1.0));
 
+	// --- debug ---
 
-	// size of colour bounding box
-	vec3 tmp = rgbMax - rgbMin;
-	imageStore(uDebug,  iuv, vec4(tmp, tmp.x * tmp.y * tmp.z));
+	if (pushConstants.mDebugMode == 1) {
+		// colour bounding box, individual
+		vec3 tmp = rgbMax - rgbMin;
+		imageStore(uDebug,  iuv, vec4(tmp, 0));
+	} else if (pushConstants.mDebugMode == 2) {
+		// colour bounding box, size
+		vec3 tmp = rgbMax - rgbMin;
+		imageStore(uDebug,  iuv, vec4(vec3(tmp.x * tmp.y * tmp.z) * pushConstants.mDebugScale, 0));
+	} else if (pushConstants.mDebugMode == 3) {
+		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
+		imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, length(rectified_diff) * pushConstants.mDebugScale, 0, 0));
+	}
 
 }
 // -------------------------------------------------------

@@ -675,10 +675,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			auto lights = helpers::get_lights();
 			int idxDir  = helpers::get_lightsource_type_begin_index(gvk::lightsource_type::directional);
 			int idxDir2 = helpers::get_lightsource_type_end_index(gvk::lightsource_type::directional);
+			int idxAmb  = helpers::get_lightsource_type_begin_index(gvk::lightsource_type::ambient);
+			int idxAmb2 = helpers::get_lightsource_type_end_index(gvk::lightsource_type::ambient);
 			if (idxDir < idxDir2) {
 				mDirLight.dir = lights[idxDir].mDirection;
 				mDirLight.intensity = lights[idxDir].mColor;
 				mDirLight.boost     = 1.f;
+			}
+			if (idxAmb < idxAmb2) {
+				//mAmbLight.col		= lights[idxAmb].mColor;
+				//mAmbLight.boost     = 1.f;
 			}
 		}
 

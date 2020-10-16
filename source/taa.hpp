@@ -20,6 +20,8 @@ class taa : public gvk::invokee
 		VkBool32 mDepthCulling;
 		VkBool32 mTextureLookupUnjitter;
 		VkBool32 mBypassHistoryUpdate;
+		int mDebugMode;
+		float mDebugScale;
 	};
 
 	struct matrices_for_taa {
@@ -271,6 +273,10 @@ public:
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
 				if (Button("reset")) mResetHistory = true;
+				static const char* sImageToShowValues[] = { "result", "color bb (rgb)", "color bb(size)", "rejection" };
+				Combo("display", &mImageToShow, sImageToShowValues, IM_ARRAYSIZE(sImageToShowValues));
+				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 20.f, "%.0f");
+
 				if (CollapsingHeader("Jitter debug")) {
 					SliderInt ("lock",		&mFixedJitterIndex, -1, 16);
 					InputFloat("scale",		&mJitterExtraScale, 0.f, 0.f, "%.0f");
@@ -315,6 +321,9 @@ public:
 		mTaaPushConstants.mDepthCulling = mDepthCulling;
 		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
 		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
+		mTaaPushConstants.mDebugMode = mImageToShow;
+		mTaaPushConstants.mDebugScale = mDebugScale;
+
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -377,8 +386,11 @@ public:
 				memory_access::transfer_write_access, /* -> */ memory_access::transfer_read_access
 			);
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
-			blit_image(mResultImagesSrgb[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			
+			//blit_image(mResultImagesSrgb[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+
+			auto &image_to_show = mImageToShow == 0 ? mResultImagesSrgb[inFlightIndex]->get_image() : mDebugImages[inFlightIndex]->get_image();
+			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+
 			helpers::record_timing_interval_end(cmdbfr->handle(), fmt::format("TAA {}", inFlightIndex));
 		}
 		// -------------------------- If Anti-Aliasing is disabled, do nothing but blit/copy ------------------------------
@@ -445,4 +457,7 @@ private:
 	int mJitterSlowMotion = 1;
 	float mJitterRotateDegrees = 0.f;
 	bool mBypassHistoryUpdate = false; // used by slow motion
+
+	int mImageToShow = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
+	float mDebugScale = 1.f;
 };
