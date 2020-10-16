@@ -2,6 +2,8 @@
 #extension GL_EXT_samplerless_texture_functions : require
 #extension GL_GOOGLE_include_directive : enable
 
+#include "shader_cpu_common.h"
+
 // ###### SRC/DST IMAGES #################################
 layout(set = 0, binding = 0) uniform sampler uSampler;
 layout(set = 0, binding = 1) uniform texture2D uCurrentFrame;
@@ -91,6 +93,13 @@ vec3 rgb2srgb(vec3 rgb)
 	srgb.b = srgbGammaCorr(rgb.b);
 	return srgb;
 }
+
+#if TAA_OUTPUT_IS_SRGB
+#define TO_OUTPUT_FORMAT(x) rgb2srgb((x))
+#else
+#define TO_OUTPUT_FORMAT(x) (x)
+#endif
+
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -101,7 +110,7 @@ void main()
 	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uCurrentFrame, 0);
 
 	if (pushConstants.mBypassHistoryUpdate) {
-		imageStore(uResult, iuv, vec4(rgb2srgb(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
+		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
@@ -160,13 +169,13 @@ void main()
 	// ---- blending ----
 	vec3 antiAliased = currentColor * alpha + historyColor * (1 - alpha);
 
+	// if TAA_OUTPUT_IS_SRGB:
 	// write rgb into uResult
 	// - imageStore() cannot handle sRGB images
 	// - we write sRGB values into an RGB image and copy the image into an sRGB image later as a workaround
 	// => we have to manually convert linear RGB to sRGB
-	vec3 srgb = rgb2srgb(antiAliased);
 
-	imageStore(uResult, iuv, vec4(srgb, 1.0));
+	imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(antiAliased), 1.0));
 
 	// --- debug ---
 

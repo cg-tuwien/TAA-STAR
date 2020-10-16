@@ -7,6 +7,7 @@
 #include "helper_functions.hpp"
 
 #include "debug_helper.hpp"
+#include "shader_cpu_common.h"
 
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
@@ -164,13 +165,14 @@ public:
 			auto h = mSrcColor[i]->get_image().height();
 
 			mResultImages[i] = gvk::context().create_image_view(
-				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
 			rdoc::labelImage(mResultImages[i]->get_image().handle(), "taa.mResultImages", i);
 			layoutTransitions.emplace_back(std::move(mResultImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
 			mResultImagesSrgb[i] = gvk::context().create_image_view(
-				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Srgb, 1, avk::memory_usage::device, avk::image_usage::general_image)
+				//gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_image)
+				gvk::context().create_image(w, h, TAA_OUTPUT_IS_SRGB ? TAA_IMAGE_FORMAT_SRGB : TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_image)
 			);
 			rdoc::labelImage(mResultImagesSrgb[i]->get_image().handle(), "taa.mResultImagesSrgb", i);
 			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
@@ -283,6 +285,7 @@ public:
 					InputInt  ("slowdown",	&mJitterSlowMotion);
 					InputFloat("rotate",	&mJitterRotateDegrees);
 				}
+				Checkbox("blit", &mBlit);
 				End();
 			});
 		}
@@ -341,7 +344,8 @@ public:
 		cmdbfr->begin_recording();
 
 		// ---------------------- If Anti-Aliasing is enabled perform the following actions --------------------------
-		if (mTaaEnabled) {
+		static bool isVeryFirstFrame = true;
+		if (mTaaEnabled && !isVeryFirstFrame) {	// history is invalid for the very first frame
 
 			// fill matrices UBO
 			matrices_for_taa matrices;
@@ -380,7 +384,13 @@ public:
 			);
 
 			// Finally, copy into sRGB image:
-			copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			//copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			if (TAA_OUTPUT_IS_SRGB) {
+				copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			} else {
+				blit_image(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			}
+
 			cmdbfr->establish_global_memory_barrier(
 				pipeline_stage::transfer,             /* -> */ pipeline_stage::transfer,
 				memory_access::transfer_write_access, /* -> */ memory_access::transfer_read_access
@@ -402,6 +412,8 @@ public:
 		}
 		
 		cmdbfr->end_recording();
+
+		isVeryFirstFrame = false;
 
 		// The swap chain provides us with an "image available semaphore" for the current frame.
 		// Only after the swapchain image has become available, we may start rendering into it.
@@ -460,4 +472,6 @@ private:
 
 	int mImageToShow = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
 	float mDebugScale = 1.f;
+
+	bool mBlit = false;
 };
