@@ -101,6 +101,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mDisableMip = false;
 	bool mUseAlphaBlending = true;
 
+	bool mStartCapture;
+	int mCaptureFramesLeft = 0;
+
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
 	bool mFlipManually			= true;
@@ -1006,6 +1009,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				using namespace ImGui;
 
+				static bool firstTimeInit = true;
+
+				static struct { glm::vec3 t; glm::quat r; } savedCamState = {};
+				if (firstTimeInit) savedCamState = { mQuakeCam.translation(), mQuakeCam.rotation() };
+
+
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
 				static auto texIdsAndDescriptions = [&]() {
 
@@ -1080,14 +1089,30 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
-				static int captureNumFrames = 1;
-				if (rdoc::active()) {
-					Separator();
-					if (Button("capture") && !mCaptureFramesLeft && captureNumFrames > 0) { mCaptureFramesLeft = captureNumFrames; mStartCapture = true; }
+				if (CollapsingHeader("Debug")) {
+					static int captureNumFrames = 1;
+					if (rdoc::active()) {
+						Separator();
+						if (Button("capture") && !mCaptureFramesLeft && captureNumFrames > 0) { mCaptureFramesLeft = captureNumFrames; mStartCapture = true; }
+						SameLine();
+						PushItemWidth(60);
+						InputInt("frames", &captureNumFrames);
+						PopItemWidth();
+					}
+					Checkbox("rot", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
+					Checkbox("auto move", &mAutoMovement);
 					SameLine();
 					PushItemWidth(60);
-					InputInt("frames", &captureNumFrames);
+					Combo("##auto movement unit", &mAutoMovementUnits, "/sec\0/frame\0");
 					PopItemWidth();
+					SameLine();
+					if (Button("set&cap")) {
+						mAutoMovement = true;
+						mCaptureFramesLeft = captureNumFrames; mStartCapture = true;
+					}
+					if (Button("save cam")) savedCamState = { mQuakeCam.translation(), mQuakeCam.rotation() };
+					SameLine();
+					if (Button("restore cam")) { mQuakeCam.set_translation(savedCamState.t); mQuakeCam.set_rotation(savedCamState.r); }
 				}
 
 				//Separator();
@@ -1103,6 +1128,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				End();
+
+				firstTimeInit = false;
 			});
 		}
 		else {
@@ -1168,6 +1195,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		if (inFlightIndex == 1 + cConcurrentFrames) {
 			mStoredCommandBuffers.clear();
+		}
+
+		// auto-movement
+		static float tLast = 0.f;
+		float t = static_cast<float>(glfwGetTime());
+		float dt = tLast ? t - tLast : 0.f;
+		tLast = t;
+		if (mAutoMovementUnits == 1) dt = 1.f;
+		if (mAutoMovement && mAutoRotate) {
+			glm::vec2 rotation = glm::radians(mAutoRotateDegrees) * dt;
+			glm::quat rotHoriz = glm::quat_cast(glm::rotate(rotation.x, glm::vec3(0.f, 1.f, 0.f)));
+			glm::quat rotVert =  glm::quat_cast(glm::rotate(rotation.y, glm::vec3(1.f, 0.f, 0.f)));
+			mQuakeCam.set_rotation(rotHoriz * mQuakeCam.rotation() * rotVert);
 		}
 		
 		// Let Temporal Anti-Aliasing modify the camera's projection matrix:
@@ -1293,8 +1333,11 @@ private: // v== Member variables ==v
 	bool mDidAllocCommandBuffers = false;
 	float mLodBias;
 
-	bool mStartCapture;
-	int mCaptureFramesLeft = 0;
+	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
+	bool mAutoRotate = true;
+	bool mAutoMovement = false;
+	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
+
 };
 
 int main(int argc, char **argv) // <== Starting point ==
@@ -1311,6 +1354,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool forceValidation = false;
 		bool disableMip = false;
 		bool disableAlphaBlending = false;
+		int  capture_n_frames = 0;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strcmp("--", argv[i])) {
@@ -1328,6 +1372,12 @@ int main(int argc, char **argv) // <== Starting point ==
 				} else if (0 == _stricmp(argv[i], "-noblend")) {
 					disableAlphaBlending = true;
 					LOG_INFO("Alpha-blending disabled via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-capture")) {
+					i++;
+					if (i >= argc) { badCmd = true; break; }
+					capture_n_frames = atoi(argv[i]);
+					if (capture_n_frames < 1) { badCmd = true; break; }
+
 				} else {
 					badCmd = true;
 					break;
@@ -1341,7 +1391,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [-validation] [-nomip] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-novalidation] [-validation] [-nomip] [-capture <numFrames>] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
@@ -1371,6 +1421,12 @@ int main(int argc, char **argv) // <== Starting point ==
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
 		chewbacca.mDisableMip = disableMip;
 		chewbacca.mUseAlphaBlending = !disableAlphaBlending;
+
+		// setup capturing if RenderDoc is active
+		if (capture_n_frames > 0 && rdoc::active()) {
+			chewbacca.mCaptureFramesLeft = capture_n_frames;
+			chewbacca.mStartCapture = true;
+		}
 
 		auto modifyValidationFunc = [&](gvk::validation_layers &val_layers) {
 			// ac: disable or enforce validation layers via command line (renderdoc crashes when they are enabled....)
