@@ -22,6 +22,8 @@ layout(push_constant) uniform PushConstants {
 	bool mTextureLookupUnjitter;
 	bool mBypassHistoryUpdate;
 	bool mUseYCoCg;
+	bool mVarianceClipping;
+	float mVarClipGamma;
 	int  mDebugMode;
 	float mDebugScale;
 } pushConstants;
@@ -77,8 +79,21 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 {
 	vec3 c1,c2,c3,c4,c5,c6,c7,c8;
 	getNeighbourhood(iuv, centerCol,c1,c2,c3,c4,c5,c6,c7,c8);
-	minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
-	maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+
+	// variance clipping?
+	if (pushConstants.mVarianceClipping) {
+		vec3 m1 = centerCol + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
+		vec3 m2 = centerCol*centerCol + c1*c1 + c2*c2 + c3*c3 + c4*c4 + c5*c5 + c6*c6 + c7*c7 + c8*c8;
+		const float N = 9.0; // number of samples
+		vec3 mean = m1 / N;
+		vec3 sigma = sqrt(m2 / N - mean * mean);
+		minCol = mean - pushConstants.mVarClipGamma * sigma;
+		maxCol = mean + pushConstants.mVarClipGamma * sigma;
+		// TODO: we can even clip the other AABB against this one
+	} else {
+		minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+		maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+	}
 }
 
 // Code from Temporal Reprojection Anti-Aliasing in INSIDE: https://youtu.be/2XXS5UyNjjU?t=939

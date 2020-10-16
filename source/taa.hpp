@@ -15,13 +15,15 @@
 template <size_t CF>
 class taa : public gvk::invokee
 {
-	struct push_constants_for_taa {
+	struct push_constants_for_taa {		// Note to self: be careful about alignment, esp. with vec#!
 		glm::vec4 mJitterAndAlpha;
 		int mColorClampingOrClipping;
 		VkBool32 mDepthCulling;
 		VkBool32 mTextureLookupUnjitter;
 		VkBool32 mBypassHistoryUpdate;
 		VkBool32 mUseYCoCg;
+		VkBool32 mVarianceClipping;
+		float mVarClipGamma;
 		int mDebugMode;
 		float mDebugScale;
 	};
@@ -277,7 +279,9 @@ public:
 				SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
 				Checkbox("enabled", &mTaaEnabled);
 				static const char* sColorClampingClippingValues[] = { "nope", "clamping", "clipping" };
-				Combo("color clamping/clipping", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+				Combo("color clamp/clip", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+				Checkbox("variance clipping", &mVarianceClipping);
+				SliderFloat("gamma", &mVarClipGamma, 0.f, 2.f, "%.2f");
 				Checkbox("use YCoCg", &mUseYCoCg);
 				Checkbox("depth culling", &mDepthCulling);
 				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
@@ -336,6 +340,8 @@ public:
 		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
 		mTaaPushConstants.mDebugMode = mImageToShow;
 		mTaaPushConstants.mDebugScale = mDebugScale;
+		mTaaPushConstants.mVarianceClipping = mVarianceClipping;
+		mTaaPushConstants.mVarClipGamma = mVarClipGamma;
 
 	}
 
@@ -502,4 +508,6 @@ private:
 	int mImageToShow = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
 	float mDebugScale = 1.f;
 	bool mUseYCoCg = false;
+	bool mVarianceClipping = false;
+	float mVarClipGamma = 1.0f;
 };
