@@ -170,12 +170,14 @@ public:
 			rdoc::labelImage(mResultImages[i]->get_image().handle(), "taa.mResultImages", i);
 			layoutTransitions.emplace_back(std::move(mResultImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
+#if TAA_OUTPUT_IS_SRGB
 			mResultImagesSrgb[i] = gvk::context().create_image_view(
 				//gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_image)
 				gvk::context().create_image(w, h, TAA_OUTPUT_IS_SRGB ? TAA_IMAGE_FORMAT_SRGB : TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_image)
 			);
 			rdoc::labelImage(mResultImagesSrgb[i]->get_image().handle(), "taa.mResultImagesSrgb", i);
 			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+#endif
 
 			mDebugImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
@@ -190,17 +192,17 @@ public:
 		fen->wait_until_signalled();
 	}
 
-	// Return a reference to all the result images:
-	auto& result_images()
-	{
-		return mResultImagesSrgb;
-	}
+	//// Return a reference to all the result images:
+	//auto& result_images()
+	//{
+	//	return mResultImagesSrgb;
+	//}
 
-	// Return a reference to one particular result image:
-	avk::image_view_t& result_image_at(size_t i)
-	{
-		return mResultImagesSrgb[i];
-	}
+	//// Return a reference to one particular result image:
+	//avk::image_view_t& result_image_at(size_t i)
+	//{
+	//	return mResultImagesSrgb[i];
+	//}
 
 	// Return the result of the GPU timer query:
 	float duration()
@@ -234,7 +236,11 @@ public:
 			descriptor_binding(0, 0, mSampler),
 			descriptor_binding(0, 1, *mSrcColor[0]),
 			descriptor_binding(0, 2, *mSrcDepth[0]),
+#if TAA_OUTPUT_IS_SRGB
 			descriptor_binding(0, 3, *mResultImagesSrgb[0]),
+#else
+			descriptor_binding(0, 3, *mResultImages[0]),
+#endif
 			descriptor_binding(0, 4, *mSrcDepth[0]),
 			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
 			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
@@ -369,7 +375,11 @@ public:
 				descriptor_binding(0, 0, mSampler),
 				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),
 				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),
+#if TAA_OUTPUT_IS_SRGB
 				descriptor_binding(0, 3, *mResultImagesSrgb[inFlightLastIndex]),
+#else
+				descriptor_binding(0, 3, *mResultImages[inFlightLastIndex]),
+#endif
 				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),
 				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),
@@ -383,13 +393,15 @@ public:
 				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::transfer_read_access
 			);
 
+#if TAA_OUTPUT_IS_SRGB
 			// Finally, copy into sRGB image:
-			//copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			if (TAA_OUTPUT_IS_SRGB) {
-				copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			} else {
-				blit_image(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			}
+			copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+#endif
+			//if (TAA_OUTPUT_IS_SRGB) {
+			//	copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			//} else {
+			//	blit_image(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			//}
 
 			cmdbfr->establish_global_memory_barrier(
 				pipeline_stage::transfer,             /* -> */ pipeline_stage::transfer,
@@ -398,7 +410,14 @@ public:
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			//blit_image(mResultImagesSrgb[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 
-			auto &image_to_show = mImageToShow == 0 ? mResultImagesSrgb[inFlightIndex]->get_image() : mDebugImages[inFlightIndex]->get_image();
+			auto &image_to_show = mImageToShow == 0
+#if TAA_OUTPUT_IS_SRGB
+								? mResultImagesSrgb[inFlightIndex]->get_image()
+#else
+								? mResultImages[inFlightIndex]->get_image()
+#endif
+								: mDebugImages[inFlightIndex]->get_image()
+								;
 			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 
 			helpers::record_timing_interval_end(cmdbfr->handle(), fmt::format("TAA {}", inFlightIndex));
@@ -407,7 +426,9 @@ public:
 		else { 
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(),                                 sync::with_barriers_into_existing_command_buffer(cmdbfr));
+#if TAA_OUTPUT_IS_SRGB
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(),                             sync::with_barriers_into_existing_command_buffer(cmdbfr));
+#endif
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 		}
 		
@@ -446,9 +467,11 @@ private:
 	std::array<avk::image_view_t*, CF> mSrcDepth;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
+#if TAA_OUTPUT_IS_SRGB
 	// Copying the result images into actually the same result images (but only sRGB format)
 	// is a rather stupid workaround. It is also quite resource-intensive... Life's hard!
 	std::array<avk::image_view, CF> mResultImagesSrgb;
+#endif
 	std::array<avk::image_view, CF> mDebugImages;
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;

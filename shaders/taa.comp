@@ -10,7 +10,7 @@ layout(set = 0, binding = 1) uniform texture2D uCurrentFrame;
 layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
-layout(set = 0, binding = 5, r16f) writeonly uniform restrict image2D uResult;
+layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResult;
 layout(set = 0, binding = 6, r16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
