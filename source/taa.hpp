@@ -24,6 +24,7 @@ class taa : public gvk::invokee
 		VkBool32 mUseYCoCg;
 		VkBool32 mVarianceClipping;
 		float mVarClipGamma;
+		float mRejectionAlpha;
 		int mDebugMode;
 		float mDebugScale;
 	};
@@ -41,6 +42,12 @@ public:
 
 	// Execute after all previous post-processing effects:
 	int execution_order() const override { return 100; }
+
+	bool trigger_capture() {
+		bool res = mTriggerCapture;
+		mTriggerCapture = false;
+		return res;
+	}
 
 	// ac: Halton sequence, see https://en.wikipedia.org/wiki/Halton_sequence
 	static float halton(int i, int b) { // index, base; (index >= 1)
@@ -183,7 +190,7 @@ public:
 #endif
 
 			mDebugImages[i] = gvk::context().create_image_view(
-				gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+				gvk::context().create_image(w, h, vk::Format::eR16G16B16A16Sfloat, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
 			rdoc::labelImage(mDebugImages[i]->get_image().handle(), "taa.mDebugImages", i);
 			layoutTransitions.emplace_back(std::move(mDebugImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
@@ -278,7 +285,8 @@ public:
 				SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
 				SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
 				Checkbox("enabled", &mTaaEnabled);
-				static const char* sColorClampingClippingValues[] = { "nope", "clamping", "clipping" };
+				SameLine(); if (Button("En&cap")) { mTaaEnabled = true; mTriggerCapture = true; }
+				static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
 				Combo("color clamp/clip", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
 				Checkbox("variance clipping", &mVarianceClipping);
 				SliderFloat("gamma", &mVarClipGamma, 0.f, 2.f, "%.2f");
@@ -288,9 +296,12 @@ public:
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
+				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
 				if (Button("reset")) mResetHistory = true;
-				static const char* sImageToShowValues[] = { "result", "color bb (rgb)", "color bb(size)", "rejection" };
-				Combo("display", &mImageToShow, sImageToShowValues, IM_ARRAYSIZE(sImageToShowValues));
+				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "debug" /* always last */ };
+				Checkbox("debug##show debug", &mShowDebug);
+				SameLine();
+				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
 				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 50.f, "%.0f");
 
 				if (CollapsingHeader("Jitter debug")) {
@@ -338,10 +349,11 @@ public:
 		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
 		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
 		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
-		mTaaPushConstants.mDebugMode = mImageToShow;
+		mTaaPushConstants.mDebugMode = mDebugMode;
 		mTaaPushConstants.mDebugScale = mDebugScale;
 		mTaaPushConstants.mVarianceClipping = mVarianceClipping;
 		mTaaPushConstants.mVarClipGamma = mVarClipGamma;
+		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
 
 	}
 
@@ -421,13 +433,13 @@ public:
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			//blit_image(mResultImagesSrgb[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 
-			auto &image_to_show = mImageToShow == 0
+			auto &image_to_show = mShowDebug
+								? mDebugImages[inFlightIndex]->get_image()
 #if TAA_OUTPUT_IS_SRGB
-								? mResultImagesSrgb[inFlightIndex]->get_image()
+								: mResultImagesSrgb[inFlightIndex]->get_image()
 #else
-								? mResultImages[inFlightIndex]->get_image()
+								: mResultImages[inFlightIndex]->get_image()
 #endif
-								: mDebugImages[inFlightIndex]->get_image()
 								;
 			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 
@@ -505,9 +517,13 @@ private:
 	float mJitterRotateDegrees = 0.f;
 	bool mBypassHistoryUpdate = false; // used by slow motion
 
-	int mImageToShow = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
+	int mDebugMode = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
+	bool mShowDebug = false;
 	float mDebugScale = 1.f;
 	bool mUseYCoCg = false;
 	bool mVarianceClipping = false;
 	float mVarClipGamma = 1.0f;
+	float mRejectionAlpha = 1.0f;
+
+	bool mTriggerCapture = false;
 };

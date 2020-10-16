@@ -102,6 +102,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mUseAlphaBlending = true;
 
 	bool mStartCapture;
+	int mCaptureNumFrames = 1;
 	int mCaptureFramesLeft = 0;
 
 	bool mFlipTexturesInLoader	= false;
@@ -1094,13 +1095,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
 				if (CollapsingHeader("Debug")) {
-					static int captureNumFrames = 1;
 					if (rdoc::active()) {
 						Separator();
-						if (Button("capture") && !mCaptureFramesLeft && captureNumFrames > 0) { mCaptureFramesLeft = captureNumFrames; mStartCapture = true; }
+						if (Button("capture") && !mCaptureFramesLeft && mCaptureNumFrames > 0) mStartCapture = true;
 						SameLine();
 						PushItemWidth(60);
-						InputInt("frames", &captureNumFrames);
+						InputInt("frames", &mCaptureNumFrames);
 						PopItemWidth();
 					}
 					Checkbox("rot", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
@@ -1112,7 +1112,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Button("set&cap")) {
 						mAutoMovement = true;
-						mCaptureFramesLeft = captureNumFrames; mStartCapture = true;
+						mStartCapture = true;
 					}
 					if (Button("save cam")) savedCamState = { mQuakeCam.translation(), mQuakeCam.rotation() };
 					SameLine();
@@ -1251,12 +1251,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void render() override
 	{
 		// renderdoc capturing
+		if (mAntiAliasing.trigger_capture() && !mCaptureFramesLeft) mStartCapture = true;
 		if (mStartCapture) {
 			mStartCapture = false;
+			mCaptureFramesLeft = mCaptureNumFrames;
 			rdoc::start_capture();
+			LOG_INFO("Starting capture for " + std::to_string(mCaptureNumFrames) + " frames");
 		} else if (mCaptureFramesLeft) {
 			mCaptureFramesLeft--;
-			if (!mCaptureFramesLeft) rdoc::end_capture();
+			if (!mCaptureFramesLeft) {
+				rdoc::end_capture();
+				LOG_INFO("Capture finished");
+			}
 		}
 
 
@@ -1428,7 +1434,7 @@ int main(int argc, char **argv) // <== Starting point ==
 
 		// setup capturing if RenderDoc is active
 		if (capture_n_frames > 0 && rdoc::active()) {
-			chewbacca.mCaptureFramesLeft = capture_n_frames;
+			chewbacca.mCaptureNumFrames = capture_n_frames;
 			chewbacca.mStartCapture = true;
 		}
 

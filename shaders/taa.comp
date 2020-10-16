@@ -11,7 +11,7 @@ layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
 layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResult;
-layout(set = 0, binding = 6, r16f) writeonly uniform restrict image2D uDebug;
+layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
 // ###### PUSH CONSTANTS AND UBOs ########################
@@ -24,6 +24,7 @@ layout(push_constant) uniform PushConstants {
 	bool mUseYCoCg;
 	bool mVarianceClipping;
 	float mVarClipGamma;
+	float mRejectionAlpha;
 	int  mDebugMode;
 	float mDebugScale;
 } pushConstants;
@@ -33,6 +34,9 @@ layout(set = 1, binding = 0) uniform Matrices {
 	mat4 mInverseViewProjMatrix;
 } uboMat;
 // -------------------------------------------------------
+
+// Just for debugging:
+vec4 gDebugValue = vec4(0);
 
 // ###### HELPER FUNCTIONS ###############################
 
@@ -75,8 +79,9 @@ void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out v
 	c8 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb);
 }
 
-void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol)
+void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol, out vec3 avgCol)
 {
+	const float N = 9.0; // number of samples
 	vec3 c1,c2,c3,c4,c5,c6,c7,c8;
 	getNeighbourhood(iuv, centerCol,c1,c2,c3,c4,c5,c6,c7,c8);
 
@@ -84,15 +89,16 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 	if (pushConstants.mVarianceClipping) {
 		vec3 m1 = centerCol + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
 		vec3 m2 = centerCol*centerCol + c1*c1 + c2*c2 + c3*c3 + c4*c4 + c5*c5 + c6*c6 + c7*c7 + c8*c8;
-		const float N = 9.0; // number of samples
 		vec3 mean = m1 / N;
-		vec3 sigma = sqrt(m2 / N - mean * mean);
+		vec3 sigma = sqrt(max(vec3(0), m2 / N - mean * mean));	// !! Here be dragons! (due to precision? - without the max(), some sigma components can get NaN!)
 		minCol = mean - pushConstants.mVarClipGamma * sigma;
 		maxCol = mean + pushConstants.mVarClipGamma * sigma;
+		avgCol = mean;
 		// TODO: we can even clip the other AABB against this one
 	} else {
 		minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
 		maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+		avgCol = (centerCol + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8) / N;
 	}
 }
 
@@ -101,11 +107,13 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 vec4 clipAabb(
 	vec3 aabbMin, // cn_min
 	vec3 aabbMax, // cn_max
-	vec4 p,       // c_in'
+	vec4 p,       // c_in'		// only p.w is used (and typically is 1)
 	vec4 q)       // c_hist
 {
+	const float eps = 1e-7;
+
 	vec3 pClip = 0.5 * (aabbMax + aabbMin);
-	vec3 eClip = 0.5 * (aabbMax - aabbMin);
+	vec3 eClip = 0.5 * (aabbMax - aabbMin) + eps; // ac: added epsilon
 
 	vec4 vClip = q - vec4(pClip, p.w);
 	vec3 vUnit = vClip.xyz / eClip;
@@ -118,6 +126,30 @@ vec4 clipAabb(
 	else {
 		return q; // point inside aabb
 	}
+}
+
+// slow clipping, but not only towards centre; code from playdead -- DOES NOT WORK PROPERLY!
+vec4 clipAabbSlow(
+	vec3 aabbMin, // cn_min
+	vec3 aabbMax, // cn_max
+	vec4 p,       // c_in'
+	vec4 q)       // c_hist
+{
+		vec4 r = q - p;
+		vec3 rmax = aabbMax - p.xyz;
+		vec3 rmin = aabbMin - p.xyz;
+
+		const float eps = 1e-7;
+
+		// !! BEWARE !! divs by zero happen here !!
+		if (r.x > rmax.x + eps) r *= (rmax.x / r.x);
+		if (r.y > rmax.y + eps) r *= (rmax.y / r.y);
+		if (r.z > rmax.z + eps) r *= (rmax.z / r.z);
+		if (r.x < rmin.x - eps) r *= (rmin.x / r.x);
+		if (r.y < rmin.y - eps) r *= (rmin.y / r.y);
+		if (r.z < rmin.z - eps) r *= (rmin.z / r.z);
+
+		return p + r;
 }
 
 #if TAA_OUTPUT_IS_SRGB
@@ -166,7 +198,8 @@ void main()
 	vec3 currentColor;
 	vec3 colMin;
 	vec3 colMax;
-	getColorAndAabb(iuv, currentColor, colMin, colMax);		// colors are in YCoGg (if enabled)
+	vec3 colAvg;
+	getColorAndAabb(iuv, currentColor, colMin, colMax, colAvg);		// colors are in YCoGg (if enabled)
 	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
 	
 	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
@@ -187,7 +220,7 @@ void main()
 		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
-			alpha = 1;
+			alpha = pushConstants.mRejectionAlpha;
 			rejected = true;
 		}
 	}
@@ -201,9 +234,15 @@ void main()
 			historyColor = clamp(historyColor, colMin, colMax);
 			break;
 		case 2:
-			historyColor = clipAabb(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;
+			//historyColor = clipAabb(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;
 			// TODO: Implemented ^ this in a hurry => not properly tested and verified yet.
+			historyColor = clipAabb(colMin, colMax, vec4(0,0,0,1), vec4(historyColor, 1.0)).rgb;
 			break;
+		case 3:
+			historyColor = clipAabbSlow(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;	// this one has "fireflies" or "blackout"-problems with var clipping (even after fixing sigma-NaNs)
+			//historyColor = clipAabbSlow(colMin, colMax, vec4(colAvg, 1.0), vec4(historyColor, 1.0)).rgb;		// not this... WHY NOT?
+			break;
+
 	}
 
 	rectified_diff = historyColor - origHistorColor;
@@ -223,17 +262,19 @@ void main()
 
 	// --- debug ---
 
-	if (pushConstants.mDebugMode == 1) {
+	if (pushConstants.mDebugMode == 0) {
 		// colour bounding box, individual
 		vec3 tmp = colMax - colMin;
 		imageStore(uDebug,  iuv, vec4(tmp, 0));
-	} else if (pushConstants.mDebugMode == 2) {
+	} else if (pushConstants.mDebugMode == 1) {
 		// colour bounding box, size
 		vec3 tmp = colMax - colMin;
 		imageStore(uDebug,  iuv, vec4(vec3(tmp.x * tmp.y * tmp.z) * pushConstants.mDebugScale, 0));
-	} else if (pushConstants.mDebugMode == 3) {
+	} else if (pushConstants.mDebugMode == 2) {
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
 		imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, length(rectified_diff) * pushConstants.mDebugScale, 0, 0));
+	} else {
+		imageStore(uDebug,  iuv, gDebugValue);
 	}
 
 }
