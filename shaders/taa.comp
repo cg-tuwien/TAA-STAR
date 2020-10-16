@@ -21,6 +21,7 @@ layout(push_constant) uniform PushConstants {
 	bool mDepthCulling;
 	bool mTextureLookupUnjitter;
 	bool mBypassHistoryUpdate;
+	bool mUseYCoCg;
 	int  mDebugMode;
 	float mDebugScale;
 } pushConstants;
@@ -33,23 +34,51 @@ layout(set = 1, binding = 0) uniform Matrices {
 
 // ###### HELPER FUNCTIONS ###############################
 
-void getColorAndRgbAabb(in ivec2 iuv, out vec3 centerRgb, out vec3 minRgb, out vec3 maxRgb)
-{
+// convert from RGB to YCoCg-R ; see https://en.wikipedia.org/wiki/YCoCg
+vec3 rgb_to_ycocg(vec3 c) {
+	float co  = c.r - c.b;
+	float tmp = c.b + co * .5;
+	float cg  = c.g - tmp;
+	float y   = tmp + cg * .5;
+	return vec3(y,co,cg);
+}
+
+// convert from YCoCg-R to RGB
+vec3 ycocg_to_rgb(vec3 c) {
+	float tmp = c.x - c.z * .5;
+	float g   = c.z + tmp;
+	float b   = tmp - c.y * .5;
+	float r   = b + c.y;
+	return vec3(r,g,b);
+}
+
+vec3 maybe_rgb_to_ycocg(vec3 c) { return pushConstants.mUseYCoCg ? rgb_to_ycocg(c) : c; }
+vec3 maybe_ycocg_to_rgb(vec3 c) { return pushConstants.mUseYCoCg ? ycocg_to_rgb(c) : c; }
+
+void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
 	vec2 offset = vec2(0.0, 0.0);
 	if (pushConstants.mTextureLookupUnjitter) {
 		offset = pushConstants.mJitterAndAlpha.xy;
 	}
+	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 
-	vec2 size = textureSize(uCurrentFrame, 0);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1, -1) + 0.5) / size).rgb; minRgb =             centerRgb ; maxRgb =             centerRgb ;
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0, -1) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1, -1) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  0) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  0) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  1) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0,  1) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
-	centerRgb = texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv                 + 0.5) / size).rgb; minRgb = min(minRgb, centerRgb); maxRgb = max(maxRgb, centerRgb);
+	cC = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv                 + 0.5) * invsize).rgb);
+	c1 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1, -1) + 0.5) * invsize).rgb);
+	c2 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0, -1) + 0.5) * invsize).rgb);
+	c3 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1, -1) + 0.5) * invsize).rgb);
+	c4 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  0) + 0.5) * invsize).rgb);
+	c5 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  0) + 0.5) * invsize).rgb);
+	c6 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  1) + 0.5) * invsize).rgb);
+	c7 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0,  1) + 0.5) * invsize).rgb);
+	c8 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb);
+}
+
+void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol)
+{
+	vec3 c1,c2,c3,c4,c5,c6,c7,c8;
+	getNeighbourhood(iuv, centerCol,c1,c2,c3,c4,c5,c6,c7,c8);
+	minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+	maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
 }
 
 // Code from Temporal Reprojection Anti-Aliasing in INSIDE: https://youtu.be/2XXS5UyNjjU?t=939
@@ -76,6 +105,7 @@ vec4 clipAabb(
 	}
 }
 
+#if TAA_OUTPUT_IS_SRGB
 float srgbGammaCorr(float color)
 {
 	if (color <= 0.0031308)
@@ -94,7 +124,6 @@ vec3 rgb2srgb(vec3 rgb)
 	return srgb;
 }
 
-#if TAA_OUTPUT_IS_SRGB
 #define TO_OUTPUT_FORMAT(x) rgb2srgb((x))
 #else
 #define TO_OUTPUT_FORMAT(x) (x)
@@ -120,9 +149,9 @@ void main()
 	vec3 rectified_diff;
 	
 	vec3 currentColor;
-	vec3 rgbMin;
-	vec3 rgbMax;
-	getColorAndRgbAabb(iuv, currentColor, rgbMin, rgbMax);
+	vec3 colMin;
+	vec3 colMax;
+	getColorAndAabb(iuv, currentColor, colMin, colMax);		// colors are in YCoGg (if enabled)
 	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
 	
 	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
@@ -132,7 +161,7 @@ void main()
 	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentDepth, 0));
 	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
 	
-	vec3 historyColor = texture(sampler2D(uHistoryFrame, uSampler), historyUv).rgb;
+	vec3 historyColor = maybe_rgb_to_ycocg(texture(sampler2D(uHistoryFrame, uSampler), historyUv).rgb);
 
 	vec2 jitter = pushConstants.mJitterAndAlpha.xy;
 	float alpha = pushConstants.mJitterAndAlpha.a;
@@ -154,10 +183,10 @@ void main()
 	// clip color
 	switch (pushConstants.mColorClampingOrClipping) {
 		case 1:
-			historyColor = clamp(historyColor, rgbMin, rgbMax);
+			historyColor = clamp(historyColor, colMin, colMax);
 			break;
 		case 2:
-			historyColor = clipAabb(rgbMin, rgbMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;
+			historyColor = clipAabb(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;
 			// TODO: Implemented ^ this in a hurry => not properly tested and verified yet.
 			break;
 	}
@@ -167,7 +196,7 @@ void main()
 
 
 	// ---- blending ----
-	vec3 antiAliased = currentColor * alpha + historyColor * (1 - alpha);
+	vec3 antiAliased = maybe_ycocg_to_rgb(currentColor) * alpha + maybe_ycocg_to_rgb(historyColor) * (1.0 - alpha);
 
 	// if TAA_OUTPUT_IS_SRGB:
 	// write rgb into uResult
@@ -181,11 +210,11 @@ void main()
 
 	if (pushConstants.mDebugMode == 1) {
 		// colour bounding box, individual
-		vec3 tmp = rgbMax - rgbMin;
+		vec3 tmp = colMax - colMin;
 		imageStore(uDebug,  iuv, vec4(tmp, 0));
 	} else if (pushConstants.mDebugMode == 2) {
 		// colour bounding box, size
-		vec3 tmp = rgbMax - rgbMin;
+		vec3 tmp = colMax - colMin;
 		imageStore(uDebug,  iuv, vec4(vec3(tmp.x * tmp.y * tmp.z) * pushConstants.mDebugScale, 0));
 	} else if (pushConstants.mDebugMode == 3) {
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));

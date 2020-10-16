@@ -21,6 +21,7 @@ class taa : public gvk::invokee
 		VkBool32 mDepthCulling;
 		VkBool32 mTextureLookupUnjitter;
 		VkBool32 mBypassHistoryUpdate;
+		VkBool32 mUseYCoCg;
 		int mDebugMode;
 		float mDebugScale;
 	};
@@ -277,6 +278,7 @@ public:
 				Checkbox("enabled", &mTaaEnabled);
 				static const char* sColorClampingClippingValues[] = { "nope", "clamping", "clipping" };
 				Combo("color clamping/clipping", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+				Checkbox("use YCoCg", &mUseYCoCg);
 				Checkbox("depth culling", &mDepthCulling);
 				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
@@ -285,7 +287,7 @@ public:
 				if (Button("reset")) mResetHistory = true;
 				static const char* sImageToShowValues[] = { "result", "color bb (rgb)", "color bb(size)", "rejection" };
 				Combo("display", &mImageToShow, sImageToShowValues, IM_ARRAYSIZE(sImageToShowValues));
-				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 20.f, "%.0f");
+				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 50.f, "%.0f");
 
 				if (CollapsingHeader("Jitter debug")) {
 					SliderInt ("lock",		&mFixedJitterIndex, -1, 16);
@@ -293,7 +295,6 @@ public:
 					InputInt  ("slowdown",	&mJitterSlowMotion);
 					InputFloat("rotate",	&mJitterRotateDegrees);
 				}
-				Checkbox("blit", &mBlit);
 				End();
 			});
 		}
@@ -332,6 +333,7 @@ public:
 		mTaaPushConstants.mDepthCulling = mDepthCulling;
 		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
 		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
+		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
 		mTaaPushConstants.mDebugMode = mImageToShow;
 		mTaaPushConstants.mDebugScale = mDebugScale;
 
@@ -499,6 +501,5 @@ private:
 
 	int mImageToShow = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
 	float mDebugScale = 1.f;
-
-	bool mBlit = false;
+	bool mUseYCoCg = false;
 };
