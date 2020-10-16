@@ -373,6 +373,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		for (decltype(fif) i=0; i < fif; ++i) {
 			mSkyboxCommandBuffer[i] = commandPool->alloc_command_buffer();	
 			mSkyboxCommandBuffer[i]->begin_recording(); // Start recording commands into the command buffer
+			rdoc::beginSection(mSkyboxCommandBuffer[i]->handle(), "Skybox", i);
 			helpers::record_timing_interval_start(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
 			mSkyboxCommandBuffer[i]->bind_pipeline(mSkyboxPipeline);
 			mSkyboxCommandBuffer[i]->begin_render_pass_for_framebuffer( // Start the renderpass defined for the attachments (in fact, the renderpass is created FROM the attachments, see renderpass_t::create)
@@ -388,6 +389,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #pragma warning( pop )
 			mSkyboxCommandBuffer[i]->end_render_pass();
 			helpers::record_timing_interval_end(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
+			rdoc::endSection(mSkyboxCommandBuffer[i]->handle());
 			mSkyboxCommandBuffer[i]->end_recording(); // Done recording. We're not going to modify this command buffer anymore.
 		}
 	}
@@ -901,6 +903,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		for (decltype(fif) i=0; i < fif; ++i) {
 			if (!mDidAllocCommandBuffers) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
 			mModelsCommandBuffer[i]->begin_recording();
+			rdoc::beginSection(mModelsCommandBuffer[i]->handle(), "Render models", i);
 			helpers::record_timing_interval_start(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
 
 			// Bind the descriptors for descriptor sets 0 and 1 before starting to render with a pipeline
@@ -992,6 +995,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			helpers::record_timing_interval_end(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
 			mModelsCommandBuffer[i]->end_render_pass();
+			rdoc::endSection(mModelsCommandBuffer[i]->handle());
 			mModelsCommandBuffer[i]->end_recording();
 		}
 

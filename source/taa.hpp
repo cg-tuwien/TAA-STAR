@@ -254,12 +254,14 @@ public:
 		for (size_t i = 0; i < CF; ++i) {
 			mSyncAfterCommandBuffers[i] = commandPool->alloc_command_buffer();
 			mSyncAfterCommandBuffers[i]->begin_recording();
+			rdoc::beginSection(mSyncAfterCommandBuffers[i]->handle(), "TAA Sync", i);
 			mSyncAfterCommandBuffers[i]->establish_global_memory_barrier(
 				// Sync between the following pipeline stages:
 				pipeline_stage::compute_shader                        | pipeline_stage::transfer,             /* -> */ pipeline_stage::compute_shader                      | pipeline_stage::transfer,
 				// According to those pipeline stages, sync the following memory accesses:
 				memory_access::shader_buffers_and_images_write_access | memory_access::transfer_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access | memory_access::transfer_read_access
 			);
+			rdoc::endSection(mSyncAfterCommandBuffers[i]->handle());
 			mSyncAfterCommandBuffers[i]->end_recording();
 		}
 		
@@ -348,6 +350,7 @@ public:
 		auto& commandPool = context().get_command_pool_for_single_use_command_buffers(*mQueue);
 		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 		cmdbfr->begin_recording();
+		rdoc::beginSection(cmdbfr->handle(), "TAA pass");
 
 		// ---------------------- If Anti-Aliasing is enabled perform the following actions --------------------------
 		static bool isVeryFirstFrame = true;
@@ -432,6 +435,7 @@ public:
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 		}
 		
+		rdoc::endSection(cmdbfr->handle());
 		cmdbfr->end_recording();
 
 		isVeryFirstFrame = false;

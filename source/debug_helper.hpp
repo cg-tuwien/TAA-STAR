@@ -21,7 +21,9 @@
 namespace rdoc {
 
 	RENDERDOC_API_1_1_2* rdoc_api = nullptr;
-	PFN_vkDebugMarkerSetObjectNameEXT pfnDebugMarkerSetObjectNameEXT = VK_NULL_HANDLE;
+	PFN_vkDebugMarkerSetObjectNameEXT	pfnDebugMarkerSetObjectNameEXT	= VK_NULL_HANDLE;
+	PFN_vkCmdDebugMarkerBeginEXT		pfnCmdDebugMarkerBeginEXT		= VK_NULL_HANDLE;
+	PFN_vkCmdDebugMarkerEndEXT			pfnCmdDebugMarkerEndEXT			= VK_NULL_HANDLE;
 	VkDevice currentDevice = VK_NULL_HANDLE;
 	bool capturingActive = false;
 
@@ -40,8 +42,11 @@ namespace rdoc {
 
 		currentDevice = device; // store, so we don't need to pass it in every time
 
-		pfnDebugMarkerSetObjectNameEXT = reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(vkGetDeviceProcAddr(device, "vkDebugMarkerSetObjectNameEXT"));
-		if (!pfnDebugMarkerSetObjectNameEXT) printf("WARN: Failed to init debugmarkers; did you request device extension \"VK_EXT_debug_marker\" ?\n");
+		pfnDebugMarkerSetObjectNameEXT	= reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>	(vkGetDeviceProcAddr(device, "vkDebugMarkerSetObjectNameEXT"));
+		pfnCmdDebugMarkerBeginEXT		= reinterpret_cast<PFN_vkCmdDebugMarkerBeginEXT>		(vkGetDeviceProcAddr(device, "vkCmdDebugMarkerBeginEXT"));
+		pfnCmdDebugMarkerEndEXT			= reinterpret_cast<PFN_vkCmdDebugMarkerEndEXT>			(vkGetDeviceProcAddr(device, "vkCmdDebugMarkerEndEXT"));
+		if (!pfnDebugMarkerSetObjectNameEXT || !pfnCmdDebugMarkerBeginEXT || !pfnCmdDebugMarkerEndEXT)
+			printf("WARN: Failed to init debugmarkers; did you request device extension \"VK_EXT_debug_marker\" ?\n");
 	}
 
 	bool active()			{ return rdoc_api; }
@@ -50,10 +55,9 @@ namespace rdoc {
 
 	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int64_t optionalIndex = -1) {
 		if (!pfnDebugMarkerSetObjectNameEXT) return;
-		VkDebugMarkerObjectNameInfoEXT nameInfo = {};
-		nameInfo.sType			= VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT;
-		nameInfo.objectType		= objectType;
-		nameInfo.object			= object;
+		VkDebugMarkerObjectNameInfoEXT nameInfo = { VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT };
+		nameInfo.objectType	= objectType;
+		nameInfo.object		= object;
 		if (optionalIndex < 0) {
 			nameInfo.pObjectName = objectName;
 			pfnDebugMarkerSetObjectNameEXT(currentDevice, &nameInfo);
@@ -66,6 +70,22 @@ namespace rdoc {
 
 	void labelImage (VkImage image,   const char *name, int64_t optionalIndex = -1) { labelObject(uint64_t(image),  VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,  name, optionalIndex); }
 	void labelBuffer(VkBuffer buffer, const char *name, int64_t optionalIndex = -1) { labelObject(uint64_t(buffer), VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT, name, optionalIndex); }
+	void beginSection(VkCommandBuffer cmd, const char *name, int64_t optionalIndex = -1) {
+		if (!pfnCmdDebugMarkerBeginEXT || !pfnCmdDebugMarkerEndEXT) return;
+		VkDebugMarkerMarkerInfoEXT markerInfo = { VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT };
+		if (optionalIndex < 0) {
+			markerInfo.pMarkerName = name;
+			pfnCmdDebugMarkerBeginEXT(cmd, &markerInfo);
+		} else {
+			std::string s = std::string(name) + "[" + std::to_string(optionalIndex) + "]";
+			markerInfo.pMarkerName = s.c_str();
+			pfnCmdDebugMarkerBeginEXT(cmd, &markerInfo);	// call this while s is still alive
+		}
+	}
+	void endSection(VkCommandBuffer cmd) {
+		if (!pfnCmdDebugMarkerBeginEXT || !pfnCmdDebugMarkerEndEXT) return;
+		pfnCmdDebugMarkerEndEXT(cmd);
+	}
 
 	std::vector<const char*> required_device_extensions() { if (rdoc_api) return { "VK_EXT_debug_marker" }; else return {}; }
 }
@@ -81,6 +101,8 @@ namespace rdoc {
 	void labelObject(uint64_t object, VkDebugReportObjectTypeEXT objectType, const char *objectName, int64_t optionalIndex = -1) {}
 	void labelImage(VkImage image, const char *name, int64_t optionalIndex = -1) {}
 	void labelBuffer(VkBuffer buffer, const char *name, int64_t optionalIndex = -1) {}
+	void beginSection(VkCommandBuffer cmd, const char *name, int64_t optionalIndex = -1) {}
+	void endSection(VkCommandBuffer cmd) {}
 	std::vector<const char*> required_device_extensions() { return {}; }
 }
 
