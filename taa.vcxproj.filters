@@ -36,6 +36,7 @@
     <ClInclude Include="shaders\shader_cpu_common.h">
       <Filter>shaders</Filter>
     </ClInclude>
+    <ClInclude Include="source\imgui_helper.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">

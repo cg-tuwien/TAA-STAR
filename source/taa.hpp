@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
+#include "imgui_helper.hpp"
 #include "helper_functions.hpp"
 
 #include "debug_helper.hpp"
@@ -23,7 +24,10 @@ class taa : public gvk::invokee
 		VkBool32 mBypassHistoryUpdate;
 		VkBool32 mUseYCoCg;
 		VkBool32 mVarianceClipping;
+		VkBool32 mLumaWeighting;
 		float mVarClipGamma;
+		float mMinAlpha;			// used for luminance-based weighting
+		float mMaxAlpha;			// used for luminance-based weighting
 		float mRejectionAlpha;
 		int mDebugMode;
 		float mDebugScale;
@@ -280,6 +284,7 @@ public:
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this](){
 				using namespace ImGui;
+				using namespace imgui_helper;
 
 				Begin("Anti-Aliasing Settings");
 				SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
@@ -291,14 +296,17 @@ public:
 				Checkbox("variance clipping", &mVarianceClipping);
 				SliderFloat("gamma", &mVarClipGamma, 0.f, 2.f, "%.2f");
 				Checkbox("use YCoCg", &mUseYCoCg);
+				Checkbox("luma weighting", &mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
 				Checkbox("depth culling", &mDepthCulling);
 				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
+				SliderFloat("a_min", &mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
+				SliderFloat("a_max", &mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
 				if (Button("reset")) mResetHistory = true;
-				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "debug" /* always last */ };
+				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "debug" /* always last */ };
 				Checkbox("debug##show debug", &mShowDebug);
 				SameLine();
 				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
@@ -306,7 +314,7 @@ public:
 
 				if (CollapsingHeader("Jitter debug")) {
 					SliderInt ("lock",		&mFixedJitterIndex, -1, 16);
-					InputFloat("scale",		&mJitterExtraScale, 0.f, 0.f, "%.0f");
+					InputFloat("scale",		&mJitterExtraScale, 0.f, 0.f, "%.2f");
 					InputInt  ("slowdown",	&mJitterSlowMotion);
 					InputFloat("rotate",	&mJitterRotateDegrees);
 				}
@@ -352,7 +360,10 @@ public:
 		mTaaPushConstants.mDebugMode = mDebugMode;
 		mTaaPushConstants.mDebugScale = mDebugScale;
 		mTaaPushConstants.mVarianceClipping = mVarianceClipping;
+		mTaaPushConstants.mLumaWeighting = mLumaWeighting;
 		mTaaPushConstants.mVarClipGamma = mVarClipGamma;
+		mTaaPushConstants.mMinAlpha = mMinAlpha;
+		mTaaPushConstants.mMaxAlpha = mMaxAlpha;
 		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
 
 	}
@@ -523,7 +534,9 @@ private:
 	bool mUseYCoCg = false;
 	bool mVarianceClipping = false;
 	float mVarClipGamma = 1.0f;
+	bool mLumaWeighting = false;
+	float mMinAlpha = 1.0f - 0.97f;
+	float mMaxAlpha = 1.0f - 0.88f;
 	float mRejectionAlpha = 1.0f;
-
 	bool mTriggerCapture = false;
 };

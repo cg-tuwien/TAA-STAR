@@ -23,7 +23,10 @@ layout(push_constant) uniform PushConstants {
 	bool mBypassHistoryUpdate;
 	bool mUseYCoCg;
 	bool mVarianceClipping;
+	bool mLumaWeighting;
 	float mVarClipGamma;
+	float mMinAlpha;			// used for luminance-based weighting
+	float mMaxAlpha;			// used for luminance-based weighting
 	float mRejectionAlpha;
 	int  mDebugMode;
 	float mDebugScale;
@@ -40,26 +43,47 @@ vec4 gDebugValue = vec4(0);
 
 // ###### HELPER FUNCTIONS ###############################
 
-// convert from RGB to YCoCg-R ; see https://en.wikipedia.org/wiki/YCoCg
+//// convert from RGB to YCoCg-R ; see https://en.wikipedia.org/wiki/YCoCg
+//vec3 rgb_to_ycocg(vec3 c) {
+//	float co  = c.r - c.b;
+//	float tmp = c.b + co * .5;
+//	float cg  = c.g - tmp;
+//	float y   = tmp + cg * .5;
+//	return vec3(y,co,cg);
+//}
+//
+//// convert from YCoCg-R to RGB
+//vec3 ycocg_to_rgb(vec3 c) {
+//	float tmp = c.x - c.z * .5;
+//	float g   = c.z + tmp;
+//	float b   = tmp - c.y * .5;
+//	float r   = b + c.y;
+//	return vec3(r,g,b);
+//}
+
+// convert from RGB to YCoCg ; see https://en.wikipedia.org/wiki/YCoCg
 vec3 rgb_to_ycocg(vec3 c) {
-	float co  = c.r - c.b;
-	float tmp = c.b + co * .5;
-	float cg  = c.g - tmp;
-	float y   = tmp + cg * .5;
-	return vec3(y,co,cg);
+	return vec3(
+		 .25 * c.r + .5 * c.g + .25 * c.b,
+		 .5  * c.r            - .5  * c.b,
+		-.25 * c.r + .5 * c.g - .25 * c.b
+	);
 }
 
-// convert from YCoCg-R to RGB
+// convert from YCoCg to RGB
 vec3 ycocg_to_rgb(vec3 c) {
-	float tmp = c.x - c.z * .5;
-	float g   = c.z + tmp;
-	float b   = tmp - c.y * .5;
-	float r   = b + c.y;
-	return vec3(r,g,b);
+	float tmp = c.x - c.z;	// tmp = Y   - Cg;
+	return vec3(
+		tmp + c.y,	// R   = tmp + Co;
+		c.x + c.z,	// G   = Y   + Cg;
+		tmp - c.y	// B   = tmp - Co;
+	);
 }
+
 
 vec3 maybe_rgb_to_ycocg(vec3 c) { return pushConstants.mUseYCoCg ? rgb_to_ycocg(c) : c; }
 vec3 maybe_ycocg_to_rgb(vec3 c) { return pushConstants.mUseYCoCg ? ycocg_to_rgb(c) : c; }
+float luminance(vec3 c) { return pushConstants.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
 
 void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
 	vec2 offset = vec2(0.0, 0.0);
@@ -259,7 +283,21 @@ void main()
 
 
 	// ---- blending ----
-	vec3 antiAliased = maybe_ycocg_to_rgb(currentColor) * alpha + maybe_ycocg_to_rgb(historyColor) * (1.0 - alpha);
+
+	if (!rejected) {
+		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
+		if (pushConstants.mLumaWeighting) {
+			float lumaCurrent = luminance(currentColor);
+			float lumaHistory = luminance(historyColor);
+			float diff = abs(lumaCurrent - lumaHistory) / max(max(lumaCurrent, lumaHistory), 0.2);
+			float w = 1.0 - diff;
+			float ww = w * w;
+			// ww=0: bad history, use max alpha ; ww=1: good history, use min alpha
+			alpha = mix(pushConstants.mMaxAlpha, pushConstants.mMinAlpha, ww);
+		}
+	}
+
+	vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha);	// current * a + history * (1-a)
 
 	// if TAA_OUTPUT_IS_SRGB:
 	// write rgb into uResult
@@ -282,6 +320,8 @@ void main()
 	} else if (pushConstants.mDebugMode == 2) {
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
 		imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, length(rectified_diff) * pushConstants.mDebugScale, 0, 0));
+	} else if (pushConstants.mDebugMode == 3) {
+		imageStore(uDebug,  iuv, vec4(vec3(alpha), 0));
 	} else {
 		imageStore(uDebug,  iuv, gDebugValue);
 	}
