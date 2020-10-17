@@ -28,3 +28,8 @@
 #define TAA_IMAGE_FORMAT_SRGB		vk::Format::eUndefined			// unused
 
 #endif
+
+#define	IMAGE_FORMAT_COLOR				vk::Format::eR16G16B16A16Sfloat
+#define	IMAGE_FORMAT_DEPTH				vk::Format::eD32Sfloat
+#define	IMAGE_FORMAT_NORMAL				vk::Format::eR32G32B32A32Sfloat
+#define	IMAGE_FORMAT_MATERIAL			vk::Format::eR32Uint

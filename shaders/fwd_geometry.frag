@@ -59,6 +59,7 @@ layout (location = 0) in VertexData
 
 // ###### FRAG OUTPUT ####################################
 layout (location = 0) out vec4 oFragColor;
+layout (location = 1) out uint oFragMatId;
 // -------------------------------------------------------
 
 // ###### HELPER FUNCTIONS ###############################
@@ -150,11 +151,13 @@ float calc_attenuation(vec4 atten, float dist, float dist2)
 // All parameters must be normalized.
 vec3 calc_blinn_phong_contribution(vec3 toLight, vec3 toEye, vec3 normal, vec3 diffFactor, vec3 specFactor, float specShininess, bool twoSided)
 {
-	//float nDotL = max(0.0, dot(normal, toLight)); // lambertian coefficient
-	float nDotL = twoSided ? abs(dot(normal, toLight)) : max(0.0, dot(normal, toLight));
+	if (twoSided) {
+		if (dot(normal, toEye) < 0) normal = -normal; // flip normal if it points away from us
+	}
+
+	float nDotL = max(0.0, dot(normal, toLight)); // lambertian coefficient
 	vec3 h = normalize(toLight + toEye);
-	//float nDotH = max(0.0, dot(normal, h));
-	float nDotH = twoSided ? abs(dot(normal, h)) : max(0.0, dot(normal, h));
+	float nDotH = max(0.0, dot(normal, h));
 
 	float specPower = (nDotH == 0 && specShininess == 0) ? 1 : pow(nDotH, specShininess);
 
@@ -229,9 +232,6 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 void main()
 {
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
-	//vec3 normalVS = normalize(mat3(inverse(transpose(uboMatUsr.mViewMatrix * pushConstants.mModelMatrix))) * normalize(fs_in.normalOS));
-
-
 	vec3 positionVS = fs_in.positionVS;
 	int matIndex = pushConstants.mMaterialIndex;
 
@@ -244,6 +244,8 @@ void main()
 	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write, even when using alpha-blending
 	if (transparentPass == 1 && alpha < uboMatUsr.mUserInput.w) { discard; return; }
 
+	// write material // TODO: better flag specific/problematic materials that require different TAA handling
+	oFragMatId = pushConstants.mMaterialIndex;
 
 	// Initialize all the colors:
 	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColorRGBA.rgb;

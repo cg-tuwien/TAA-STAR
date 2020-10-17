@@ -10,25 +10,14 @@
 #include <string>
 
 /* TODO:
-	- ok forward rendering
-
-	! Determine whether to do the normal-flip automatically?
-	! Setting z=1 is likely not 100% correct. Do a projection to the +z hemisphere instead? Compare results with .png normal map, this looks good!
-
-	Normals-Problem:
-	Sponza uses pngs, normal maps have 3 components with flat = (127,127,255)
-	Emerald Square uses dds in BC5 RG format -> 2 components only: flat = (127,127)
-
-	Some vertical brick rows at the outer buildings look weird w.r.t. normalmapping; even the diff textures are misaligned
-
+	- recheck lighting, esp. w.r.t. twosided materials
 
 	- fix changed lighting flags in deferred shader
 
 	- shadows?
 	- rename mDrawCalls to something more appropriate (mMeshInfo?)
-	- wtf? why does Sponza "crash" in debug mode due to alloc limit, but not in release mode?
 
-	- history frame image format is RGBA8_SRGB, current frame is RGBA16_FLOAT.. is this ok???
+	- need different alpha thresholds for blending/not blending
 
 	NOTES:
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
@@ -99,6 +88,7 @@ class wookiee : public gvk::invokee
 	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
 		{ "Start" },	// t,r filled in from code
 		{ "ES street flicker", {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
+		{ "ES window flicker", {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
 	};
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
@@ -212,42 +202,35 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Before compiling the actual framebuffer, create its image-attachments:
 		const auto wndRes = wnd->resolution();
-		// Define the formats of our image-attachments:
-		auto attachmentFormats = make_array<vk::Format>(
-			vk::Format::eR16G16B16A16Sfloat,
-			vk::Format::eD32Sfloat,
-			vk::Format::eR32G32B32A32Sfloat,
-			vk::Format::eR32Uint
-		);
 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			auto colorAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[0], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto colorAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_COLOR,    1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto depthAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[1], 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
+			auto depthAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+			auto matIdAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 
 			// label them for Renderdoc
 			rdoc::labelImage(colorAttachment->handle(), "colorAttachment", i);
 			rdoc::labelImage(depthAttachment->handle(), "depthAttachment", i);
+			rdoc::labelImage(matIdAttachment->handle(), "matIdAttachment", i);
 
 #if (!FORWARD_RENDERING)
-			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[2], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
-			auto matIdAttachment = context().create_image(wndRes.x, wndRes.y, attachmentFormats[3], 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
-			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 
 			rdoc::labelImage(uvNrmAttachment->handle(), "uvNrmAttachment", i);
-			rdoc::labelImage(matIdAttachment->handle(), "matIdAttachment", i);
 #endif
 
 			// Before we are attaching the images to a framebuffer, we have to "wrap" them with an image view:
 			auto colorAttachmentView = context().create_image_view(std::move(colorAttachment));
 			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
 			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
 #if (!FORWARD_RENDERING)
 			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
-			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
 #endif
 
 			// Create the renderpass only once, ...
@@ -270,6 +253,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if FORWARD_RENDERING
 						attachment::declare_for(colorAttachmentView, on_load::load,         color(0) -> color(0),			on_store::store),
 						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> depth_stencil(),	on_store::store),
+						attachment::declare_for(matIdAttachmentView, on_load::clear,        color(1) -> color(1),			on_store::store),
 #else
 						attachment::declare_for(colorAttachmentView, on_load::load,         unused() -> color(0), on_store::store),
 						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> input(0), on_store::store),
@@ -305,12 +289,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mFramebuffer[i] = context().create_framebuffer(
 				mRenderpass,
 				          colorAttachmentView,
-				std::move(depthAttachmentView)
+				std::move(depthAttachmentView),
 #if (!FORWARD_RENDERING)
-				,
 				std::move(uvNrmAttachmentView),
-				std::move(matIdAttachmentView)
 #endif
+				std::move(matIdAttachmentView)
 			);
 			mFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 
@@ -848,7 +831,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			"shaders/transform_and_pass_on.vert",
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
 
-			cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
+			//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
+			cfg::color_blending_config::enable_alpha_blending_for_attachment(0),
 			cfg::culling_mode::disabled,
 			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
 			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
