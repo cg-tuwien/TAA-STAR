@@ -79,7 +79,7 @@ void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out v
 	c8 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb);
 }
 
-void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol, out vec3 avgCol)
+void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol, out vec3 cliptowardsCol)
 {
 	const float N = 9.0; // number of samples
 	vec3 c1,c2,c3,c4,c5,c6,c7,c8;
@@ -93,13 +93,19 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 		vec3 sigma = sqrt(max(vec3(0), m2 / N - mean * mean));	// !! Here be dragons! (due to precision? - without the max(), some sigma components can get NaN!)
 		minCol = mean - pushConstants.mVarClipGamma * sigma;
 		maxCol = mean + pushConstants.mVarClipGamma * sigma;
-		avgCol = mean;
+
+		// NOTE: it is NOT guaranteed that centerCol is inside the AABB !
+		// so clip towards the mean
+		cliptowardsCol = mean;
+
 		// TODO: we can even clip the other AABB against this one
 	} else {
 		minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
 		maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
-		avgCol = (centerCol + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8) / N;
+		cliptowardsCol = centerCol; // here centerCol is always inside the AABB; note: playdead still clip towards average color 
 	}
+
+	if (any(lessThan(centerCol, minCol)) || any(greaterThan(centerCol, maxCol))) gDebugValue = vec4(1,0,0,0);
 }
 
 // Code from Temporal Reprojection Anti-Aliasing in INSIDE: https://youtu.be/2XXS5UyNjjU?t=939
@@ -198,8 +204,8 @@ void main()
 	vec3 currentColor;
 	vec3 colMin;
 	vec3 colMax;
-	vec3 colAvg;
-	getColorAndAabb(iuv, currentColor, colMin, colMax, colAvg);		// colors are in YCoGg (if enabled)
+	vec3 colClipTowards;
+	getColorAndAabb(iuv, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
 	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
 	
 	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
@@ -228,7 +234,7 @@ void main()
 	// ---- history rectification ----
 	vec3 origHistorColor = historyColor;
 
-	// clip color
+	// clip/clamp color
 	switch (pushConstants.mColorClampingOrClipping) {
 		case 1:
 			historyColor = clamp(historyColor, colMin, colMax);
@@ -239,8 +245,9 @@ void main()
 			historyColor = clipAabb(colMin, colMax, vec4(0,0,0,1), vec4(historyColor, 1.0)).rgb;
 			break;
 		case 3:
-			historyColor = clipAabbSlow(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;	// this one has "fireflies" or "blackout"-problems with var clipping (even after fixing sigma-NaNs)
-			//historyColor = clipAabbSlow(colMin, colMax, vec4(colAvg, 1.0), vec4(historyColor, 1.0)).rgb;		// not this... WHY NOT?
+			//historyColor = clipAabbSlow(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;	// this one has "fireflies" or "blackout"-problems with var clipping (even after fixing sigma-NaNs)
+			//historyColor = clipAabbSlow(colMin, colMax, vec4(colAvg, 1.0), vec4(historyColor, 1.0)).rgb;			// not this... WHY NOT?	===> see getNeighbourhood, currentColor may NOT be inside AABB!
+			historyColor = clipAabbSlow(colMin, colMax, vec4(colClipTowards, 1.0), vec4(historyColor, 1.0)).rgb;
 			break;
 
 	}
