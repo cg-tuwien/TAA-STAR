@@ -65,7 +65,9 @@ vec4 sample_from_normals_texture()
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
-	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
+	vec4 normalSample = SAMPLE_TEXTURE(textures[texIndex], texCoords);
+	FIX_NORMALMAPPING(normalSample);
+	return normalSample;
 }
 
 // ac:
@@ -118,6 +120,10 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	// simple alpha-testing (no blending) in the deferred shader only
+	float alpha = sample_from_diffuse_texture().a;
+	if (alpha < uboMatUsr.mUserInput.w) { discard; return; }
+
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	float l = length(normalVS.xy);
 	vec2 sphericalVS = vec2((l == 0) ? 0 : acos(clamp(normalVS.x / l, -1, 1)), asin(normalVS.z));

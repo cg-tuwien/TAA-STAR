@@ -106,7 +106,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
 	bool mDisableMip = false;
-	bool mUseAlphaBlending = true;
+	bool mUseAlphaBlending = false;
 
 	bool mStartCapture;
 	int mCaptureNumFrames = 1;
@@ -517,6 +517,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		return res;
 	}
 
+	bool is_material_twosided(const gvk::material_config &mat) {
+		return mat.mTwosided || (std::string::npos != mat.mName.find(".DoubleSided"));	// Emerald-Square leaves are not marked twosided, but can be found by name
+	}
+
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
 	{
 		double t0 = glfwGetTime();
@@ -533,6 +537,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
 		helpers::set_terrain_material_config(scene);
+
+		// set custom data to indicate two-sided materials	// TODO: move this into helpers::
+		for (auto& model : scene->models()) {
+			auto meshIndices = model.mLoadedModel->select_all_meshes();
+			for (auto i : meshIndices) {
+				auto m = model.mLoadedModel->material_config_for_mesh(i);
+				m.mCustomData[3] = is_material_twosided(m) ? 1.0f : 0.0f;
+				model.mLoadedModel->set_material_config_for_mesh(i, m);
+			}
+		}
+
 		
 		auto bufferUsageFlags = vk::BufferUsageFlags{};
 #ifdef RTX_ON
@@ -547,6 +562,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Get all the different materials from the whole scene:
 		auto distinctMaterialsOrca = scene->distinct_material_configs_for_all_models();
+
 		std::vector<gvk::material_config> distinctMaterialConfigs;
 		for (const auto& pair : distinctMaterialsOrca) {
 			// Also gather the material configs along the way since we'll need to transfer them to the GPU as well
@@ -1393,6 +1409,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableValidation = false;
 		bool forceValidation = false;
 		bool disableMip = false;
+		bool enableAlphaBlending = false;
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		std::string sceneFileName = "";
@@ -1412,6 +1429,9 @@ int main(int argc, char **argv) // <== Starting point ==
 				} else if (0 == _stricmp(argv[i], "-noblend")) {
 					disableAlphaBlending = true;
 					LOG_INFO("Alpha-blending disabled via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-blend")) {
+					enableAlphaBlending = true;
+					LOG_INFO("Alpha-blending enabled via command line parameter.");
 				} else if (0 == _stricmp(argv[i], "-capture")) {
 					i++;
 					if (i >= argc) { badCmd = true; break; }
@@ -1431,7 +1451,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [-validation] [-nomip] [-capture <numFrames>] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-capture <numFrames>] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
@@ -1460,7 +1480,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		// set scene file name and other command line params
 		if (sceneFileName.length()) chewbacca.mSceneFileName = sceneFileName;
 		chewbacca.mDisableMip = disableMip;
-		chewbacca.mUseAlphaBlending = !disableAlphaBlending;
+		if (enableAlphaBlending)  chewbacca.mUseAlphaBlending = true;
+		if (disableAlphaBlending) chewbacca.mUseAlphaBlending = false;
 
 		// setup capturing if RenderDoc is active
 		if (capture_n_frames > 0 && rdoc::active()) {

@@ -6,12 +6,6 @@
 
 #include "shader_common_main.glsl"
 
-#define TAU 6.28318530718 // TAU = 2 * PI
-
-
-#define NORMALMAP_FIX_MISSING_Z 1	// substitute missing z in normal map by +1.0 ? 
-#define NORMALMAP_FIX_SIMPLE 0		// use simple method (set z=1)? (if not: project .xy to +z hemisphere to obtain normal)
-
 // ac: specialization constant to differentiate between opaque pass (0) and transparent pass (1)
 layout(constant_id = 1) const uint transparentPass = 0;
 
@@ -76,18 +70,7 @@ vec4 sample_from_normals_texture()
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
 	vec4 normalSample = SAMPLE_TEXTURE(textures[texIndex], texCoords);
-	#if NORMALMAP_FIX_MISSING_Z
-		if (normalSample.z == 0.0) {	// double-check if z is zero, so this should still work with full .rgb textures, where .z is set
-			#if NORMALMAP_FIX_SIMPLE
-				normalSample.z = 1.0;
-			#else
-				// project to +z hemisphere
-				vec3 v = vec3(normalSample.xy * 2.0 - 1.0, 0.0);
-				v.z = sqrt(1.0 - v.x * v.x + v.y * v.y);
-				normalSample.xyz = normalize(v) * 0.5 + 0.5; // probably don't need normalize()...
-			#endif
-		}
-	#endif
+	FIX_NORMALMAPPING(normalSample);
 	return normalSample;
 }
 
@@ -165,11 +148,14 @@ float calc_attenuation(vec4 atten, float dist, float dist2)
 // Calculates the diffuse and specular illumination contribution for the given
 // parameters according to the Blinn-Phong lighting model.
 // All parameters must be normalized.
-vec3 calc_blinn_phong_contribution(vec3 toLight, vec3 toEye, vec3 normal, vec3 diffFactor, vec3 specFactor, float specShininess)
+vec3 calc_blinn_phong_contribution(vec3 toLight, vec3 toEye, vec3 normal, vec3 diffFactor, vec3 specFactor, float specShininess, bool twoSided)
 {
-	float nDotL = max(0.0, dot(normal, toLight)); // lambertian coefficient
+	//float nDotL = max(0.0, dot(normal, toLight)); // lambertian coefficient
+	float nDotL = twoSided ? abs(dot(normal, toLight)) : max(0.0, dot(normal, toLight));
 	vec3 h = normalize(toLight + toEye);
-	float nDotH = max(0.0, dot(normal, h));
+	//float nDotH = max(0.0, dot(normal, h));
+	float nDotH = twoSided ? abs(dot(normal, h)) : max(0.0, dot(normal, h));
+
 	float specPower = (nDotH == 0 && specShininess == 0) ? 1 : pow(nDotH, specShininess);
 
 	vec3 diffuse = diffFactor * nDotL; // component-wise product
@@ -180,7 +166,7 @@ vec3 calc_blinn_phong_contribution(vec3 toLight, vec3 toEye, vec3 normal, vec3 d
 
 // Calculates the diffuse and specular illumination contribution for all the light sources.
 // All calculations are performed in view space
-vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, float shini)
+vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, float shini, bool twoSided)
 {
 	vec3 diffAndSpec = vec3(0.0, 0.0, 0.0);
 
@@ -192,7 +178,7 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 	for (uint i = uboLights.mRangesAmbientDirectional[2]; i < uboLights.mRangesAmbientDirectional[3]; ++i) {
 		vec3 toLightDirVS = normalize(-uboLights.mLightData[i].mDirection.xyz);
 		vec3 dirLightIntensity = uboLights.mLightData[i].mColor.rgb;
-		diffAndSpec += dirLightIntensity * calc_blinn_phong_contribution(toLightDirVS, toEyeNrmVS, normalVS, diff, spec, shini);
+		diffAndSpec += dirLightIntensity * calc_blinn_phong_contribution(toLightDirVS, toEyeNrmVS, normalVS, diff, spec, shini, twoSided);
 	}
 
 	// point lights
@@ -207,7 +193,7 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 		float atten = calc_attenuation(uboLights.mLightData[i].mAttenuation, dist, distSq);
 		vec3 intensity = uboLights.mLightData[i].mColor.rgb / atten;
 
-		diffAndSpec += intensity * calc_blinn_phong_contribution(toLightNrm, toEyeNrmVS, normalVS, diff, spec, shini);
+		diffAndSpec += intensity * calc_blinn_phong_contribution(toLightNrm, toEyeNrmVS, normalVS, diff, spec, shini, twoSided);
 	}
 
 	// spot lights
@@ -231,7 +217,7 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 		float fade = cosOfHalfInner - cosOfHalfOuter;
 		intensity *= da <= 0.0 ? 0.0 : pow(min(1.0, da / max(0.0001, fade)), falloff);
 
-		diffAndSpec += intensity * calc_blinn_phong_contribution(toLightNrm, toEyeNrmVS, normalVS, diff, spec, shini);
+		diffAndSpec += intensity * calc_blinn_phong_contribution(toLightNrm, toEyeNrmVS, normalVS, diff, spec, shini, twoSided);
 	}
 
 	return diffAndSpec;
@@ -255,7 +241,7 @@ void main()
 
 	float alpha = (transparentPass == 1) ? diffTexColorRGBA.a : 1.0;
 
-	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write
+	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write, even when using alpha-blending
 	if (transparentPass == 1 && alpha < uboMatUsr.mUserInput.w) { discard; return; }
 
 
@@ -265,7 +251,7 @@ void main()
 	vec3 diff       = materialsBuffer.materials[matIndex].mDiffuseReflectivity.rgb  * diffTexColorRGBA.rgb;
 	vec3 spec       = materialsBuffer.materials[matIndex].mSpecularReflectivity.rgb * specTexValue;
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
-
+	bool twoSided   = materialsBuffer.materials[matIndex].mCustomData[3] > 0.5;
 
 	if (uboMatUsr.mUserInput.z < 1.f) {
 		// Calculate ambient illumination:
@@ -275,7 +261,7 @@ void main()
 		}
 
 		// Calculate diffuse and specular illumination from all light sources:
-		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
+		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
 
 		// Add all together:
 		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, alpha);

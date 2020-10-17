@@ -1,6 +1,8 @@
 //? #version 460
 // above line is just for the VS GLSL language integration plugin
 
+#define TAU 6.28318530718 // TAU = 2 * PI
+
 // ----- helper functions
 
 // Sample textures with LOD-bias (prerequiste: uboMatUsr.mLodBias must exist)
@@ -11,6 +13,28 @@
 #define SAMPLE_TEXTURE(t,u) textureLod((t),(u),(textureQueryLod((t), (u)).y + uboMatUsr.mLodBias))
 //#define SAMPLE_TEXTURE(t,u) texture((t),(u))
 
+
+
+// Fix normal mapping for 2-component normal maps
+#define NORMALMAP_FIX_MISSING_Z 1	// substitute missing z in normal map by +1.0 ? 
+#define NORMALMAP_FIX_SIMPLE    0	// use simple method (set z=1)? (if not: project .xy to +z hemisphere to obtain normal)
+
+#if NORMALMAP_FIX_MISSING_Z
+	// always double-check if z is zero, so this should still work with full .rgb textures, where .z IS set
+	#if NORMALMAP_FIX_SIMPLE
+		#define FIX_NORMALMAPPING(n) { if ((n).z == 0.0) (n).z = 1.0; }
+	#else
+		#define FIX_NORMALMAPPING(n)															\
+			if ((n).z == 0.0) {																	\
+				/* project to +z hemisphere */													\
+				vec3 v = vec3((n).xy * 2.0 - 1.0, 0.0);											\
+				v.z = sqrt(1.0 - v.x * v.x + v.y * v.y);										\
+				(n).xyz = normalize(v) * 0.5 + 0.5; /* probably don't need normalize()... */	\
+			}
+	#endif
+#else
+	#define FIX_NORMALMAPPING(n)
+#endif
 
 
 // ----- uniform declarations
@@ -90,7 +114,7 @@ struct MaterialGpuData {
 	float mAnisotropy;
 
 	vec4 mAnisotropyRotation;
-	vec4 mCustomData;
+	vec4 mCustomData;			// [0]:tessellate?  [1]:displacement strength  [2]:normal mapping strength  [3]:two-sided	(but only [3] is used in this project)
 
 	int mDiffuseTexIndex;
 	int mSpecularTexIndex;
