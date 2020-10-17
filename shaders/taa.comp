@@ -105,7 +105,9 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 		cliptowardsCol = centerCol; // here centerCol is always inside the AABB; note: playdead still clip towards average color 
 	}
 
-	if (any(lessThan(centerCol, minCol)) || any(greaterThan(centerCol, maxCol))) gDebugValue = vec4(1,0,0,0);
+	// TODO: optionally unjitter differently: neighbourhood samples, current color -> need to make sure cliptowardsCol stays inside AABB
+
+	//if (any(lessThan(centerCol, minCol)) || any(greaterThan(centerCol, maxCol))) gDebugValue = vec4(1,0,0,0);
 }
 
 // Code from Temporal Reprojection Anti-Aliasing in INSIDE: https://youtu.be/2XXS5UyNjjU?t=939

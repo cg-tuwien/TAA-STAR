@@ -94,6 +94,13 @@ class wookiee : public gvk::invokee
 		bool hasTransparency; // ac
 	};
 
+	struct CameraState { char name[80];  glm::vec3 t; glm::quat r; };	// ugly char[80] for easier ImGui access...
+
+	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
+		{ "Start" },	// t,r filled in from code
+		{ "ES street flicker", {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
+	};
+
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
 	static const uint32_t cConcurrentFrames = 3u;
 
@@ -1016,8 +1023,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				static bool firstTimeInit = true;
 
-				static struct { glm::vec3 t; glm::quat r; } savedCamState = {};
-				if (firstTimeInit) savedCamState = { mQuakeCam.translation(), mQuakeCam.rotation() };
+				static CameraState savedCamState = {};
+				if (firstTimeInit) {
+					savedCamState = { "saved", mQuakeCam.translation(), mQuakeCam.rotation() };
+					mCameraPresets[0].t = savedCamState.t;
+					mCameraPresets[0].r = savedCamState.r;
+				}
 
 
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
@@ -1114,9 +1125,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						mAutoMovement = true;
 						mStartCapture = true;
 					}
-					if (Button("save cam")) savedCamState = { mQuakeCam.translation(), mQuakeCam.rotation() };
+					if (Button("save cam")) { savedCamState.t = mQuakeCam.translation(); savedCamState.r = mQuakeCam.rotation(); };
 					SameLine();
 					if (Button("restore cam")) { mQuakeCam.set_translation(savedCamState.t); mQuakeCam.set_rotation(savedCamState.r); }
+
+					struct FuncHolder {
+						static bool CamPresetGetter(void* data, int idx, const char** out_str) {
+							*out_str = reinterpret_cast<wookiee*>(data)->mCameraPresets[idx].name;
+							return true;
+						}
+					};
+					static int selectedCamPreset = 0;
+					if (Combo("preset", &selectedCamPreset, &FuncHolder::CamPresetGetter, this, static_cast<int>(mCameraPresets.size()))) {
+						mQuakeCam.set_translation(mCameraPresets[selectedCamPreset].t);
+						mQuakeCam.set_rotation   (mCameraPresets[selectedCamPreset].r);
+					}
+
+					if (Button("print cam")) {
+						glm::vec3 t = mQuakeCam.translation();
+						glm::quat r = mQuakeCam.rotation();
+						//printf("{ \"name\", {%gf, %gf, %gf}, {%gf, %gf, %gf, %gf} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
+						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
+					}
 				}
 
 				//Separator();
