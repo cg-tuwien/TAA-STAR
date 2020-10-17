@@ -1226,6 +1226,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update() override
 	{
+		float dt_offset = 0.f;
+		if (gvk::input().key_down(gvk::key_code::left_shift) && gvk::input().key_down(gvk::key_code::left_control)) {
+			// slow-mo
+			Sleep(500);
+			dt_offset = 0.5f;
+		}
+
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		if (inFlightIndex == 1 + cConcurrentFrames) {
 			mStoredCommandBuffers.clear();
@@ -1234,7 +1241,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// auto-movement
 		static float tLast = 0.f;
 		float t = static_cast<float>(glfwGetTime());
-		float dt = tLast ? t - tLast : 0.f;
+		float dt = tLast ? t - tLast - dt_offset : 0.f;
 		tLast = t;
 		if (mAutoMovementUnits == 1) dt = 1.f;
 		if (mAutoMovement && mAutoRotate) {
@@ -1368,7 +1375,7 @@ private: // v== Member variables ==v
 	struct { glm::vec3 dir, intensity; float boost; } mDirLight = { {1.f,1.f,1.f}, { 1.f,1.f,1.f }, 1.f }; // this is overwritten with the dir light from the .fscene file
 	struct { glm::vec3 col; float boost; } mAmbLight = { {1.f, 1.f, 1.f}, 0.1f };
 
-	float mAlphaThreshold = 0.001f; // alpha threshold for rendering transparent parts
+	float mAlphaThreshold = 0.5f; // 0.001f; // alpha threshold for rendering transparent parts (0.5 ok for alpha-testing, 0.001 for alpha-blending)
 	bool mAlphaBlendingActive;
 	bool mDidAllocCommandBuffers = false;
 	float mLodBias;
