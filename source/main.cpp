@@ -1042,7 +1042,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
+							if (false && !is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
@@ -1497,7 +1497,8 @@ int main(int argc, char **argv) // <== Starting point ==
 			chewbacca,
 			ui,
 			dev_extensions,
-			modifyValidationFunc
+			modifyValidationFunc,
+			[](vk::PhysicalDeviceFeatures& pdf) { pdf.independentBlend = VK_TRUE; } // request independent blending
 		);
 	}
 	catch (gvk::logic_error&) {}
