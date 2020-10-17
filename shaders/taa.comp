@@ -28,6 +28,8 @@ layout(push_constant) uniform PushConstants {
 	float mMinAlpha;			// used for luminance-based weighting
 	float mMaxAlpha;			// used for luminance-based weighting
 	float mRejectionAlpha;
+	bool mRejectOutside;
+
 	int  mDebugMode;
 	float mDebugScale;
 } pushConstants;
@@ -247,6 +249,14 @@ void main()
 	float alpha = pushConstants.mJitterAndAlpha.a;
 
 	// ---- history rejection ----
+	// reject out-of-texture history samples
+	if (pushConstants.mRejectOutside) {
+		if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
+			alpha = pushConstants.mRejectionAlpha;
+			rejected = true;
+		}
+	}
+
 	// cull by depth
 	if (pushConstants.mDepthCulling) {
 		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;

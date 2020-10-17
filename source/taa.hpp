@@ -29,6 +29,8 @@ class taa : public gvk::invokee
 		float mMinAlpha;			// used for luminance-based weighting
 		float mMaxAlpha;			// used for luminance-based weighting
 		float mRejectionAlpha;
+		VkBool32 mRejectOutside;
+
 		int mDebugMode;
 		float mDebugScale;
 	};
@@ -298,6 +300,7 @@ public:
 				Checkbox("use YCoCg", &mUseYCoCg);
 				Checkbox("luma weighting", &mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
 				Checkbox("depth culling", &mDepthCulling);
+				Checkbox("reject out-of-screen", &mRejectOutside);
 				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
@@ -365,7 +368,7 @@ public:
 		mTaaPushConstants.mMinAlpha = mMinAlpha;
 		mTaaPushConstants.mMaxAlpha = mMaxAlpha;
 		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
-
+		mTaaPushConstants.mRejectOutside = mRejectOutside;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -539,4 +542,5 @@ private:
 	float mMaxAlpha = 1.0f - 0.88f;
 	float mRejectionAlpha = 1.0f;
 	bool mTriggerCapture = false;
+	bool mRejectOutside = false;
 };
