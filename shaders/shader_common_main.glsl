@@ -36,6 +36,11 @@
 	#define FIX_NORMALMAPPING(n)
 #endif
 
+// Moving objects are implemented in a bit of a hack...
+// Macros DEPEND on uniform/push constant naming and having mMaterialIndex in push constants!
+#define IS_ACTIVE_MOVING_OBJECT (pushConstants.mMaterialIndex == uboMatUsr.mActiveMovingObjectMaterialIdx)
+#define IS_INACTIVE_MOVING_OBJECT (materialsBuffer.materials[pushConstants.mMaterialIndex].mCustomData[0] > 0.5 && uboMatUsr.mActiveMovingObjectMaterialIdx < 0)
+#define EFFECTIVE_MODELMATRIX (IS_ACTIVE_MOVING_OBJECT ? uboMatUsr.mMovingObjectModelMatrix : pushConstants.mModelMatrix)
 
 // ----- uniform declarations
 
@@ -51,8 +56,10 @@
 	/* x = tessellation factor, y = displacement strength, z = use lighting/show normals, w = alpha threshold */	\
 	vec4 mUserInput;																								\
 																													\
+	mat4 mMovingObjectModelMatrix;																					\
+	int  mActiveMovingObjectMaterialIdx;																			\
 	float mLodBias;																									\
-	float pad1, pad2, pad3;																							\
+	float pad1, pad2;																								\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:
@@ -114,8 +121,8 @@ struct MaterialGpuData {
 	float mAnisotropy;
 
 	vec4 mAnisotropyRotation;
-	vec4 mCustomData;			// [0]:tessellate?  [1]:displacement strength  [2]:normal mapping strength  [3]:two-sided	(but only [3] is used in this project)
-
+	vec4 mCustomData;			// old usage (ARTR): [0]:tessellate?  [1]:displacement strength  [2]:normal mapping strength  [3]:two-sided	(but only [3] is used in this project)
+								// usage here:       [0]:is_moving?   [1]:displacement strength  [2]:normal mapping strength  [3]:two-sided	(but only [3] is used in this project)
 	int mDiffuseTexIndex;
 	int mSpecularTexIndex;
 	int mAmbientTexIndex;

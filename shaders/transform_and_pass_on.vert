@@ -41,7 +41,7 @@ layout (location = 0) out VertexData {
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
-	mat4 mMatrix = pushConstants.mModelMatrix;
+	mat4 mMatrix = EFFECTIVE_MODELMATRIX;
 	mat4 vMatrix = uboMatUsr.mViewMatrix;
 	mat4 pMatrix = uboMatUsr.mProjMatrix;
 	mat4 vmMatrix = vMatrix * mMatrix;

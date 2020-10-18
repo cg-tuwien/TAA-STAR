@@ -10,6 +10,15 @@
 #include <string>
 
 /* TODO:
+	- WTF?? deferred rendering crashes with moving sphere enabled... (device lost) - ok with forward rendering
+		early return in blinnphong -> no crash
+		when sampling diffuse texture? no, when accessing fs_in.texCoords!
+		-> aTexCoords not valid for sphere object?
+		-> texcoords buffer only has length 8! == 1 entry! should have 1984... (sphere has 1984 vert, 2880 ind)
+		same problem exists with forward renderer, but for some reason that one doesn't crash
+		===> FIXED WITH WORKAROUND, TODO: FIX ACTUAL BUG IN FRAMEWORK!
+		(sidenode: should perhaps better get tangents/bitangents from assimp than just static nonsense values?)
+
 	- recheck lighting, esp. w.r.t. twosided materials
 
 	- fix changed lighting flags in deferred shader
@@ -25,6 +34,9 @@
 
 #define FORWARD_RENDERING 1
 
+#define ADD_MOVING_SPHERE 1
+
+
 class wookiee : public gvk::invokee
 {
 	// Struct definition for data used as UBO across different pipelines, containing matrices and user input
@@ -39,8 +51,10 @@ class wookiee : public gvk::invokee
 		// x = unused, y = normal mapping strength, z and w unused
 		glm::vec4 mUserInput;
 
+		glm::mat4 mMovingObjectModelMatrix;
+		int  mActiveMovingObjectMaterialIdx;
 		float mLodBias;
-		float pad1, pad2, pad3;
+		float pad1, pad2;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -142,6 +156,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mCamPos		= glm::translate(mQuakeCam.translation());
 		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
+
+		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingSphereMatIdx : -1;
+		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::translate(glm::mat4(1), mMovingObject.translation);
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
@@ -658,6 +675,52 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 		std::cout << std::endl;
 
+#if ADD_MOVING_SPHERE
+		// load a sphere - used as moving object
+		{
+			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
+			auto sphere = gvk::model_t::load_from_file("assets/sphere.obj");
+			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
+			auto material = sphere->material_config_for_mesh(0);
+			material.mCustomData[0] = 1.f; // moving object id
+			distinctMaterialConfigs.push_back(material);
+
+			auto selection = make_models_and_meshes_selection(sphere, 0);
+			auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
+			//auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
+			//							   : gvk::get_2d_texture_coordinates        (selection, 0);
+			// BUG IN model.hpp -> returns only one entry!
+			// FIXME
+			std::vector<glm::vec2> texCoords(vertices.size(), glm::vec2(0, 0));
+
+			auto normals = gvk::get_normals(selection);
+			auto tangents = gvk::get_tangents(selection);
+			auto bitangents = gvk::get_bitangents(selection);
+
+			std::vector<push_constant_data_per_drawcall> pcvec = { push_constant_data_per_drawcall{ glm::mat4(1), materialIndex } };
+			auto& ref = mDrawCalls.emplace_back(drawcall_data{
+				// Create all the GPU buffers, but don't fill yet:
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
+				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
+				pcvec
+				});
+			ref.mIndices = std::move(indices);
+			ref.mPositions = std::move(vertices);
+			ref.mTexCoords = std::move(texCoords);
+			ref.mNormals = std::move(normals);
+			ref.mTangents = std::move(tangents);
+			ref.mBitangents = std::move(bitangents);
+			ref.hasTransparency = false;
+
+			mMovingSphereMatIdx = materialIndex;
+		}
+#endif
+
+
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
 		//   1) Material data in a properly aligned format, suitable for being uploaded into a GPU buffer (but not uploaded into a buffer yet!)
@@ -1019,7 +1082,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this]() {
-
 				using namespace ImGui;
 
 				static bool firstTimeInit = true;
@@ -1145,6 +1207,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
 					}
 				}
+				if (CollapsingHeader("Moving object")) {
+					PushID("Movers");
+					Checkbox("enable", &mMovingObject.enabled);
+					InputFloat3("start", &mMovingObject.startPos.x);
+					InputFloat3("end",   &mMovingObject.endPos.x);
+					InputFloat("speed", &mMovingObject.speed);
+					Combo("##unit", &mMovingObject.units, "/sec\0/frame\0");
+					if (Button("reset")) mMovingObject.t = 0.f;
+					PopID();
+				}
 				if (CollapsingHeader("Debug")) {
 					if (rdoc::active()) {
 						Separator();
@@ -1249,13 +1321,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		float t = static_cast<float>(glfwGetTime());
 		float dt = tLast ? t - tLast - dt_offset : 0.f;
 		tLast = t;
-		if (mAutoMovementUnits == 1) dt = 1.f;
+
+		float dtCam = dt;
+		if (mAutoMovementUnits == 1) dtCam = 1.f;
 		if (mAutoMovement && mAutoRotate) {
-			glm::vec2 rotation = glm::radians(mAutoRotateDegrees) * dt;
+			glm::vec2 rotation = glm::radians(mAutoRotateDegrees) * dtCam;
 			glm::quat rotHoriz = glm::quat_cast(glm::rotate(rotation.x, glm::vec3(0.f, 1.f, 0.f)));
 			glm::quat rotVert =  glm::quat_cast(glm::rotate(rotation.y, glm::vec3(1.f, 0.f, 0.f)));
 			mQuakeCam.set_rotation(rotHoriz * mQuakeCam.rotation() * rotVert);
 		}
+
+		float dtObj = dt;
+		if (mMovingObject.units == 1) dtObj = 1.f;
+		if (mMovingObject.enabled) {
+			glm::vec3 dir = mMovingObject.endPos - mMovingObject.startPos;
+			float len = glm::length(dir);
+			if (len > 1e-6) dir /= len;
+
+			mMovingObject.t += dtObj * mMovingObject.speed;
+			if (mMovingObject.t > len) mMovingObject.t = len;
+			mMovingObject.translation = mMovingObject.startPos + mMovingObject.t * dir;
+		}
+
 		
 		// Let Temporal Anti-Aliasing modify the camera's projection matrix:
 		auto* mainWnd = gvk::context().main_window();
@@ -1391,6 +1478,18 @@ private: // v== Member variables ==v
 	bool mAutoRotate = true;
 	bool mAutoMovement = false;
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
+
+	int mMovingSphereMatIdx = -1;
+
+	struct {
+		bool      enabled = 0;
+		glm::vec3 translation = {};
+		glm::vec3 startPos = glm::vec3(-5, 1, 0);
+		glm::vec3 endPos   = glm::vec3(5,1,0);
+		float     speed    = 5.f;
+		float     t = 0.f;
+		int       units = 0; // 0 = per sec, 1 = per frame
+	} mMovingObject;
 
 };
 

@@ -113,7 +113,7 @@ vec3 re_orthogonalize(vec3 first, vec3 second)
 // normal from the normal map and transforming it with the TBN-matrix.
 vec3 calc_normalized_normalVS(vec3 sampledNormal)
 {
-	mat4 vmMatrix = uboMatUsr.mViewMatrix * pushConstants.mModelMatrix;
+	mat4 vmMatrix = uboMatUsr.mViewMatrix * EFFECTIVE_MODELMATRIX;
 	mat3 vmNormalMatrix = mat3(inverse(transpose(vmMatrix)));
 
 	// build the TBN matrix from the varyings
@@ -231,6 +231,8 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	if (IS_INACTIVE_MOVING_OBJECT) { discard; return; }
+
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	vec3 positionVS = fs_in.positionVS;
 	int matIndex = pushConstants.mMaterialIndex;
@@ -278,7 +280,7 @@ void main()
 		oFragColor = vec4(normalWS.xyz, 1.0);
 	} else {
 		// Debug2: show geometry normals (not affected by normal mapping)
-		vec3 normalWS = normalize(mat3(inverse(transpose(pushConstants.mModelMatrix))) * normalize(fs_in.normalOS));
+		vec3 normalWS = normalize(mat3(inverse(transpose(EFFECTIVE_MODELMATRIX))) * normalize(fs_in.normalOS));
 		oFragColor = vec4(normalWS.xyz, 1.0);
 
 		//oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;

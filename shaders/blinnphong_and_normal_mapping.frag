@@ -91,7 +91,7 @@ vec3 re_orthogonalize(vec3 first, vec3 second)
 // normal from the normal map and transforming it with the TBN-matrix.
 vec3 calc_normalized_normalVS(vec3 sampledNormal)
 {
-	mat4 vmMatrix = uboMatUsr.mViewMatrix * pushConstants.mModelMatrix;
+	mat4 vmMatrix = uboMatUsr.mViewMatrix * EFFECTIVE_MODELMATRIX;
 	mat3 vmNormalMatrix = mat3(inverse(transpose(vmMatrix)));
 
 	// build the TBN matrix from the varyings
@@ -120,6 +120,8 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	if (IS_INACTIVE_MOVING_OBJECT) { discard; return; }
+
 	// simple alpha-testing (no blending) in the deferred shader only
 	float alpha = sample_from_diffuse_texture().a;
 	if (alpha < uboMatUsr.mUserInput.w) { discard; return; }
