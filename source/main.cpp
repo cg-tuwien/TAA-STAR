@@ -89,6 +89,7 @@ class wookiee : public gvk::invokee
 		{ "Start" },	// t,r filled in from code
 		{ "ES street flicker", {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
 		{ "ES window flicker", {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
+		{ "ES fence \"hole\"", {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
 	};
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
@@ -140,7 +141,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mProjMatrix	= mQuakeCam.projection_matrix();
 		mMatricesAndUserInput.mCamPos		= glm::translate(mQuakeCam.translation());
 		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
-		mMatricesAndUserInput.mLodBias		= mLodBias;
+		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
@@ -1042,7 +1043,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (false && !is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
+							if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
@@ -1101,19 +1102,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
 				Checkbox("alpha blending", &mUseAlphaBlending);
-				InputFloat("lod bias", &mLodBias);
+				PushItemWidth(80);
+				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
+				PopItemWidth();
+				SameLine();
+				Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
-				if (CollapsingHeader("Debug")) {
-					if (rdoc::active()) {
-						Separator();
-						if (Button("capture") && !mCaptureFramesLeft && mCaptureNumFrames > 0) mStartCapture = true;
-						SameLine();
-						PushItemWidth(60);
-						InputInt("frames", &mCaptureNumFrames);
-						PopItemWidth();
-					}
+				if (CollapsingHeader("Camera")) {
 					Checkbox("rot", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
 					Checkbox("auto move", &mAutoMovement);
 					SameLine();
@@ -1148,8 +1145,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
 					}
 				}
+				if (CollapsingHeader("Debug")) {
+					if (rdoc::active()) {
+						Separator();
+						if (Button("capture") && !mCaptureFramesLeft && mCaptureNumFrames > 0) mStartCapture = true;
+						SameLine();
+						PushItemWidth(60);
+						InputInt("frames", &mCaptureNumFrames);
+						PopItemWidth();
+					}
+				}
 
-				//Separator();
 				if (CollapsingHeader("Images")) {
 					for (auto& tpl : texIdsAndDescriptions) {
 						auto texId = std::get<std::optional<ImTextureID>>(tpl);
@@ -1379,6 +1385,7 @@ private: // v== Member variables ==v
 	bool mAlphaBlendingActive;
 	bool mDidAllocCommandBuffers = false;
 	float mLodBias;
+	bool mLoadBiasTaaOnly = true;
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = true;

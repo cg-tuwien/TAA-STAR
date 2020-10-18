@@ -29,6 +29,10 @@
 
 #endif
 
+#define TAA_IMAGE_FORMAT_POSTPROCESS	vk::Format::eR16G16B16A16Sfloat
+#define TAA_SHADER_FORMAT_POSTPROCESS	rgba16f
+
+
 #define	IMAGE_FORMAT_COLOR				vk::Format::eR16G16B16A16Sfloat
 #define	IMAGE_FORMAT_DEPTH				vk::Format::eD32Sfloat
 #define	IMAGE_FORMAT_NORMAL				vk::Format::eR32G32B32A32Sfloat

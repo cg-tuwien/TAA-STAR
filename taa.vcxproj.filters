@@ -69,6 +69,9 @@
     <None Include="shaders\fwd_geometry.frag">
       <Filter>shaders</Filter>
     </None>
+    <None Include="shaders\post_process.comp">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">

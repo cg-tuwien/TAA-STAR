@@ -10,6 +10,14 @@
 #include "debug_helper.hpp"
 #include "shader_cpu_common.h"
 
+#define TAA_USE_POSTPROCESS_STEP 1
+
+#if TAA_OUTPUT_IS_SRGB
+#define RESULT_IMAGES_MAYBESRGB mResultImagesSrgb
+#else
+#define RESULT_IMAGES_MAYBESRGB mResultImages
+#endif
+
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
 // are created CF-times, once for each concurrent frame.
@@ -35,6 +43,13 @@ class taa : public gvk::invokee
 		float mDebugScale;
 	};
 
+	struct push_constants_for_postprocess {	// !ATTN to alignment!
+		glm::ivec4 zoomSrcLTWH	= { 960 - 10, 540 - 10, 20, 20 };
+		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
+		VkBool32 zoom			= false;
+		VkBool32 showZoomBox	= false;
+	};
+
 	struct matrices_for_taa {
 		glm::mat4 mHistoryViewProjMatrix;
 		glm::mat4 mInverseViewProjMatrix;
@@ -48,6 +63,8 @@ public:
 
 	// Execute after all previous post-processing effects:
 	int execution_order() const override { return 100; }
+
+	bool taa_enabled() const { return mTaaEnabled; }
 
 	bool trigger_capture() {
 		bool res = mTriggerCapture;
@@ -74,7 +91,7 @@ public:
 		}
 		return result;
 	}
-	
+
 	// Compute an offset for the projection matrix based on the given frame-id
 	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId) const
 	{
@@ -84,16 +101,16 @@ public:
 		// Prepare some different distributions:
 		const static auto sCircularQuadSampleOffsets = avk::make_array<glm::vec2>(
 			sPxSizeNDC * glm::vec2(-0.25f, -0.25f),
-			sPxSizeNDC * glm::vec2( 0.25f, -0.25f),
-			sPxSizeNDC * glm::vec2( 0.25f,  0.25f),
-			sPxSizeNDC * glm::vec2(-0.25f,  0.25f)
-		);
+			sPxSizeNDC * glm::vec2(0.25f, -0.25f),
+			sPxSizeNDC * glm::vec2(0.25f, 0.25f),
+			sPxSizeNDC * glm::vec2(-0.25f, 0.25f)
+			);
 		const static auto sUniform4HelixSampleOffsets = avk::make_array<glm::vec2>(
 			sPxSizeNDC * glm::vec2(-0.25f, -0.25f),
-			sPxSizeNDC * glm::vec2( 0.25f,  0.25f),
-			sPxSizeNDC * glm::vec2( 0.25f, -0.25f),
-			sPxSizeNDC * glm::vec2(-0.25f,  0.25f)
-		);
+			sPxSizeNDC * glm::vec2(0.25f, 0.25f),
+			sPxSizeNDC * glm::vec2(0.25f, -0.25f),
+			sPxSizeNDC * glm::vec2(-0.25f, 0.25f)
+			);
 		const static auto sHalton23x8SampleOffsets = halton_2_3<8>(sPxSizeNDC);
 		const static auto sHalton23x16SampleOffsets = halton_2_3<16>(sPxSizeNDC);
 
@@ -118,8 +135,8 @@ public:
 			numSampleOffsets = sHalton23x16SampleOffsets.size();
 			break;
 		}
-		
-		if (mJitterSlowMotion  > 1) aFrameId /= mJitterSlowMotion;
+
+		if (mJitterSlowMotion > 1) aFrameId /= mJitterSlowMotion;
 		if (mFixedJitterIndex >= 0) aFrameId = mFixedJitterIndex;
 
 
@@ -141,15 +158,14 @@ public:
 		auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mHistoryProjMatrices[inFlightIndex] = aProjMatrix;
 	}
-	
+
 	// Applies a translation to the given matrix and returns the result
 	glm::mat4 get_jittered_projection_matrix(glm::mat4 aProjMatrix, gvk::window::frame_id_t aFrameId) const
 	{
 		if (mTaaEnabled) {
 			const auto xyOffset = get_jitter_offset_for_frame(aFrameId);
-			return glm::translate(glm::vec3{xyOffset.x, xyOffset.y, 0.0f}) * aProjMatrix;
-		}
-		else {
+			return glm::translate(glm::vec3{ xyOffset.x, xyOffset.y, 0.0f }) * aProjMatrix;
+		} else {
 			return aProjMatrix;
 		}
 	}
@@ -160,7 +176,7 @@ public:
 	void set_source_image_views(SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews)
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
-		
+
 		for (size_t i = 0; i < CF; ++i) {
 			// Store pointers to the source color result images
 			if constexpr (std::is_pointer<typename SRCCOLOR::value_type>::value) {
@@ -172,8 +188,7 @@ public:
 			// Store pointers to the source depth images
 			if constexpr (std::is_pointer<typename SRCD::value_type>::value) {
 				mSrcDepth[i] = &static_cast<avk::image_view_t&>(*aSourceDepthImageViews[i]);
-			}
-			else {
+			} else {
 				mSrcDepth[i] = &static_cast<avk::image_view_t&>(aSourceDepthImageViews[i]);
 			}
 
@@ -200,6 +215,14 @@ public:
 			);
 			rdoc::labelImage(mDebugImages[i]->get_image().handle(), "taa.mDebugImages", i);
 			layoutTransitions.emplace_back(std::move(mDebugImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
+#if TAA_USE_POSTPROCESS_STEP
+			mPostProcessImages[i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_POSTPROCESS, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mPostProcessImages[i]->get_image().handle(), "taa.mPostProcessImages", i);
+			layoutTransitions.emplace_back(std::move(mPostProcessImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+#endif
 		}
 
 		std::vector<std::reference_wrapper<avk::command_buffer_t>> commandBufferReferences;
@@ -230,61 +253,17 @@ public:
 		return helpers::get_timing_interval_in_ms(fmt::format("TAA {}", inFlightIndex));
 	}
 
-	// Create all the compute pipelines used for the post processing effect(s),
-	// prepare some command buffers with pipeline barriers to synchronize with subsequent commands,
-	// create a new ImGui window that allows to enable/disable anti-aliasing, and to modify parameters:
-	void initialize() override 
+
+	void setup_ui_callback()
 	{
+		// Create a new ImGui window
+
 		using namespace avk;
 		using namespace gvk;
-		
-		// Create a descriptor cache that helps us to conveniently create descriptor sets:
-		mDescriptorCache = gvk::context().create_descriptor_cache();
-		
-		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0);
 
-		for (size_t i = 0; i < CF; ++i) {
-			mMatricesBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(matrices_for_taa)));
-		}
-
-		mTaaPipeline = context().create_compute_pipeline_for(
-			"shaders/taa.comp",
-			descriptor_binding(0, 0, mSampler),
-			descriptor_binding(0, 1, *mSrcColor[0]),
-			descriptor_binding(0, 2, *mSrcDepth[0]),
-#if TAA_OUTPUT_IS_SRGB
-			descriptor_binding(0, 3, *mResultImagesSrgb[0]),
-#else
-			descriptor_binding(0, 3, *mResultImages[0]),
-#endif
-			descriptor_binding(0, 4, *mSrcDepth[0]),
-			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
-			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
-			descriptor_binding(1, 0, mMatricesBuffer[0]),
-			push_constant_binding_data { shader_type::compute, 0, sizeof(push_constants_for_taa) }
-		);
-
-		auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
-		
-		// Record command buffers which contain pipeline barriers to properly synchronize with subsequent commands
-		for (size_t i = 0; i < CF; ++i) {
-			mSyncAfterCommandBuffers[i] = commandPool->alloc_command_buffer();
-			mSyncAfterCommandBuffers[i]->begin_recording();
-			rdoc::beginSection(mSyncAfterCommandBuffers[i]->handle(), "TAA Sync", i);
-			mSyncAfterCommandBuffers[i]->establish_global_memory_barrier(
-				// Sync between the following pipeline stages:
-				pipeline_stage::compute_shader                        | pipeline_stage::transfer,             /* -> */ pipeline_stage::compute_shader                      | pipeline_stage::transfer,
-				// According to those pipeline stages, sync the following memory accesses:
-				memory_access::shader_buffers_and_images_write_access | memory_access::transfer_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access | memory_access::transfer_read_access
-			);
-			rdoc::endSection(mSyncAfterCommandBuffers[i]->handle());
-			mSyncAfterCommandBuffers[i]->end_recording();
-		}
-		
-		// Create a new ImGui window:
 		auto imguiManager = current_composition()->element_by_type<imgui_manager>();
-		if(nullptr != imguiManager) {
-			imguiManager->add_callback([this](){
+		if (nullptr != imguiManager) {
+			imguiManager->add_callback([this]() {
 				using namespace ImGui;
 				using namespace imgui_helper;
 
@@ -316,28 +295,105 @@ public:
 				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 50.f, "%.0f");
 
 				if (CollapsingHeader("Jitter debug")) {
-					SliderInt ("lock",		&mFixedJitterIndex, -1, 16);
-					InputFloat("scale",		&mJitterExtraScale, 0.f, 0.f, "%.2f");
-					InputInt  ("slowdown",	&mJitterSlowMotion);
-					InputFloat("rotate",	&mJitterRotateDegrees);
+					SliderInt("lock", &mFixedJitterIndex, -1, 16);
+					InputFloat("scale", &mJitterExtraScale, 0.f, 0.f, "%.2f");
+					InputInt("slowdown", &mJitterSlowMotion);
+					InputFloat("rotate", &mJitterRotateDegrees);
 				}
+
+#if TAA_USE_POSTPROCESS_STEP
+				if (CollapsingHeader("Postprocess")) {
+					auto &pp = mPostProcessPushConstants;
+					static bool pp_zoom = pp.zoom;					// ugly workaround for bool <-> VkBool32 conversion
+					static bool pp_showZoomBox = pp.showZoomBox;
+
+					Checkbox("enable", &mPostProcessEnabled);
+					Checkbox("zoom", &pp_zoom);	
+					SameLine(); Checkbox("show box", &pp_showZoomBox);
+					InputInt4("src", &pp.zoomSrcLTWH.x); HelpMarker("Left/Top/Width/Height");
+					InputInt4("dst", &pp.zoomDstLTWH.x);
+
+					pp.zoom = pp_zoom;
+					pp.showZoomBox = pp_showZoomBox;
+				}
+#endif
+
 				End();
-			});
-		}
-		else {
+				});
+		} else {
 			LOG_WARNING("No component of type cgb::imgui_manager found => could not install ImGui callback.");
 		}
 	}
 
-	// Update the push constant data that will be used in render():
-	void update() override 
+	// Create all the compute pipelines used for the post processing effect(s),
+	// prepare some command buffers with pipeline barriers to synchronize with subsequent commands,
+	// create a new ImGui window that allows to enable/disable anti-aliasing, and to modify parameters:
+	void initialize() override
 	{
 		using namespace avk;
 		using namespace gvk;
-		
+
+		// Create a descriptor cache that helps us to conveniently create descriptor sets:
+		mDescriptorCache = gvk::context().create_descriptor_cache();
+
+		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0);
+
+		for (size_t i = 0; i < CF; ++i) {
+			mMatricesBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(matrices_for_taa)));
+		}
+
+		mTaaPipeline = context().create_compute_pipeline_for(
+			"shaders/taa.comp",
+			descriptor_binding(0, 0, mSampler),
+			descriptor_binding(0, 1, *mSrcColor[0]),
+			descriptor_binding(0, 2, *mSrcDepth[0]),
+			descriptor_binding(0, 3, *RESULT_IMAGES_MAYBESRGB[0]),
+			descriptor_binding(0, 4, *mSrcDepth[0]),
+			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
+			descriptor_binding(1, 0, mMatricesBuffer[0]),
+			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
+		);
+
+#if TAA_USE_POSTPROCESS_STEP
+		mPostProcessPipeline = context().create_compute_pipeline_for(
+			"shaders/post_process.comp",
+			descriptor_binding(0, 1, *mResultImages[0]),
+			descriptor_binding(0, 2, mPostProcessImages[0]->as_storage_image()),
+			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_postprocess) }
+		);
+#endif
+
+
+		auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
+
+		// Record command buffers which contain pipeline barriers to properly synchronize with subsequent commands
+		for (size_t i = 0; i < CF; ++i) {
+			mSyncAfterCommandBuffers[i] = commandPool->alloc_command_buffer();
+			mSyncAfterCommandBuffers[i]->begin_recording();
+			rdoc::beginSection(mSyncAfterCommandBuffers[i]->handle(), "TAA Sync", i);
+			mSyncAfterCommandBuffers[i]->establish_global_memory_barrier(
+				// Sync between the following pipeline stages:
+				pipeline_stage::compute_shader | pipeline_stage::transfer,             /* -> */ pipeline_stage::compute_shader | pipeline_stage::transfer,
+				// According to those pipeline stages, sync the following memory accesses:
+				memory_access::shader_buffers_and_images_write_access | memory_access::transfer_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access | memory_access::transfer_read_access
+			);
+			rdoc::endSection(mSyncAfterCommandBuffers[i]->handle());
+			mSyncAfterCommandBuffers[i]->end_recording();
+		}
+
+		setup_ui_callback();
+	}
+
+	// Update the push constant data that will be used in render():
+	void update() override
+	{
+		using namespace avk;
+		using namespace gvk;
+
 		auto inFlightIndex = context().main_window()->in_flight_index_for_frame();
 		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
-		assert (nullptr != quakeCamera);
+		assert(nullptr != quakeCamera);
 
 		// jitter-slow motion -> bypass history update on unchanged frames
 		if (mJitterSlowMotion > 1) {
@@ -376,7 +432,7 @@ public:
 	{
 		using namespace avk;
 		using namespace gvk;
-		
+
 		auto* mainWnd = context().main_window();
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
 		auto inFlightLastIndex = (inFlightIndex + CF - 1) % CF;
@@ -408,7 +464,7 @@ public:
 
 			// Apply Temporal Anti-Aliasing:
 			cmdbfr->bind_pipeline(mTaaPipeline);
-			cmdbfr->bind_descriptors(mTaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
+			cmdbfr->bind_descriptors(mTaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mSampler),
 				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),
 				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),
@@ -421,54 +477,73 @@ public:
 				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),
 				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
-			}));
+				}));
 			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
+
+#if TAA_OUTPUT_IS_SRGB
+			// Finally, copy into sRGB image:
 			cmdbfr->establish_global_memory_barrier(
 				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::transfer,
 				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::transfer_read_access
 			);
 
-#if TAA_OUTPUT_IS_SRGB
-			// Finally, copy into sRGB image:
 			copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-#endif
-			//if (TAA_OUTPUT_IS_SRGB) {
-			//	copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			//} else {
-			//	blit_image(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			//}
 
 			cmdbfr->establish_global_memory_barrier(
 				pipeline_stage::transfer,             /* -> */ pipeline_stage::transfer,
 				memory_access::transfer_write_access, /* -> */ memory_access::transfer_read_access
 			);
-			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
-			//blit_image(mResultImagesSrgb[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-
-			auto &image_to_show = mShowDebug
-								? mDebugImages[inFlightIndex]->get_image()
-#if TAA_OUTPUT_IS_SRGB
-								: mResultImagesSrgb[inFlightIndex]->get_image()
-#else
-								: mResultImages[inFlightIndex]->get_image()
 #endif
-								;
+
+#if TAA_USE_POSTPROCESS_STEP
+			if (mPostProcessEnabled) {
+				// post-processing
+
+				cmdbfr->establish_global_memory_barrier(
+					pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::compute_shader,
+					memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access
+				);
+
+				cmdbfr->bind_pipeline(mPostProcessPipeline);
+				cmdbfr->bind_descriptors(mPostProcessPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(0, 1, *RESULT_IMAGES_MAYBESRGB[inFlightIndex]),
+					descriptor_binding(0, 2, mPostProcessImages[inFlightIndex]->as_storage_image())
+					}));
+				cmdbfr->push_constants(mPostProcessPipeline->layout(), mPostProcessPushConstants);
+				cmdbfr->handle().dispatch((mPostProcessImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mPostProcessImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+			}
+#endif
+
+			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
+			
+			auto *p_final_image = &RESULT_IMAGES_MAYBESRGB[inFlightIndex]->get_image();
+#if TAA_USE_POSTPROCESS_STEP
+			if (mPostProcessEnabled) p_final_image = &mPostProcessImages[inFlightIndex]->get_image();
+#endif
+			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : *p_final_image;
+
+			// TODO: is this barrier needed?
+			cmdbfr->establish_global_memory_barrier(
+				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::transfer,
+				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::transfer_read_access
+			);
+
 			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 
 			helpers::record_timing_interval_end(cmdbfr->handle(), fmt::format("TAA {}", inFlightIndex));
 		}
 		// -------------------------- If Anti-Aliasing is disabled, do nothing but blit/copy ------------------------------
-		else { 
+		else {
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
-			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(),                                 sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 #if TAA_OUTPUT_IS_SRGB
-			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(),                             sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 #endif
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 		}
-		
+
 		rdoc::endSection(cmdbfr->handle());
 		cmdbfr->end_recording();
 
@@ -477,7 +552,7 @@ public:
 		// The swap chain provides us with an "image available semaphore" for the current frame.
 		// Only after the swapchain image has become available, we may start rendering into it.
 		auto& imageAvailableSemaphore = mainWnd->consume_current_image_available_semaphore();
-		
+
 		// Submit the draw call and take care of the command buffer's lifetime:
 		mQueue->submit(cmdbfr, imageAvailableSemaphore);
 		mainWnd->handle_lifetime(std::move(cmdbfr));
@@ -490,13 +565,14 @@ public:
 private:
 	avk::queue* mQueue;
 	avk::descriptor_cache mDescriptorCache;
-	
+
 	// Settings, which can be modified via ImGui:
 	bool mTaaEnabled = true;
+	bool mPostProcessEnabled = static_cast<bool>(TAA_USE_POSTPROCESS_STEP);
 	int mColorClampingOrClipping = 1;
 	bool mDepthCulling = false;
 	bool mTextureLookupUnjitter = false;
-	int mSampleDistribution = 0;
+	int mSampleDistribution = 1;
 	float mAlpha = 0.1f;
 	bool mResetHistory = false;
 
@@ -511,18 +587,23 @@ private:
 	std::array<avk::image_view, CF> mResultImagesSrgb;
 #endif
 	std::array<avk::image_view, CF> mDebugImages;
+	std::array<avk::image_view, CF> mPostProcessImages;
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;
 	std::array<glm::mat4, CF> mHistoryViewMatrices;
 	std::array<avk::buffer, CF> mMatricesBuffer;
 
 	avk::sampler mSampler;
-	
+
 	// Prepared command buffers to synchronize subsequent commands
 	std::array<avk::command_buffer, CF> mSyncAfterCommandBuffers;
-	
+
 	avk::compute_pipeline mTaaPipeline;
 	push_constants_for_taa mTaaPushConstants;
+
+	avk::compute_pipeline mPostProcessPipeline;
+	push_constants_for_postprocess mPostProcessPushConstants;
+
 
 	// jitter debugging
 	int mFixedJitterIndex = -1;

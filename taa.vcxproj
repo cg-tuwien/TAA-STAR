@@ -44,6 +44,7 @@
     <None Include="shaders\fwd_geometry.frag" />
     <None Include="shaders\lighting_pass.frag" />
     <None Include="shaders\lighting_pass.vert" />
+    <None Include="shaders\post_process.comp" />
     <None Include="shaders\sky_gradient.frag" />
     <None Include="shaders\sky_gradient.vert" />
     <None Include="shaders\taa.comp" />

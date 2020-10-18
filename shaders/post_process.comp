@@ -1,0 +1,52 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// ###### SRC/DST IMAGES #################################
+layout(set = 0, binding = 1) uniform texture2D uInputFrame;
+layout(set = 0, binding = 2, TAA_SHADER_FORMAT_POSTPROCESS) writeonly uniform restrict image2D uOutput;
+// -------------------------------------------------------
+
+// ###### PUSH CONSTANTS AND UBOs ########################
+layout(push_constant) uniform PushConstants {
+	ivec4 zoomSrcLTWH;
+	ivec4 zoomDstLTWH;
+	bool zoom;
+	bool showZoomBox;
+} pushConstants;
+
+// -------------------------------------------------------
+
+// ################## COMPUTE SHADER MAIN ###################
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+void main()
+{
+	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(iuv, textureSize(uInputFrame, 0)))) return;
+
+	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uInputFrame, 0);
+
+	ivec2 iuvFetchFrom = iuv;
+
+	if (pushConstants.zoom && pushConstants.showZoomBox) {
+
+		//if ( any(equal(iuv, pushConstants.zoomSrcLTWH.xy - 1)) || any(equal(iuv, pushConstants.zoomSrcLTWH.xy + pushConstants.zoomSrcLTWH.wz))) {
+		if ( ((iuv.x == pushConstants.zoomSrcLTWH.x - 1) || (iuv.x == pushConstants.zoomSrcLTWH.x + pushConstants.zoomSrcLTWH.z)) && (iuv.y >= pushConstants.zoomSrcLTWH.y - 1) && (iuv.y <= pushConstants.zoomSrcLTWH.y + pushConstants.zoomSrcLTWH.w)
+		  || ((iuv.y == pushConstants.zoomSrcLTWH.y - 1) || (iuv.y == pushConstants.zoomSrcLTWH.y + pushConstants.zoomSrcLTWH.w)) && (iuv.x >= pushConstants.zoomSrcLTWH.x - 1) && (iuv.x <= pushConstants.zoomSrcLTWH.x + pushConstants.zoomSrcLTWH.z) ) {
+			imageStore(uOutput, iuv, vec4(1,0,0,0));
+			return;
+		}
+	}
+
+	if (pushConstants.zoom && all(greaterThanEqual(iuv, pushConstants.zoomDstLTWH.xy)) && all(lessThanEqual(iuv, pushConstants.zoomDstLTWH.xy + pushConstants.zoomDstLTWH.zw))) {
+		// scale range zoomDst to zoomSrc
+		vec2 zoomUv = (iuv - pushConstants.zoomDstLTWH.xy + 0.5) / vec2(pushConstants.zoomDstLTWH.zw);
+		iuvFetchFrom = ivec2(pushConstants.zoomSrcLTWH.xy + zoomUv * pushConstants.zoomSrcLTWH.zw);
+	}
+
+	vec4 val = texelFetch(uInputFrame, iuvFetchFrom, 0);
+	imageStore(uOutput, iuv, val);
+}
+
