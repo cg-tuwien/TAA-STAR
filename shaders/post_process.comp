@@ -30,9 +30,8 @@ void main()
 
 	ivec2 iuvFetchFrom = iuv;
 
+	// zoom source border box
 	if (pushConstants.zoom && pushConstants.showZoomBox) {
-
-		//if ( any(equal(iuv, pushConstants.zoomSrcLTWH.xy - 1)) || any(equal(iuv, pushConstants.zoomSrcLTWH.xy + pushConstants.zoomSrcLTWH.wz))) {
 		if ( ((iuv.x == pushConstants.zoomSrcLTWH.x - 1) || (iuv.x == pushConstants.zoomSrcLTWH.x + pushConstants.zoomSrcLTWH.z)) && (iuv.y >= pushConstants.zoomSrcLTWH.y - 1) && (iuv.y <= pushConstants.zoomSrcLTWH.y + pushConstants.zoomSrcLTWH.w)
 		  || ((iuv.y == pushConstants.zoomSrcLTWH.y - 1) || (iuv.y == pushConstants.zoomSrcLTWH.y + pushConstants.zoomSrcLTWH.w)) && (iuv.x >= pushConstants.zoomSrcLTWH.x - 1) && (iuv.x <= pushConstants.zoomSrcLTWH.x + pushConstants.zoomSrcLTWH.z) ) {
 			imageStore(uOutput, iuv, vec4(1,0,0,0));
@@ -40,7 +39,15 @@ void main()
 		}
 	}
 
-	if (pushConstants.zoom && all(greaterThanEqual(iuv, pushConstants.zoomDstLTWH.xy)) && all(lessThanEqual(iuv, pushConstants.zoomDstLTWH.xy + pushConstants.zoomDstLTWH.zw))) {
+	// zoom target
+	if (pushConstants.zoom && all(greaterThanEqual(iuv, pushConstants.zoomDstLTWH.xy)) && all(lessThan(iuv, pushConstants.zoomDstLTWH.xy + pushConstants.zoomDstLTWH.zw))) {
+		// target border
+		if ( ((iuv.x == pushConstants.zoomDstLTWH.x) || (iuv.x == pushConstants.zoomDstLTWH.x + pushConstants.zoomDstLTWH.z - 1)) && (iuv.y >= pushConstants.zoomDstLTWH.y) && (iuv.y <= pushConstants.zoomDstLTWH.y + pushConstants.zoomDstLTWH.w - 1)
+		  || ((iuv.y == pushConstants.zoomDstLTWH.y) || (iuv.y == pushConstants.zoomDstLTWH.y + pushConstants.zoomDstLTWH.w - 1)) && (iuv.x >= pushConstants.zoomDstLTWH.x) && (iuv.x <= pushConstants.zoomDstLTWH.x + pushConstants.zoomDstLTWH.z - 1) ) {
+			imageStore(uOutput, iuv, vec4(1,1,1,0));
+			return;
+		}
+
 		// scale range zoomDst to zoomSrc
 		vec2 zoomUv = (iuv - pushConstants.zoomDstLTWH.xy + 0.5) / vec2(pushConstants.zoomDstLTWH.zw);
 		iuvFetchFrom = ivec2(pushConstants.zoomSrcLTWH.xy + zoomUv * pushConstants.zoomSrcLTWH.zw);

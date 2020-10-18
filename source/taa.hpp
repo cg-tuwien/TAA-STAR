@@ -47,7 +47,7 @@ class taa : public gvk::invokee
 		glm::ivec4 zoomSrcLTWH	= { 960 - 10, 540 - 10, 20, 20 };
 		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
 		VkBool32 zoom			= false;
-		VkBool32 showZoomBox	= false;
+		VkBool32 showZoomBox	= true;
 	};
 
 	struct matrices_for_taa {
@@ -307,9 +307,13 @@ public:
 					static bool pp_zoom = pp.zoom;					// ugly workaround for bool <-> VkBool32 conversion
 					static bool pp_showZoomBox = pp.showZoomBox;
 
+					static glm::ivec4 orig_zoomsrc = pp.zoomSrcLTWH;
+					static glm::ivec4 orig_zoomdst = pp.zoomDstLTWH;
+
 					Checkbox("enable", &mPostProcessEnabled);
 					Checkbox("zoom", &pp_zoom);	
 					SameLine(); Checkbox("show box", &pp_showZoomBox);
+					SameLine(); if (Button("rst")) { pp.zoomSrcLTWH = orig_zoomsrc; pp.zoomDstLTWH = orig_zoomdst; }
 					InputInt4("src", &pp.zoomSrcLTWH.x); HelpMarker("Left/Top/Width/Height");
 					InputInt4("dst", &pp.zoomDstLTWH.x);
 
@@ -385,11 +389,145 @@ public:
 		setup_ui_callback();
 	}
 
+	enum struct boxHitTestResult {
+		left, top, right, bottom,
+		left_top, right_top, left_bottom, right_bottom,
+		inside, outside
+	};
+	boxHitTestResult boxHitTest(glm::ivec2 p, glm::ivec4 boxLTWH, bool checkCorners) {
+		//return p.x >= boxLTWH.x && p.x < boxLTWH.x + boxLTWH.z && p.y >= boxLTWH.y && p.y < boxLTWH.y + boxLTWH.w;
+		const int tolerance = 2;
+
+		int dL = p.x - boxLTWH.x;
+		int dR = boxLTWH.x + boxLTWH.z - 1 - p.x;
+		int dT = p.y - boxLTWH.y;
+		int dB = boxLTWH.y + boxLTWH.w - 1 - p.y;
+
+		bool l = abs(dL) <= tolerance;
+		bool r = abs(dR) <= tolerance;
+		bool t = abs(dT) <= tolerance;
+		bool b = abs(dB) <= tolerance;
+
+		if (checkCorners) {
+			if      (l && t) return boxHitTestResult::left_top;
+			else if (r && t) return boxHitTestResult::right_top;
+			else if (l && b) return boxHitTestResult::left_bottom;
+			else if (r && b) return boxHitTestResult::right_bottom;
+		}
+		if      (l)      return boxHitTestResult::left;
+		else if (r)      return boxHitTestResult::right;
+		else if (t)      return boxHitTestResult::top;
+		else if (b)      return boxHitTestResult::bottom;
+		else if (dL >= 0 && dR >= 0 && dT >= 0 && dB >= 0) return boxHitTestResult::inside;
+		else             return boxHitTestResult::outside;
+	}
+
+	// handle user input
+	void handle_input() {
+		using namespace gvk;
+		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
+		if (quakeCamera && quakeCamera->is_enabled()) return;
+
+		ImGuiIO &io = ImGui::GetIO();
+		if (io.WantCaptureMouse) return;
+
+		if (!mPostProcessPushConstants.zoom) return;
+
+		static glm::ivec2 prev_pos = {0,0};
+		static bool prev_lmb = false;
+		static boxHitTestResult prev_ht = boxHitTestResult::outside;
+
+		static glm::ivec2 drag_start_pos = {0,0};
+
+		glm::ivec2 pos = glm::ivec2(input().cursor_position());
+		bool lmb = (input().mouse_button_down(GLFW_MOUSE_BUTTON_LEFT));
+		bool click = lmb && !prev_lmb;
+		bool drag  = lmb && prev_lmb;
+		
+		// when dragging, keep previous hit-test
+		auto ht = prev_ht;
+		if (!drag) {
+			
+			ht = boxHitTest(pos, mPostProcessPushConstants.zoomSrcLTWH, true);
+			cursor cur = cursor::arrow_cursor;
+			switch (ht) {
+			case boxHitTestResult::left:
+			case boxHitTestResult::right:			context().main_window()->set_cursor_mode(cursor::horizontal_resize_cursor);	break;
+			case boxHitTestResult::top:
+			case boxHitTestResult::bottom:			context().main_window()->set_cursor_mode(cursor::vertical_resize_cursor);	break;
+			case boxHitTestResult::left_top:
+			case boxHitTestResult::right_bottom:	context().main_window()->set_cursor_mode(cursor::crosshair_cursor);			break; // nw_or_se_resize_cursor	// diagonal cursors don't work with current glfw version :(
+			case boxHitTestResult::right_top:
+			case boxHitTestResult::left_bottom:		context().main_window()->set_cursor_mode(cursor::crosshair_cursor);			break; // ne_or_sw_resize_cursor
+			case boxHitTestResult::inside:			context().main_window()->set_cursor_mode(cursor::hand_cursor);				break;
+			default:								context().main_window()->set_cursor_mode(cursor::arrow_cursor);				break;
+			}
+		}
+
+		if (lmb) {
+			auto &pc = mPostProcessPushConstants;
+			glm::ivec2 dpos = pos - prev_pos;
+			glm::ivec4 oldZoomSrc = pc.zoomSrcLTWH;
+			if (click) {
+				drag_start_pos = pos;
+				if (ht == boxHitTestResult::outside) {
+					pc.zoomSrcLTWH.x = pos.x - pc.zoomSrcLTWH.z / 2;
+					pc.zoomSrcLTWH.y = pos.y - pc.zoomSrcLTWH.w / 2;
+				}
+			} else if (drag) {
+				if (ht == boxHitTestResult::inside) {
+					pc.zoomSrcLTWH.x += dpos.x;
+					pc.zoomSrcLTWH.y += dpos.y;
+				}
+				if (ht == boxHitTestResult::left || ht == boxHitTestResult::left_top || ht == boxHitTestResult::left_bottom) {
+					pc.zoomSrcLTWH.x += dpos.x;
+					pc.zoomSrcLTWH.z -= dpos.x;
+				}
+				if (ht == boxHitTestResult::right || ht == boxHitTestResult::right_top || ht == boxHitTestResult::right_bottom) {
+					pc.zoomSrcLTWH.z += dpos.x;
+				}
+				if (ht == boxHitTestResult::top || ht == boxHitTestResult::left_top || ht == boxHitTestResult::right_top) {
+					pc.zoomSrcLTWH.y += dpos.y;
+					pc.zoomSrcLTWH.w -= dpos.y;
+				}
+				if (ht == boxHitTestResult::bottom || ht == boxHitTestResult::left_bottom || ht == boxHitTestResult::right_bottom) {
+					pc.zoomSrcLTWH.w += dpos.y;
+				}
+				if (input().key_down(key_code::left_shift) || input().key_down(key_code::right_shift)) {
+					// maintain equal width/height
+					if (pc.zoomSrcLTWH.z != pc.zoomSrcLTWH.w) {
+						// TODO: this is suboptimal! (drag top left corner...)
+						if (pc.zoomSrcLTWH.x != oldZoomSrc.x || pc.zoomSrcLTWH.z != oldZoomSrc.z) pc.zoomSrcLTWH.w = pc.zoomSrcLTWH.z; else pc.zoomSrcLTWH.z = pc.zoomSrcLTWH.w;
+					}
+				}
+			}
+
+			if (mPostProcessPushConstants.zoomSrcLTWH.z <= 0 || mPostProcessPushConstants.zoomSrcLTWH.w <= 0)
+				mPostProcessPushConstants.zoomSrcLTWH = oldZoomSrc;
+
+			//mPostProcessPushConstants.zoomSrcLTWH.x = pos.x;
+			//mPostProcessPushConstants.zoomSrcLTWH.y = pos.y;
+		}
+
+		prev_pos = pos;
+		prev_lmb = lmb;
+		prev_ht  = ht;
+
+		//auto res = context().main_window()->current_image().width();
+
+		//GLFWwindow *glfwWin = context().main_window()->handle()->mHandle;
+		//double xpos, ypos;
+		//glfwGetCursorPos(glfwWin, &xpos, &ypos);
+
+	}
+
 	// Update the push constant data that will be used in render():
 	void update() override
 	{
 		using namespace avk;
 		using namespace gvk;
+
+		handle_input();
 
 		auto inFlightIndex = context().main_window()->in_flight_index_for_frame();
 		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
