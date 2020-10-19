@@ -27,3 +27,6 @@
 ~$*.xlt*
 ~$*.ppt*
 ~$*.pot*
+
+# Ignore Visual Studio user-specific settings
+taa.vcxproj.user
