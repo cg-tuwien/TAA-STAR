@@ -49,12 +49,15 @@ layout (location = 0) in VertexData
 	vec3 normalOS;    // interpolated vertex normal in object-space
 	vec3 tangentOS;   // interpolated vertex tangent in object-space
 	vec3 bitangentOS; // interpolated vertex bitangent in object-space
+	vec4 positionCS;		// TODO: don't really need this! can calc from gl_FragCoord
+	vec4 positionCS_prev;	// position in previous frame
 } fs_in;
 // -------------------------------------------------------
 
 // ###### FRAG OUTPUT ####################################
 layout (location = 0) out vec4 oFragUvNrm;
 layout (location = 1) out uint oFragMatId;
+layout (location = 2) out vec4 oFragVelocity;
 // -------------------------------------------------------
 
 // ###### HELPER FUNCTIONS ###############################
@@ -132,6 +135,9 @@ void main()
 	if (normalVS.y < 0) sphericalVS.x = TAU - sphericalVS.x;
 	oFragUvNrm = vec4(fs_in.texCoords, sphericalVS);
 	oFragMatId = pushConstants.mMaterialIndex;
+
+	// TODO: write velocity
+	oFragVelocity = vec4(1,2,3,4)*.25;
 }
 // -------------------------------------------------------
 

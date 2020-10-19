@@ -160,14 +160,22 @@ public:
 	}
 
 	// Applies a translation to the given matrix and returns the result
-	glm::mat4 get_jittered_projection_matrix(glm::mat4 aProjMatrix, gvk::window::frame_id_t aFrameId) const
+	glm::mat4 get_jittered_projection_matrix(glm::mat4 aProjMatrix, glm::vec2 &out_xyOffset, gvk::window::frame_id_t aFrameId) const
 	{
 		if (mTaaEnabled) {
 			const auto xyOffset = get_jitter_offset_for_frame(aFrameId);
+			out_xyOffset = xyOffset;
 			return glm::translate(glm::vec3{ xyOffset.x, xyOffset.y, 0.0f }) * aProjMatrix;
 		} else {
+			out_xyOffset = glm::vec2(0);
 			return aProjMatrix;
 		}
+	}
+
+	glm::mat4 get_jittered_projection_matrix(glm::mat4 aProjMatrix, gvk::window::frame_id_t aFrameId) const
+	{
+		glm::vec2 dummy;
+		return get_jittered_projection_matrix(aProjMatrix, dummy, aFrameId);
 	}
 
 	// Store pointers to some resources passed from class wookiee::initialize(), 

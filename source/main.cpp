@@ -10,6 +10,7 @@
 #include <string>
 
 /* TODO:
+	- is there any point to keep using 2 render-subpasses in forward rendering?
 
 	- recheck lighting, esp. w.r.t. twosided materials
 
@@ -26,8 +27,6 @@
 
 #define FORWARD_RENDERING 1
 
-#define ADD_MOVING_SPHERE 1
-
 
 class wookiee : public gvk::invokee
 {
@@ -43,10 +42,14 @@ class wookiee : public gvk::invokee
 		// x = unused, y = normal mapping strength, z and w unused
 		glm::vec4 mUserInput;
 
+		glm::mat4 mPrevFrameProjViewMatrix;
 		glm::mat4 mMovingObjectModelMatrix;
+		glm::mat4 mPrevFrameMovingObjectModelMatrix;
+		glm::vec4 mJitterCurrentPrev;
 		int  mActiveMovingObjectMaterialIdx;
+		int  mPrevFrameActiveMovingObjectMaterialIdx;
 		float mLodBias;
-		float pad1, pad2;
+		float pad1;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -142,6 +145,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// Update the matrices in render() because here we can be sure that mQuakeCam's updates of the current frame are available:
 		//mMatricesAndUserInput = { mQuakeCam.view_matrix(), mQuakeCam.projection_matrix(), glm::translate(mQuakeCam.translation()), glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold } };
 
+		static matrices_and_user_input prevFrameMatrices;
+		static bool prevFrameValid = false;
+
 		matrices_and_user_input mMatricesAndUserInput = {};
 		mMatricesAndUserInput.mViewMatrix	= mQuakeCam.view_matrix();
 		mMatricesAndUserInput.mProjMatrix	= mQuakeCam.projection_matrix();
@@ -149,14 +155,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
 
+		// moving object info
 		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingSphereMatIdx : -1;
 		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::translate(glm::mat4(1), mMovingObject.translation);
+
+		// previous frame info
+		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
+
+		mMatricesAndUserInput.mPrevFrameProjViewMatrix					= prevFrameMatrices.mProjMatrix * prevFrameMatrices.mViewMatrix;
+		mMatricesAndUserInput.mPrevFrameMovingObjectModelMatrix			= prevFrameMatrices.mMovingObjectModelMatrix;
+		mMatricesAndUserInput.mPrevFrameActiveMovingObjectMaterialIdx	= prevFrameMatrices.mActiveMovingObjectMaterialIdx;
+		mMatricesAndUserInput.mJitterCurrentPrev						= glm::vec4(mCurrentJitter, prevFrameMatrices.mJitterCurrentPrev.x, prevFrameMatrices.mJitterCurrentPrev.y);
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
 		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
 		// However, we have to ensure to properly sync memory dependency. In this application, this is ensured by the renderpass
 		// dependency that is established between VK_SUBPASS_EXTERNAL and subpass 0.
+
+		// store current matrices for use in the next frame
+		prevFrameMatrices = mMatricesAndUserInput;
+		prevFrameValid = true;
 	}
 
 	void prepare_lightsources_ubo()
@@ -215,17 +234,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			auto colorAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_COLOR,    1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto colorAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_COLOR,    1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto depthAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
+			auto depthAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto matIdAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto matIdAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+			auto velocityAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_VELOCITY, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			velocityAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 
 			// label them for Renderdoc
-			rdoc::labelImage(colorAttachment->handle(), "colorAttachment", i);
-			rdoc::labelImage(depthAttachment->handle(), "depthAttachment", i);
-			rdoc::labelImage(matIdAttachment->handle(), "matIdAttachment", i);
+			rdoc::labelImage(colorAttachment->handle(),    "colorAttachment",    i);
+			rdoc::labelImage(depthAttachment->handle(),    "depthAttachment",    i);
+			rdoc::labelImage(matIdAttachment->handle(),    "matIdAttachment",    i);
+			rdoc::labelImage(velocityAttachment->handle(), "velocityAttachment", i);
 
 #if (!FORWARD_RENDERING)
 			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
@@ -239,6 +261,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
 			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
 			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
+			auto velocityAttachmentView = context().create_image_view(std::move(velocityAttachment));
 #if (!FORWARD_RENDERING)
 			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
 #endif
@@ -261,14 +284,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//   3rd parameter: How are we going to use this attachment in the subpasses?
 						//   4th parameter: What shall be done when the last subpass has finished? => Store the image contents?
 #if FORWARD_RENDERING
-						attachment::declare_for(colorAttachmentView, on_load::load,         color(0) -> color(0),			on_store::store),
-						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> depth_stencil(),	on_store::store),
-						attachment::declare_for(matIdAttachmentView, on_load::clear,        color(1) -> color(1),			on_store::store),
+						attachment::declare_for(colorAttachmentView,	on_load::load,         color(0) -> color(0),			on_store::store),
+						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> depth_stencil(),		on_store::store),
+						attachment::declare_for(matIdAttachmentView,	on_load::clear,        color(1) -> color(1),			on_store::store),
+						attachment::declare_for(velocityAttachmentView,	on_load::clear,        color(2) -> color(2),			on_store::store),
 #else
-						attachment::declare_for(colorAttachmentView, on_load::load,         unused() -> color(0), on_store::store),
-						attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil() -> input(0), on_store::store),
-						attachment::declare_for(uvNrmAttachmentView, on_load::clear,        color(0) -> input(1), on_store::store),
-						attachment::declare_for(matIdAttachmentView, on_load::clear,        color(1) -> input(2), on_store::store)
+						attachment::declare_for(colorAttachmentView,	on_load::load,         unused() -> color(0),			on_store::store),
+						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> input(0),			on_store::store),
+						attachment::declare_for(uvNrmAttachmentView,	on_load::clear,        color(0) -> input(1),			on_store::store),
+						attachment::declare_for(matIdAttachmentView,	on_load::clear,        color(1) -> input(2),			on_store::store),
+						attachment::declare_for(velocityAttachmentView,	on_load::clear,        color(2) -> unused(),			on_store::store),
 #endif
 					},
 					[](avk::renderpass_sync& aRpSync){
@@ -303,7 +328,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if (!FORWARD_RENDERING)
 				std::move(uvNrmAttachmentView),
 #endif
-				std::move(matIdAttachmentView)
+				std::move(matIdAttachmentView),
+				std::move(velocityAttachmentView)
 			);
 			mFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 
@@ -667,7 +693,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 		std::cout << std::endl;
 
-#if ADD_MOVING_SPHERE
 		// load a sphere - used as moving object
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
@@ -708,7 +733,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			mMovingSphereMatIdx = materialIndex;
 		}
-#endif
 
 
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
@@ -1336,7 +1360,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		
 		// Let Temporal Anti-Aliasing modify the camera's projection matrix:
 		auto* mainWnd = gvk::context().main_window();
-		auto modifiedProjMat = mAntiAliasing.get_jittered_projection_matrix(mOriginalProjMat, mainWnd->current_frame());
+		auto modifiedProjMat = mAntiAliasing.get_jittered_projection_matrix(mOriginalProjMat, mCurrentJitter, mainWnd->current_frame());
 		mAntiAliasing.save_history_proj_matrix(mOriginalProjMat, mainWnd->current_frame());
 
 		mQuakeCam.set_projection_matrix(modifiedProjMat);
@@ -1481,6 +1505,7 @@ private: // v== Member variables ==v
 		int       units = 0; // 0 = per sec, 1 = per frame
 	} mMovingObject;
 
+	glm::vec2 mCurrentJitter   = {};
 };
 
 int main(int argc, char **argv) // <== Starting point ==

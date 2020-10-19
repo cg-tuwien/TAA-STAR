@@ -54,12 +54,15 @@ layout (location = 0) in VertexData
 	vec3 normalOS;    // interpolated vertex normal in object-space
 	vec3 tangentOS;   // interpolated vertex tangent in object-space
 	vec3 bitangentOS; // interpolated vertex bitangent in object-space
+	vec4 positionCS;		// TODO: don't really need this! can calc from gl_FragCoord
+	vec4 positionCS_prev;	// position in previous frame
 } fs_in;
 // -------------------------------------------------------
 
 // ###### FRAG OUTPUT ####################################
 layout (location = 0) out vec4 oFragColor;
 layout (location = 1) out uint oFragMatId;
+layout (location = 2) out vec4 oFragVelocity;
 // -------------------------------------------------------
 
 // ###### HELPER FUNCTIONS ###############################
@@ -248,6 +251,15 @@ void main()
 
 	// write material // TODO: better flag specific/problematic materials that require different TAA handling
 	oFragMatId = pushConstants.mMaterialIndex;
+
+	// calculate and write velocity
+	vec3 positionNDC      = fs_in.positionCS.xyz      / fs_in.positionCS.w;
+	vec3 positionNDC_prev = fs_in.positionCS_prev.xyz / fs_in.positionCS_prev.w;
+	// adjust for jitter!
+	positionNDC.xy      -= uboMatUsr.mJitterCurrentPrev.xy;
+	positionNDC_prev.xy -= uboMatUsr.mJitterCurrentPrev.zw;
+	vec2 motionVector = (positionNDC.xy - positionNDC_prev.xy) * vec2(0.5, 0.5); // TODO: invert y ?
+	oFragVelocity = vec4(motionVector, 0, IS_ACTIVE_MOVING_OBJECT ? 1 : 0);
 
 	// Initialize all the colors:
 	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColorRGBA.rgb;

@@ -41,6 +41,7 @@
 #define IS_ACTIVE_MOVING_OBJECT (pushConstants.mMaterialIndex == uboMatUsr.mActiveMovingObjectMaterialIdx)
 #define IS_INACTIVE_MOVING_OBJECT (materialsBuffer.materials[pushConstants.mMaterialIndex].mCustomData[0] > 0.5 && uboMatUsr.mActiveMovingObjectMaterialIdx < 0)
 #define EFFECTIVE_MODELMATRIX (IS_ACTIVE_MOVING_OBJECT ? uboMatUsr.mMovingObjectModelMatrix : pushConstants.mModelMatrix)
+#define EFFECTIVE_PREV_MODELMATRIX (IS_ACTIVE_MOVING_OBJECT ? uboMatUsr.mPrevFrameMovingObjectModelMatrix : pushConstants.mModelMatrix)
 
 // ----- uniform declarations
 
@@ -56,10 +57,14 @@
 	/* x = tessellation factor, y = displacement strength, z = use lighting/show normals, w = alpha threshold */	\
 	vec4 mUserInput;																								\
 																													\
+	mat4 mPrevFrameProjViewMatrix;																					\
 	mat4 mMovingObjectModelMatrix;																					\
+	mat4 mPrevFrameMovingObjectModelMatrix;																			\
+	vec4 mJitterCurrentPrev;																						\
 	int  mActiveMovingObjectMaterialIdx;																			\
+	int  mPrevFrameActiveMovingObjectMaterialIdx;																	\
 	float mLodBias;																									\
-	float pad1, pad2;																								\
+	float pad1;																								\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

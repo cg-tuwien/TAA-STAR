@@ -35,6 +35,8 @@ layout (location = 0) out VertexData {
 	vec3 normalOS;
 	vec3 tangentOS;
 	vec3 bitangentOS;
+	vec4 positionCS;		// TODO: don't really need this!
+	vec4 positionCS_prev;	// position in previous frame
 } v_out;
 // -------------------------------------------------------
 
@@ -60,6 +62,8 @@ void main()
 	v_out.normalOS    = normalOS;
 	v_out.tangentOS   = tangentOS;
 	v_out.bitangentOS = bitangentOS;
+	v_out.positionCS  = positionCS;	// TODO: recheck - is it ok to interpolate clip space vars?
+	v_out.positionCS_prev = uboMatUsr.mPrevFrameProjViewMatrix * EFFECTIVE_PREV_MODELMATRIX * positionOS;	// TODO: check if ok when mover gets enabled/disabled
 
 	gl_Position = positionCS;
 }
