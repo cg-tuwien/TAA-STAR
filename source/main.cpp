@@ -10,14 +10,6 @@
 #include <string>
 
 /* TODO:
-	- WTF?? deferred rendering crashes with moving sphere enabled... (device lost) - ok with forward rendering
-		early return in blinnphong -> no crash
-		when sampling diffuse texture? no, when accessing fs_in.texCoords!
-		-> aTexCoords not valid for sphere object?
-		-> texcoords buffer only has length 8! == 1 entry! should have 1984... (sphere has 1984 vert, 2880 ind)
-		same problem exists with forward renderer, but for some reason that one doesn't crash
-		===> FIXED WITH WORKAROUND, TODO: FIX ACTUAL BUG IN FRAMEWORK!
-		(sidenode: should perhaps better get tangents/bitangents from assimp than just static nonsense values?)
 
 	- recheck lighting, esp. w.r.t. twosided materials
 
@@ -687,11 +679,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			auto selection = make_models_and_meshes_selection(sphere, 0);
 			auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
-			//auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
-			//							   : gvk::get_2d_texture_coordinates        (selection, 0);
-			// BUG IN model.hpp -> returns only one entry!
-			// FIXME
-			std::vector<glm::vec2> texCoords(vertices.size(), glm::vec2(0, 0));
+			auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
+										   : gvk::get_2d_texture_coordinates        (selection, 0);
+			//std::vector<glm::vec2> texCoords(vertices.size(), glm::vec2(0, 0)); // was necessary instead of above line due to a bug in gvk::model.hpp
 
 			auto normals = gvk::get_normals(selection);
 			auto tangents = gvk::get_tangents(selection);
