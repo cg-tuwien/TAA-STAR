@@ -306,7 +306,7 @@ public:
 				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
 				Combo("use velocity", &mUseVelocityVectors, "none\0movers\0all\0");
 				if (Button("reset")) mResetHistory = true;
-				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "debug" /* always last */ };
+				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "debug" /* always last */ };
 				Checkbox("debug##show debug", &mShowDebug);
 				SameLine();
 				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
@@ -784,5 +784,5 @@ private:
 	float mRejectionAlpha = 1.0f;
 	bool mTriggerCapture = false;
 	bool mRejectOutside = false;
-	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
+	int mUseVelocityVectors = 1;		// 0=off 1=for movers only 2=for everything
 };

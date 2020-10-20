@@ -215,17 +215,24 @@ vec3 rgb2srgb(vec3 rgb)
 void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
 	vec4 velocitySample = texture(sampler2D(uCurrentVelocity, uSampler), currentUv);
 
-	if (pushConstants.mUseVelocityVectors == 0 || (pushConstants.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) {
+	bool canUseVelocity = true;
+	if (pushConstants.mUseVelocityVectors == 0 || (pushConstants.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
+
+	if (canUseVelocity) {
+		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
+		historyUv    = currentUv    - velocitySample.xy;
+		historyDepth = currentDepth - velocitySample.z;
+		// TODO: check if material history is same object and set canUseVelocity = false otherwise
+	}
+
+	if (!canUseVelocity) {
 		vec4 clipSpace = vec4(currentUv * 2.0 - 1.0, currentDepth, 1);
 		vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
 		vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
 		historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
 		historyDepth = historyClipSpace.z / historyClipSpace.w;
-	} else {
-		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
-		historyUv    = currentUv    - velocitySample.xy;
-		historyDepth = currentDepth - velocitySample.z;
 	}
+
 	// TODO: need to adjust for current jitter if history buf is considered unjittered?
 }
 
@@ -355,9 +362,13 @@ void main()
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
 		imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, length(rectified_diff) * pushConstants.mDebugScale, 0, 0));
 	} else if (pushConstants.mDebugMode == 3) {
-		imageStore(uDebug,  iuv, vec4(vec3(alpha), 0));
+		imageStore(uDebug,  iuv, vec4(vec3(alpha), 0) * pushConstants.mDebugScale);
+	} else if (pushConstants.mDebugMode == 4) {
+		vec4 velocity = texelFetch(uCurrentVelocity, iuv, 0);
+		//imageStore(uDebug,  iuv, vec4(velocity.xyz * 0.5 + 0.5, 0) * pushConstants.mDebugScale);	// hard to see
+		imageStore(uDebug,  iuv, vec4(velocity.xyz, 0) * pushConstants.mDebugScale);
 	} else {
-		imageStore(uDebug,  iuv, gDebugValue);
+		imageStore(uDebug,  iuv, gDebugValue * pushConstants.mDebugScale);
 	}
 
 }

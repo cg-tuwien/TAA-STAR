@@ -1192,6 +1192,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (CollapsingHeader("Camera")) {
 					Checkbox("rot", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
+					Checkbox("bobbing", &mAutoBob);
 					Checkbox("auto move", &mAutoMovement);
 					SameLine();
 					PushItemWidth(60);
@@ -1228,8 +1229,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (CollapsingHeader("Moving object")) {
 					PushID("Movers");
 					Checkbox("enable", &mMovingObject.enabled);
-					InputFloat3("start", &mMovingObject.startPos.x);
-					InputFloat3("end",   &mMovingObject.endPos.x);
+					InputFloat3("start", &mMovingObject.startPos.x); SameLine(); if (Button("cam##start=cam")) { mMovingObject.startPos = mQuakeCam.translation(); }
+					InputFloat3("end  ", &mMovingObject.endPos.x  ); SameLine(); if (Button("cam##end=cam"  )) { mMovingObject.endPos   = mQuakeCam.translation(); }
 					PushItemWidth(60);
 					InputFloat("##speed", &mMovingObject.speed);
 					SameLine();
@@ -1353,11 +1354,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		tLast = t;
 
 		float dtCam = dt;
+		static float tCamBob = 0.f;
 		if (mAutoMovementUnits == 1) dtCam = 1.f;
-		if (mAutoMovement && mAutoRotate) {
-			glm::vec2 rotation = glm::radians(mAutoRotateDegrees) * dtCam;
-			glm::quat rotHoriz = glm::quat_cast(glm::rotate(rotation.x, glm::vec3(0.f, 1.f, 0.f)));
-			glm::quat rotVert =  glm::quat_cast(glm::rotate(rotation.y, glm::vec3(1.f, 0.f, 0.f)));
+		if (!mAutoMovement || !mAutoBob) tCamBob = 0.f;
+		if (mAutoMovement && (mAutoRotate || mAutoBob)) {
+			glm::quat rotHoriz, rotVert;
+			if (mAutoRotate) {
+				glm::vec2 rotation = glm::radians(mAutoRotateDegrees) * dtCam;
+				rotHoriz = glm::quat_cast(glm::rotate(rotation.x, glm::vec3(0.f, 1.f, 0.f)));
+				rotVert = glm::quat_cast(glm::rotate(rotation.y, glm::vec3(1.f, 0.f, 0.f)));
+			} else {
+				tCamBob += dtCam;
+				const float maxBobH = glm::radians(1.0f); // max deviation to one side
+				const float maxBobV = glm::radians(.1f);
+				const float bobPeriod = 3.f; // for one full "bob" (to-and-fro)
+				float rx =  maxBobH * dtCam * cos(fmod(tCamBob * bobPeriod,       2.f * glm::pi<float>()));
+				float ry = -maxBobV * dtCam * sin(fmod(tCamBob * bobPeriod * 2.f, 2.f * glm::pi<float>()));
+				//printf("rx %f, ry %f, cos(%f)\n", glm::degrees(rx), glm::degrees(ry), glm::degrees(fmod(tCamBob * bobPeriod, 2.f * glm::pi<float>())));
+				rotHoriz = glm::quat_cast(glm::rotate(rx, glm::vec3(0.f, 1.f, 0.f)));
+				rotVert  = glm::quat_cast(glm::rotate(ry, glm::vec3(1.f, 0.f, 0.f)));
+			}
 			mQuakeCam.set_rotation(rotHoriz * mQuakeCam.rotation() * rotVert);
 		}
 
@@ -1514,7 +1530,8 @@ private: // v== Member variables ==v
 	bool mLoadBiasTaaOnly = true;
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
-	bool mAutoRotate = true;
+	bool mAutoRotate = false;
+	bool mAutoBob = true;
 	bool mAutoMovement = false;
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
 
@@ -1528,7 +1545,7 @@ private: // v== Member variables ==v
 		float     speed    = 5.f;
 		float     t = 0.f;
 		int       units = 0; // 0 = per sec, 1 = per frame
-		int       repeat = 0; // 0 = no, 1 = cycle, 2 = ping-pong
+		int       repeat = 1; // 0 = no, 1 = cycle, 2 = ping-pong
 	} mMovingObject;
 
 	glm::vec2 mCurrentJitter   = {};
