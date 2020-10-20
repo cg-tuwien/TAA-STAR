@@ -39,7 +39,7 @@
 // Moving objects are implemented in a bit of a hack...
 // Macros DEPEND on uniform/push constant naming and having mMaterialIndex in push constants!
 #define IS_ACTIVE_MOVING_OBJECT (pushConstants.mMaterialIndex == uboMatUsr.mActiveMovingObjectMaterialIdx)
-#define IS_INACTIVE_MOVING_OBJECT (materialsBuffer.materials[pushConstants.mMaterialIndex].mCustomData[0] > 0.5 && uboMatUsr.mActiveMovingObjectMaterialIdx < 0)
+#define IS_INACTIVE_MOVING_OBJECT (materialsBuffer.materials[pushConstants.mMaterialIndex].mCustomData[0] > 0.5 && pushConstants.mMaterialIndex != uboMatUsr.mActiveMovingObjectMaterialIdx)
 #define EFFECTIVE_MODELMATRIX (IS_ACTIVE_MOVING_OBJECT ? uboMatUsr.mMovingObjectModelMatrix : pushConstants.mModelMatrix)
 #define EFFECTIVE_PREV_MODELMATRIX (IS_ACTIVE_MOVING_OBJECT ? uboMatUsr.mPrevFrameMovingObjectModelMatrix : pushConstants.mModelMatrix)
 

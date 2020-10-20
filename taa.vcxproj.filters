@@ -84,4 +84,9 @@
       <Filter>assets\terrain</Filter>
     </Image>
   </ItemGroup>
+  <ItemGroup>
+    <Object Include="assets\models\sphere_smooth.obj">
+      <Filter>assets</Filter>
+    </Object>
+  </ItemGroup>
 </Project>

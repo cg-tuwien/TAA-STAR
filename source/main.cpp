@@ -103,6 +103,12 @@ class wookiee : public gvk::invokee
 		{ "ES fence \"hole\"", {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
 	};
 
+	std::vector<std::pair<const char*, const char*>> mMovingObjectDefs = {	// name, filename
+		{ "Smooth sphere",	"assets/sphere_smooth.obj" },
+		{ "Sharp sphere",	"assets/sphere.obj" },
+	};
+
+
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
 	static const uint32_t cConcurrentFrames = 3u;
 
@@ -158,7 +164,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
 
 		// moving object info
-		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingSphereMatIdx : -1;
+		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingObjectFirstMatIdx + mMovingObject.moverId : -1;
 		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::translate(glm::mat4(1), mMovingObject.translation);
 
 		// previous frame info
@@ -695,16 +701,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 		std::cout << std::endl;
 
-		// load a sphere - used as moving object
+		// load and add moving objects
+		mMovingObjectFirstMatIdx = static_cast<int>(distinctMaterialConfigs.size());
+		for (size_t iMover = 0; iMover < mMovingObjectDefs.size(); iMover++)
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
-			auto sphere = gvk::model_t::load_from_file("assets/sphere.obj");
+			auto &objdef = mMovingObjectDefs[iMover];
+			auto model = gvk::model_t::load_from_file(objdef.second);
+
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
-			auto material = sphere->material_config_for_mesh(0);
-			material.mCustomData[0] = 1.f; // moving object id
+			auto material = model->material_config_for_mesh(0);
+			if (material.mAmbientReflectivity == glm::vec4(0)) material.mAmbientReflectivity = glm::vec4(glm::vec3(0.1f), 0); // give it some ambient reflectivity if it has none
+			material.mCustomData[0] = iMover + 1.f; // moving object id + 1
 			distinctMaterialConfigs.push_back(material);
 
-			auto selection = make_models_and_meshes_selection(sphere, 0);
+			auto selection = make_models_and_meshes_selection(model, 0);
 			auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
 			auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
 										   : gvk::get_2d_texture_coordinates        (selection, 0);
@@ -732,8 +743,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			ref.mTangents = std::move(tangents);
 			ref.mBitangents = std::move(bitangents);
 			ref.hasTransparency = false;
-
-			mMovingSphereMatIdx = materialIndex;
 		}
 
 
@@ -1229,6 +1238,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (CollapsingHeader("Moving object")) {
 					PushID("Movers");
 					Checkbox("enable", &mMovingObject.enabled);
+					struct FuncHolder {
+						static bool MoverGetter(void* data, int idx, const char** out_str) {
+							*out_str = reinterpret_cast<wookiee*>(data)->mMovingObjectDefs[idx].first;
+							return true;
+						}
+					};
+					Combo("type", &mMovingObject.moverId, &FuncHolder::MoverGetter, this, static_cast<int>(mMovingObjectDefs.size()));
 					InputFloat3("start", &mMovingObject.startPos.x); SameLine(); if (Button("cam##start=cam")) { mMovingObject.startPos = mQuakeCam.translation(); }
 					InputFloat3("end  ", &mMovingObject.endPos.x  ); SameLine(); if (Button("cam##end=cam"  )) { mMovingObject.endPos   = mQuakeCam.translation(); }
 					PushItemWidth(60);
@@ -1535,10 +1551,11 @@ private: // v== Member variables ==v
 	bool mAutoMovement = false;
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
 
-	int mMovingSphereMatIdx = -1;
+	int mMovingObjectFirstMatIdx = -1;
 
 	struct {
 		bool      enabled = 0;
+		int       moverId = 0;
 		glm::vec3 translation = {};
 		glm::vec3 startPos = glm::vec3(-5, 1, 0);
 		glm::vec3 endPos   = glm::vec3(5,1,0);

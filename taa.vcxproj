@@ -60,6 +60,11 @@
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\models\sphere_smooth.obj">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
     <ProjectGuid>{85da2900-b09a-4479-9bbb-58da19716b43}</ProjectGuid>
