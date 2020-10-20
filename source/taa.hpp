@@ -455,6 +455,9 @@ public:
 		static glm::ivec2 prev_pos = {0,0};
 		static bool prev_lmb = false;
 		static boxHitTestResult prev_ht = boxHitTestResult::outside;
+		static int prev_box = -1;
+
+		static std::vector<glm::ivec4 *> boxes = { &mPostProcessPushConstants.zoomSrcLTWH, &mPostProcessPushConstants.zoomDstLTWH };
 
 		static glm::ivec2 drag_start_pos = {0,0};
 
@@ -465,9 +468,17 @@ public:
 		
 		// when dragging, keep previous hit-test
 		auto ht = prev_ht;
+		int box = prev_box;
 		if (!drag) {
-			
-			ht = boxHitTest(pos, mPostProcessPushConstants.zoomSrcLTWH, true);
+
+			ht = boxHitTestResult::outside; box = -1;
+			for (auto i = 0; i < boxes.size(); ++i) {
+				auto ht_i = boxHitTest(pos, *(boxes[i]), true);
+				if (ht_i != boxHitTestResult::outside) {
+					ht = ht_i; box = i; break;
+				}
+			}
+
 			cursor cur = cursor::arrow_cursor;
 			switch (ht) {
 			case boxHitTestResult::left:
@@ -483,54 +494,53 @@ public:
 			}
 		}
 
-		if (lmb) {
+		if (lmb && (box >= 0)) {
 			auto &pc = mPostProcessPushConstants;
 			glm::ivec2 dpos = pos - prev_pos;
-			glm::ivec4 oldZoomSrc = pc.zoomSrcLTWH;
+			glm::ivec4 newLTWH = *(boxes[box]);
+			glm::ivec4 oldLTWH = newLTWH;
 			if (click) {
 				drag_start_pos = pos;
 				if (ht == boxHitTestResult::outside) {
-					pc.zoomSrcLTWH.x = pos.x - pc.zoomSrcLTWH.z / 2;
-					pc.zoomSrcLTWH.y = pos.y - pc.zoomSrcLTWH.w / 2;
+					newLTWH.x = pos.x - newLTWH.z / 2;
+					newLTWH.y = pos.y - newLTWH.w / 2;
 				}
 			} else if (drag) {
 				if (ht == boxHitTestResult::inside) {
-					pc.zoomSrcLTWH.x += dpos.x;
-					pc.zoomSrcLTWH.y += dpos.y;
+					newLTWH.x += dpos.x;
+					newLTWH.y += dpos.y;
 				}
 				if (ht == boxHitTestResult::left || ht == boxHitTestResult::left_top || ht == boxHitTestResult::left_bottom) {
-					pc.zoomSrcLTWH.x += dpos.x;
-					pc.zoomSrcLTWH.z -= dpos.x;
+					newLTWH.x += dpos.x;
+					newLTWH.z -= dpos.x;
 				}
 				if (ht == boxHitTestResult::right || ht == boxHitTestResult::right_top || ht == boxHitTestResult::right_bottom) {
-					pc.zoomSrcLTWH.z += dpos.x;
+					newLTWH.z += dpos.x;
 				}
 				if (ht == boxHitTestResult::top || ht == boxHitTestResult::left_top || ht == boxHitTestResult::right_top) {
-					pc.zoomSrcLTWH.y += dpos.y;
-					pc.zoomSrcLTWH.w -= dpos.y;
+					newLTWH.y += dpos.y;
+					newLTWH.w -= dpos.y;
 				}
 				if (ht == boxHitTestResult::bottom || ht == boxHitTestResult::left_bottom || ht == boxHitTestResult::right_bottom) {
-					pc.zoomSrcLTWH.w += dpos.y;
+					newLTWH.w += dpos.y;
 				}
 				if (input().key_down(key_code::left_shift) || input().key_down(key_code::right_shift)) {
 					// maintain equal width/height
-					if (pc.zoomSrcLTWH.z != pc.zoomSrcLTWH.w) {
+					if (newLTWH.z != newLTWH.w) {
 						// TODO: this is suboptimal! (drag top left corner...)
-						if (pc.zoomSrcLTWH.x != oldZoomSrc.x || pc.zoomSrcLTWH.z != oldZoomSrc.z) pc.zoomSrcLTWH.w = pc.zoomSrcLTWH.z; else pc.zoomSrcLTWH.z = pc.zoomSrcLTWH.w;
+						if (newLTWH.x != oldLTWH.x || newLTWH.z != oldLTWH.z) newLTWH.w = newLTWH.z; else newLTWH.z = newLTWH.w;
 					}
 				}
 			}
 
-			if (mPostProcessPushConstants.zoomSrcLTWH.z <= 0 || mPostProcessPushConstants.zoomSrcLTWH.w <= 0)
-				mPostProcessPushConstants.zoomSrcLTWH = oldZoomSrc;
-
-			//mPostProcessPushConstants.zoomSrcLTWH.x = pos.x;
-			//mPostProcessPushConstants.zoomSrcLTWH.y = pos.y;
+			if (newLTWH.z <= 0 || newLTWH.w <= 0) newLTWH = oldLTWH;
+			*(boxes[box]) = newLTWH;
 		}
 
 		prev_pos = pos;
 		prev_lmb = lmb;
 		prev_ht  = ht;
+		prev_box = box;
 
 		//auto res = context().main_window()->current_image().width();
 
