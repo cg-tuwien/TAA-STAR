@@ -1165,6 +1165,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[LShift+LCtrl]: Slow-motion");
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F2]: Toggle slow-motion");
 
 				SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
 				SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
@@ -1228,8 +1230,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("enable", &mMovingObject.enabled);
 					InputFloat3("start", &mMovingObject.startPos.x);
 					InputFloat3("end",   &mMovingObject.endPos.x);
-					InputFloat("speed", &mMovingObject.speed);
-					Combo("##unit", &mMovingObject.units, "/sec\0/frame\0");
+					PushItemWidth(60);
+					InputFloat("##speed", &mMovingObject.speed);
+					SameLine();
+					Combo("speed##unit", &mMovingObject.units, "/sec\0/frame\0");
+					PopItemWidth();
+					PushItemWidth(80);
+					Combo("repeat", &mMovingObject.repeat, "no\0cycle\0ping-pong\0");
+					PopItemWidth();
+					SameLine();
 					if (Button("reset")) mMovingObject.t = 0.f;
 					PopID();
 				}
@@ -1322,8 +1331,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update() override
 	{
+		// "slow-motion"
+		static bool slowMoToggle = false;
+		if (gvk::input().key_pressed(gvk::key_code::f2)) slowMoToggle = !slowMoToggle;
 		float dt_offset = 0.f;
-		if (gvk::input().key_down(gvk::key_code::left_shift) && gvk::input().key_down(gvk::key_code::left_control)) {
+		if (slowMoToggle || (gvk::input().key_down(gvk::key_code::left_shift) && gvk::input().key_down(gvk::key_code::left_control))) {
 			// slow-mo
 			Sleep(500);
 			dt_offset = 0.5f;
@@ -1357,8 +1369,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (len > 1e-6) dir /= len;
 
 			mMovingObject.t += dtObj * mMovingObject.speed;
-			if (mMovingObject.t > len) mMovingObject.t = len;
-			mMovingObject.translation = mMovingObject.startPos + mMovingObject.t * dir;
+			float effectiveT = mMovingObject.t;
+			if (mMovingObject.repeat == 0) {
+				if (mMovingObject.t > len) mMovingObject.t = effectiveT = len;	// stay
+			} else 	if (mMovingObject.repeat == 1) {
+				if (mMovingObject.t > len) mMovingObject.t = effectiveT = 0.f;	// repeat
+			} else {
+				if (mMovingObject.t > 2.f * len) mMovingObject.t = effectiveT = 0.f;
+				else if (mMovingObject.t > len) effectiveT = len - (mMovingObject.t - len);
+			}
+
+			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
 		}
 
 		
