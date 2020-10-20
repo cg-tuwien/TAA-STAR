@@ -10,6 +10,8 @@
 #include <string>
 
 /* TODO:
+	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
+
 	- is there any point to keep using 2 render-subpasses in forward rendering?
 
 	- recheck lighting, esp. w.r.t. twosided materials
@@ -1304,15 +1306,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 //		std::array<image_view*, cConcurrentFrames> srcUvNrmImages;
 //		std::array<image_view*, cConcurrentFrames> srcMatIdImages;
 		std::array<image_view, cConcurrentFrames> srcColorImages;
+		std::array<image_view*, cConcurrentFrames> srcVelocityImages;
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
-			srcDepthImages[i] = &mFramebuffer[i]->image_view_at(1);
-//			srcUvNrmImages[i] = &mFramebuffer[i]->image_view_at(2);
-//			srcMatIdImages[i] = &mFramebuffer[i]->image_view_at(3);
-			srcColorImages[i] = mFramebuffer[i]->image_view_at(0);
+			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1);
+//			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2);
+//			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(3);
+			srcColorImages[i]    = mFramebuffer[i]->image_view_at(0);
+			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4);
 		}
 
-		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages);
+		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
 	}
 
@@ -1503,6 +1507,7 @@ private: // v== Member variables ==v
 		float     speed    = 5.f;
 		float     t = 0.f;
 		int       units = 0; // 0 = per sec, 1 = per frame
+		int       repeat = 0; // 0 = no, 1 = cycle, 2 = ping-pong
 	} mMovingObject;
 
 	glm::vec2 mCurrentJitter   = {};

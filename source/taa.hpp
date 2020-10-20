@@ -38,6 +38,7 @@ class taa : public gvk::invokee
 		float mMaxAlpha;			// used for luminance-based weighting
 		float mRejectionAlpha;
 		VkBool32 mRejectOutside;
+		int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
 
 		int mDebugMode;
 		float mDebugScale;
@@ -180,8 +181,8 @@ public:
 
 	// Store pointers to some resources passed from class wookiee::initialize(), 
 	// and also create mHistoryImages, and mResultImages:
-	template <typename SRCCOLOR, typename SRCD>
-	void set_source_image_views(SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews)
+	template <typename SRCCOLOR, typename SRCD, typename SRCVELOCITY>
+	void set_source_image_views(SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews, SRCVELOCITY& aSourceVelocityImageViews)
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
 
@@ -199,6 +200,14 @@ public:
 			} else {
 				mSrcDepth[i] = &static_cast<avk::image_view_t&>(aSourceDepthImageViews[i]);
 			}
+
+			// Store pointers to the source velocity result images
+			if constexpr (std::is_pointer<typename SRCVELOCITY::value_type>::value) {
+				mSrcVelocity[i] = &static_cast<avk::image_view_t&>(*aSourceVelocityImageViews[i]);
+			} else {
+				mSrcVelocity[i] = &static_cast<avk::image_view_t&>(aSourceVelocityImageViews[i]);
+			}
+
 
 			auto w = mSrcColor[i]->get_image().width();
 			auto h = mSrcColor[i]->get_image().height();
@@ -295,6 +304,7 @@ public:
 				SliderFloat("a_min", &mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
 				SliderFloat("a_max", &mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
+				Combo("use velocity", &mUseVelocityVectors, "none\0movers\0all\0");
 				if (Button("reset")) mResetHistory = true;
 				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "debug" /* always last */ };
 				Checkbox("debug##show debug", &mShowDebug);
@@ -363,6 +373,7 @@ public:
 			descriptor_binding(0, 4, *mSrcDepth[0]),
 			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
 			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
+			descriptor_binding(0, 7, *mSrcVelocity[0]),
 			descriptor_binding(1, 0, mMatricesBuffer[0]),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -571,6 +582,7 @@ public:
 		mTaaPushConstants.mMaxAlpha = mMaxAlpha;
 		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
 		mTaaPushConstants.mRejectOutside = mRejectOutside;
+		mTaaPushConstants.mUseVelocityVectors = mUseVelocityVectors;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -622,6 +634,7 @@ public:
 				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),
 				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),
+				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),
 				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
 				}));
 			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
@@ -719,12 +732,13 @@ private:
 	bool mDepthCulling = false;
 	bool mTextureLookupUnjitter = false;
 	int mSampleDistribution = 1;
-	float mAlpha = 0.1f;
+	float mAlpha = 0.05f; // 0.1f;
 	bool mResetHistory = false;
 
 	// Source color images per frame in flight:
 	std::array<avk::image_view_t*, CF> mSrcColor;
 	std::array<avk::image_view_t*, CF> mSrcDepth;
+	std::array<avk::image_view_t*, CF> mSrcVelocity;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
 #if TAA_OUTPUT_IS_SRGB
@@ -770,4 +784,5 @@ private:
 	float mRejectionAlpha = 1.0f;
 	bool mTriggerCapture = false;
 	bool mRejectOutside = false;
+	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
 };

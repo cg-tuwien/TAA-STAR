@@ -258,8 +258,8 @@ void main()
 	// adjust for jitter!
 	positionNDC.xy      -= uboMatUsr.mJitterCurrentPrev.xy;
 	positionNDC_prev.xy -= uboMatUsr.mJitterCurrentPrev.zw;
-	vec2 motionVector = (positionNDC.xy - positionNDC_prev.xy) * vec2(0.5, 0.5); // TODO: invert y ?
-	oFragVelocity = vec4(motionVector, 0, IS_ACTIVE_MOVING_OBJECT ? 1 : 0);
+	vec3 motionVector = (positionNDC - positionNDC_prev) * vec3(0.5, 0.5, 1.0); // TODO: check if z scale is ok
+	oFragVelocity = vec4(motionVector, IS_ACTIVE_MOVING_OBJECT ? 1 : 0);
 
 	// Initialize all the colors:
 	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColorRGBA.rgb;

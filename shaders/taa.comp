@@ -8,6 +8,7 @@
 layout(set = 0, binding = 0) uniform sampler uSampler;
 layout(set = 0, binding = 1) uniform texture2D uCurrentFrame;
 layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
+layout(set = 0, binding = 7) uniform texture2D uCurrentVelocity;
 layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
 layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResult;
@@ -29,6 +30,7 @@ layout(push_constant) uniform PushConstants {
 	float mMaxAlpha;			// used for luminance-based weighting
 	float mRejectionAlpha;
 	bool mRejectOutside;
+	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
 
 	int  mDebugMode;
 	float mDebugScale;
@@ -210,6 +212,23 @@ vec3 rgb2srgb(vec3 rgb)
 #define TO_OUTPUT_FORMAT(x) (x)
 #endif
 
+void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
+	vec4 velocitySample = texture(sampler2D(uCurrentVelocity, uSampler), currentUv);
+
+	if (pushConstants.mUseVelocityVectors == 0 || (pushConstants.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) {
+		vec4 clipSpace = vec4(currentUv * 2.0 - 1.0, currentDepth, 1);
+		vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
+		vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
+		historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
+		historyDepth = historyClipSpace.z / historyClipSpace.w;
+	} else {
+		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
+		historyUv    = currentUv    - velocitySample.xy;
+		historyDepth = currentDepth - velocitySample.z;
+	}
+	// TODO: need to adjust for current jitter if history buf is considered unjittered?
+}
+
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -236,12 +255,15 @@ void main()
 	getColorAndAabb(iuv, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
 	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
 	
-	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
-	vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
-	vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
-	vec2 historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
-	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentDepth, 0));
-	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
+//	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
+//	vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
+//	vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
+//	vec2 historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
+//	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
+	vec2 historyUv;
+	float expectedHistoryDepth;
+	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
+	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentFrame, 0));
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(texture(sampler2D(uHistoryFrame, uSampler), historyUv).rgb);
 
@@ -259,6 +281,8 @@ void main()
 
 	// cull by depth
 	if (pushConstants.mDepthCulling) {
+		// FIXME - shouldn't we better compare LINEAR depth?
+
 		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
