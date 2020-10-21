@@ -3,6 +3,8 @@
 #include <imgui.h>
 
 namespace imgui_helper {
+	bool globalEnable = true;
+
 	static void HelpMarker(const char* desc, bool sameLine = true) {
 		if (sameLine) ImGui::SameLine();
 

@@ -12,6 +12,8 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
+	- when using deferred shading - any point in using a compute shader for the lighting pass ?
+
 	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
 
 	- is there any point to keep using 2 render-subpasses in forward rendering?
@@ -1104,6 +1106,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if(nullptr != imguiManager) {
 			imguiManager->add_callback([this]() {
 				using namespace ImGui;
+				using namespace imgui_helper;
+
+				if (!imgui_helper::globalEnable) return;
 
 				static bool firstTimeInit = true;
 
@@ -1166,28 +1171,30 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (values.size() > 90) { // Display up to 90(*10) history frames
 					values.erase(values.begin());
 				}
-				PlotLines("FPS", values.data(), static_cast<int>(values.size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 150.0f));
+				PlotLines("FPS", values.data(), static_cast<int>(values.size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 50.0f));
 
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[LShift+LCtrl]: Slow-motion");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F2]: Toggle slow-motion");
 
-				SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
-				SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
+				if (CollapsingHeader("Lights")) {
+					SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
+					SliderInt("max spot lights", &mMaxSpotLightCount, 0, 11);
 
-				ColorEdit3("dir col", &mDirLight.intensity.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
-				InputFloat3("dir light", &mDirLight.dir.x);
-				SliderFloat("dir boost", &mDirLight.boost, 0.f, 1.f);
+					ColorEdit3("dir col", &mDirLight.intensity.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
+					InputFloat3("dir light", &mDirLight.dir.x, "%.2f");
+					SliderFloat("dir boost", &mDirLight.boost, 0.f, 1.f);
 
-				ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
-				SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
+					ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
+					SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
-				Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
+					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
+				}
 
 				SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
-				Checkbox("alpha blending", &mUseAlphaBlending);
-				PushItemWidth(80);
+				Checkbox("alpha blending", &mUseAlphaBlending); HelpMarker("When disabled, simple alpha-testing is used.");
+				PushItemWidth(60);
 				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
 				PopItemWidth();
 				SameLine();
@@ -1360,6 +1367,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update() override
 	{
+		// global GUI toggle
+		if (gvk::input().key_pressed(gvk::key_code::f3)) imgui_helper::globalEnable = !imgui_helper::globalEnable;
+
 		// "slow-motion"
 		static bool slowMoToggle = false;
 		if (gvk::input().key_pressed(gvk::key_code::f2)) slowMoToggle = !slowMoToggle;

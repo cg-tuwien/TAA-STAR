@@ -28,7 +28,10 @@ class taa : public gvk::invokee
 		glm::vec4 mJitterAndAlpha;
 		int mColorClampingOrClipping;
 		VkBool32 mDepthCulling;
-		VkBool32 mTextureLookupUnjitter;
+		//VkBool32 mTextureLookupUnjitter;
+		VkBool32 mUnjitterNeighbourhood;
+		VkBool32 mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
+		float mUnjitterFactor;				// -1 or +1
 		VkBool32 mBypassHistoryUpdate;
 		VkBool32 mUseYCoCg;
 		VkBool32 mVarianceClipping;
@@ -291,6 +294,8 @@ public:
 				using namespace ImGui;
 				using namespace imgui_helper;
 
+				if (!imgui_helper::globalEnable) return;
+
 				Begin("Anti-Aliasing Settings");
 				SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
 				SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
@@ -304,7 +309,10 @@ public:
 				Checkbox("luma weighting", &mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
 				Checkbox("depth culling", &mDepthCulling);
 				Checkbox("reject out-of-screen", &mRejectOutside);
-				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
+				//Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
+				Checkbox("unjitter neighbourhood",  &mUnjitterNeighbourhood);
+				Checkbox("unjitter current sample", &mUnjitterCurrentSample);
+				InputFloat("unjitter factor", &mUnjitterFactor);
 				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
@@ -591,7 +599,10 @@ public:
 		mTaaPushConstants.mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, effectiveAlpha);
 		mTaaPushConstants.mColorClampingOrClipping = mColorClampingOrClipping;
 		mTaaPushConstants.mDepthCulling = mDepthCulling;
-		mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
+		//mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
+		mTaaPushConstants.mUnjitterNeighbourhood = mUnjitterNeighbourhood;
+		mTaaPushConstants.mUnjitterCurrentSample = mUnjitterCurrentSample;
+		mTaaPushConstants.mUnjitterFactor        = mUnjitterFactor;
 		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
 		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
 		mTaaPushConstants.mDebugMode = mDebugMode;
@@ -752,7 +763,10 @@ private:
 	bool mPostProcessEnabled = static_cast<bool>(TAA_USE_POSTPROCESS_STEP);
 	int mColorClampingOrClipping = 1;
 	bool mDepthCulling = false;
-	bool mTextureLookupUnjitter = false;
+	//bool mTextureLookupUnjitter = false;
+	bool mUnjitterNeighbourhood;
+	bool mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
+	float mUnjitterFactor = 1.f;		// -1 or +1
 	int mSampleDistribution = 1;
 	float mAlpha = 0.05f; // 0.1f;
 	bool mResetHistory = false;

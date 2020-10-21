@@ -20,7 +20,11 @@ layout(push_constant) uniform PushConstants {
 	vec4 mJitterAndAlpha;
 	int  mColorClampingOrClipping;
 	bool mDepthCulling;
-	bool mTextureLookupUnjitter;
+	//bool mTextureLookupUnjitter;
+	bool mUnjitterNeighbourhood;
+	bool mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
+	float mUnjitterFactor;				// -1 or +1
+
 	bool mBypassHistoryUpdate;
 	bool mUseYCoCg;
 	bool mVarianceClipping;
@@ -91,10 +95,13 @@ vec3 maybe_ycocg_to_rgb(vec3 c) { return pushConstants.mUseYCoCg ? ycocg_to_rgb(
 float luminance(vec3 c) { return pushConstants.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
 
 void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
-	vec2 offset = vec2(0.0, 0.0);
-	if (pushConstants.mTextureLookupUnjitter) {
-		offset = pushConstants.mJitterAndAlpha.xy;
-	}
+//	vec2 offset = vec2(0.0, 0.0);
+//	if (pushConstants.mTextureLookupUnjitter) {
+//		offset = pushConstants.mJitterAndAlpha.xy;
+//	}
+	
+	vec2 offset = pushConstants.mUnjitterNeighbourhood ? pushConstants.mJitterAndAlpha.xy * pushConstants.mUnjitterFactor : vec2(0);
+
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 
 	cC = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv                 + 0.5) * invsize).rgb);
@@ -106,6 +113,13 @@ void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out v
 	c6 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  1) + 0.5) * invsize).rgb);
 	c7 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0,  1) + 0.5) * invsize).rgb);
 	c8 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb);
+}
+
+// may have different unjitter settings than getNeighbourhood
+vec3 getCurrentColor(in ivec2 iuv) {
+	vec2 offset = pushConstants.mUnjitterCurrentSample ? pushConstants.mJitterAndAlpha.xy * pushConstants.mUnjitterFactor : vec2(0);
+	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
+	return maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + 0.5) * invsize).rgb);
 }
 
 void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol, out vec3 cliptowardsCol)
@@ -261,6 +275,7 @@ void main()
 	vec3 colMax;
 	vec3 colClipTowards;
 	getColorAndAabb(iuv, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
+	currentColor = getCurrentColor(iuv); // may have different unjitter settings than neighbourhood
 	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
 	
 //	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
