@@ -10,6 +10,8 @@
 #include <string>
 
 /* TODO:
+	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
+
 	motion vector "flash" problem ?
 
 
@@ -708,7 +710,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
 			auto &objdef = mMovingObjectDefs[iMover];
-			auto model = gvk::model_t::load_from_file(objdef.second);
+			auto filename = objdef.second;
+			if (!std::filesystem::exists(filename)) {
+				LOG_WARNING("Object file \"" + std::string(filename) + "\" does not exist - falling back to default sphere)");
+				filename = "assets/sphere.obj";
+			}
+			auto model = gvk::model_t::load_from_file(filename);
 
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
 			auto material = model->material_config_for_mesh(0);
@@ -1245,6 +1252,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Combo("speed##unit", &mMovingObject.units, "/sec\0/frame\0");
 					PopItemWidth();
+					SameLine();
+					if (Button("conv")) {
+						// FIXME - rotation speed conversion is only ok for constant rotation
+						float fps = glm::max(GetIO().Framerate, 0.01f);
+						if (mMovingObject.units == 0) {
+							mMovingObject.units = 1;
+							mMovingObject.speed /= fps;
+							mMovingObject.rotAxisAngle.w /= fps;
+						} else {
+							mMovingObject.units = 0;
+							mMovingObject.speed *= fps;
+							mMovingObject.rotAxisAngle.w *= fps;
+						}
+					}
 					PushItemWidth(80);
 					Combo("repeat", &mMovingObject.repeat, "no\0cycle\0ping-pong\0");
 					PopItemWidth();
@@ -1392,7 +1413,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		float dtObj = dt;
 		if (mMovingObject.units == 1) dtObj = 1.f;
+		static float tObjAccumulated = 0.f;
 		if (mMovingObject.enabled) {
+			tObjAccumulated += dtObj;
 
 			glm::vec3 dir = mMovingObject.endPos - mMovingObject.startPos;
 			float len = glm::length(dir);
@@ -1410,7 +1433,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
-			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tAccumulated : effectiveT), glm::pi<float>());
+			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), glm::pi<float>());
+		} else {
+			tObjAccumulated = 0.f;
 		}
 
 		
