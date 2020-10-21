@@ -72,6 +72,7 @@
     <None Include="shaders\post_process.comp">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\models\sphere_smooth.obj" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
@@ -85,7 +86,7 @@
     </Image>
   </ItemGroup>
   <ItemGroup>
-    <Object Include="assets\models\sphere_smooth.obj">
+    <Object Include="assets\models\Soccer_Ball_lores.obj">
       <Filter>assets</Filter>
     </Object>
   </ItemGroup>

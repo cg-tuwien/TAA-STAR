@@ -42,6 +42,7 @@ class taa : public gvk::invokee
 
 		int mDebugMode;
 		float mDebugScale;
+		VkBool32 mDebugCenter;
 	};
 
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
@@ -310,7 +311,9 @@ public:
 				Checkbox("debug##show debug", &mShowDebug);
 				SameLine();
 				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
-				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 50.f, "%.0f");
+				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 100.f, "%.0f");
+				SameLine();
+				Checkbox("center##debug center", &mDebugCenter);
 
 				if (CollapsingHeader("Jitter debug")) {
 					SliderInt("lock", &mFixedJitterIndex, -1, 16);
@@ -584,6 +587,7 @@ public:
 		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
 		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
 		mTaaPushConstants.mDebugMode = mDebugMode;
+		mTaaPushConstants.mDebugCenter = mDebugCenter;
 		mTaaPushConstants.mDebugScale = mDebugScale;
 		mTaaPushConstants.mVarianceClipping = mVarianceClipping;
 		mTaaPushConstants.mLumaWeighting = mLumaWeighting;
@@ -783,6 +787,7 @@ private:
 	bool mBypassHistoryUpdate = false; // used by slow motion
 
 	int mDebugMode = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
+	bool mDebugCenter = false; // center result to vec4(0.5) - for showing vectors
 	bool mShowDebug = false;
 	float mDebugScale = 1.f;
 	bool mUseYCoCg = false;

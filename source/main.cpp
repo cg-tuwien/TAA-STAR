@@ -106,6 +106,7 @@ class wookiee : public gvk::invokee
 	std::vector<std::pair<const char*, const char*>> mMovingObjectDefs = {	// name, filename
 		{ "Smooth sphere",	"assets/sphere_smooth.obj" },
 		{ "Sharp sphere",	"assets/sphere.obj" },
+		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj" },
 	};
 
 
@@ -165,7 +166,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// moving object info
 		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingObjectFirstMatIdx + mMovingObject.moverId : -1;
-		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::translate(glm::mat4(1), mMovingObject.translation);
+		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::rotate( glm::translate(glm::mat4(1), mMovingObject.translation), mMovingObject.rotationAngle, glm::vec3(mMovingObject.rotAxisAngle));
 
 		// previous frame info
 		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
@@ -418,10 +419,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSkyboxCommandBuffer[i]->bind_descriptors(mSkyboxPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({  // Bind the descriptors which describe resources used by shaders.
 				descriptor_binding(0, 0, mMatricesUserInputBuffer[i])                                  // In this case, we have one uniform buffer as resource (we have also declared that during mSkyboxPipeline creation).
 			}));
-#pragma warning( push )
-#pragma warning( disable : 4267)
 			mSkyboxCommandBuffer[i]->draw_indexed(*mSphereIndexBuffer, *mSphereVertexBuffer); // Record the draw call
-#pragma warning( pop )
 			mSkyboxCommandBuffer[i]->end_render_pass();
 			helpers::record_timing_interval_end(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
 			rdoc::endSection(mSkyboxCommandBuffer[i]->handle());
@@ -890,10 +888,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
 			"shaders/transform_and_pass_on.vert",
-#pragma warning( push )
-#pragma warning( disable : 4267)
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
-#pragma warning( pop )
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
@@ -1033,8 +1028,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					// Bind the vertex input buffers in the right order (corresponding to the layout
 					// specifiers in the vertex shader) and issue the actual draw call:
-#pragma warning( push )
-#pragma warning( disable : 4267)
 					mModelsCommandBuffer[i]->draw_indexed(
 						*drawCall.mIndexBuffer,
 						*drawCall.mPositionsBuffer,
@@ -1043,7 +1036,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						*drawCall.mTangentsBuffer,
 						*drawCall.mBitangentsBuffer
 					);
-#pragma warning( pop )
 				}
 			}
 
@@ -1058,8 +1050,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						firstPipe->layout(),	// Push constants must match the pipeline's layout
 						pushc					// Push the actual data
 					);
-#pragma warning( push )
-#pragma warning( disable : 4267)
 					mModelsCommandBuffer[i]->draw_indexed(
 						*drawCall.mIndexBuffer,
 						*drawCall.mPositionsBuffer,
@@ -1068,7 +1058,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						*drawCall.mTangentsBuffer,
 						*drawCall.mBitangentsBuffer
 					);
-#pragma warning( pop )
 				}
 			}
 #else
@@ -1247,6 +1236,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Combo("type", &mMovingObject.moverId, &FuncHolder::MoverGetter, this, static_cast<int>(mMovingObjectDefs.size()));
 					InputFloat3("start", &mMovingObject.startPos.x); SameLine(); if (Button("cam##start=cam")) { mMovingObject.startPos = mQuakeCam.translation(); }
 					InputFloat3("end  ", &mMovingObject.endPos.x  ); SameLine(); if (Button("cam##end=cam"  )) { mMovingObject.endPos   = mQuakeCam.translation(); }
+					InputFloat4("rot ax/spd", &mMovingObject.rotAxisAngle.x);
 					PushItemWidth(60);
 					InputFloat("##speed", &mMovingObject.speed);
 					SameLine();
@@ -1256,6 +1246,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Combo("repeat", &mMovingObject.repeat, "no\0cycle\0ping-pong\0");
 					PopItemWidth();
 					SameLine();
+					Checkbox("cont rot", &mMovingObject.rotContinous);
 					if (Button("reset")) mMovingObject.t = 0.f;
 					PopID();
 				}
@@ -1412,6 +1403,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
+			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? t : effectiveT), glm::pi<float>());
 		}
 
 		
@@ -1557,12 +1549,15 @@ private: // v== Member variables ==v
 		bool      enabled = 0;
 		int       moverId = 0;
 		glm::vec3 translation = {};
+		float     rotationAngle;	// radians
 		glm::vec3 startPos = glm::vec3(-5, 1, 0);
 		glm::vec3 endPos   = glm::vec3(5,1,0);
+		glm::vec4 rotAxisAngle = glm::vec4(0,0,1,-90);		// axis, angle(degr.)
 		float     speed    = 5.f;
 		float     t = 0.f;
 		int       units = 0; // 0 = per sec, 1 = per frame
 		int       repeat = 1; // 0 = no, 1 = cycle, 2 = ping-pong
+		bool      rotContinous = false;
 	} mMovingObject;
 
 	glm::vec2 mCurrentJitter   = {};

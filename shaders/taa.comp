@@ -34,6 +34,7 @@ layout(push_constant) uniform PushConstants {
 
 	int  mDebugMode;
 	float mDebugScale;
+	bool mDebugCenter;
 } pushConstants;
 
 layout(set = 1, binding = 0) uniform Matrices {
@@ -353,23 +354,24 @@ void main()
 	if (pushConstants.mDebugMode == 0) {
 		// colour bounding box, individual
 		vec3 tmp = colMax - colMin;
-		imageStore(uDebug,  iuv, vec4(tmp, 0));
+		gDebugValue = vec4(tmp, 0);
 	} else if (pushConstants.mDebugMode == 1) {
 		// colour bounding box, size
 		vec3 tmp = colMax - colMin;
-		imageStore(uDebug,  iuv, vec4(vec3(tmp.x * tmp.y * tmp.z) * pushConstants.mDebugScale, 0));
+		gDebugValue = vec4(vec3(tmp.x * tmp.y * tmp.z), 0);
 	} else if (pushConstants.mDebugMode == 2) {
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
-		imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, length(rectified_diff) * pushConstants.mDebugScale, 0, 0));
+		gDebugValue = vec4(rejected ? 1 : 0, length(rectified_diff), 0, 0);
 	} else if (pushConstants.mDebugMode == 3) {
-		imageStore(uDebug,  iuv, vec4(vec3(alpha), 0) * pushConstants.mDebugScale);
+		gDebugValue = vec4(vec3(alpha), 0);
 	} else if (pushConstants.mDebugMode == 4) {
-		vec4 velocity = texelFetch(uCurrentVelocity, iuv, 0);
-		//imageStore(uDebug,  iuv, vec4(velocity.xyz * 0.5 + 0.5, 0) * pushConstants.mDebugScale);	// hard to see
-		imageStore(uDebug,  iuv, vec4(velocity.xyz, 0) * pushConstants.mDebugScale);
-	} else {
-		imageStore(uDebug,  iuv, gDebugValue * pushConstants.mDebugScale);
+		gDebugValue = texelFetch(uCurrentVelocity, iuv, 0);
 	}
+	// else keep current gDebugValue
+
+	gDebugValue *= pushConstants.mDebugScale;
+	if (pushConstants.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
+	imageStore(uDebug,  iuv, gDebugValue);
 
 }
 // -------------------------------------------------------
