@@ -317,7 +317,9 @@ public:
 				Checkbox("debug##show debug", &mShowDebug);
 				SameLine();
 				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
+				PushItemWidth(100);
 				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 100.f, "%.0f");
+				PopItemWidth();
 				SameLine();
 				Checkbox("center##debug center", &mDebugCenter);
 

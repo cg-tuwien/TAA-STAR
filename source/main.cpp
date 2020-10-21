@@ -12,9 +12,6 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
-	motion vector "flash" problem ?
-
-
 	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
 
 	- is there any point to keep using 2 render-subpasses in forward rendering?
@@ -1433,7 +1430,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
-			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), glm::pi<float>());
+			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), 2.f * glm::pi<float>());
 		} else {
 			tObjAccumulated = 0.f;
 		}
