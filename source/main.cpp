@@ -10,6 +10,9 @@
 #include <string>
 
 /* TODO:
+	motion vector "flash" problem ?
+
+
 	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
 
 	- is there any point to keep using 2 render-subpasses in forward rendering?
@@ -1360,6 +1363,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		float dt = tLast ? t - tLast - dt_offset : 0.f;
 		tLast = t;
 
+		static float tAccumulated = 0.f;
+		tAccumulated += dt; // don't use t directly in animation, problems with "slo-mo" !
+
 		float dtCam = dt;
 		static float tCamBob = 0.f;
 		if (mAutoMovementUnits == 1) dtCam = 1.f;
@@ -1387,6 +1393,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		float dtObj = dt;
 		if (mMovingObject.units == 1) dtObj = 1.f;
 		if (mMovingObject.enabled) {
+
 			glm::vec3 dir = mMovingObject.endPos - mMovingObject.startPos;
 			float len = glm::length(dir);
 			if (len > 1e-6) dir /= len;
@@ -1403,7 +1410,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
-			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? t : effectiveT), glm::pi<float>());
+			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tAccumulated : effectiveT), glm::pi<float>());
 		}
 
 		

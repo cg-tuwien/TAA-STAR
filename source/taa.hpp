@@ -116,6 +116,8 @@ public:
 		const static auto sHalton23x8SampleOffsets = halton_2_3<8>(sPxSizeNDC);
 		const static auto sHalton23x16SampleOffsets = halton_2_3<16>(sPxSizeNDC);
 
+		const static auto sDebugSampleOffsets = avk::make_array<glm::vec2>(sPxSizeNDC * glm::vec2(0, 0));
+
 		// Select a specific distribution:
 		const glm::vec2* sampleOffsetValues = nullptr;
 		size_t numSampleOffsets = 0;
@@ -135,6 +137,10 @@ public:
 		case 3:
 			sampleOffsetValues = sHalton23x16SampleOffsets.data();
 			numSampleOffsets = sHalton23x16SampleOffsets.size();
+			break;
+		case 4:
+			sampleOffsetValues = sDebugSampleOffsets.data();
+			numSampleOffsets = sDebugSampleOffsets.size();
 			break;
 		}
 
@@ -299,7 +305,7 @@ public:
 				Checkbox("depth culling", &mDepthCulling);
 				Checkbox("reject out-of-screen", &mRejectOutside);
 				Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
-				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16" };
+				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
 				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
 				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
 				SliderFloat("a_min", &mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
