@@ -48,6 +48,8 @@
     <None Include="shaders\sky_gradient.frag" />
     <None Include="shaders\sky_gradient.vert" />
     <None Include="shaders\taa.comp" />
+    <None Include="shaders\testing.frag" />
+    <None Include="shaders\testing.vert" />
     <None Include="shaders\transform_and_pass_on.vert" />
   </ItemGroup>
   <ItemGroup>

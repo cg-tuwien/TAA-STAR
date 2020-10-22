@@ -46,9 +46,11 @@
 		keep first instance = 0
 
 	create a materialIndexBuffer[#mg]	(NO alternative: stream it in via instance attributes? - is a waste of memory, need to replicate per-mg-value for each mesh-instance; there are no per-draw-attributes unfortunately)
-	create a perInstanceAttributesBuffer[# total instances] (for now holds only model matrix) (could stream this in via instance attribs)
+	create a perInstanceAttributesBuffer[# total instances] (for now holds only model matrix) (could stream this in via instance attribs instead)
 	create a attribStartIndexBuffer[#mg] -> holds index for perInstanceAttributesBuffer for the first instance of the mg (if not streaming attrib buffer)
 	(for motion vectors on static geo: attribs of last frame == same as this frame, so don't need anything extra)
+
+	for now we don't stream the per-instance attributes
 
 	example perInstanceAttributesBuffer layout (if mesh0 has 2 instances, mesh1 has 1 and mesh2 has 3):
 		perInstanceAttributesBuffer { mesh0_inst0, mesh0_inst1, mesh1_inst0, mesh2_inst0, mesh2_inst1, mesh2_inst2, mesh3_inst0, ... }
@@ -56,7 +58,7 @@
 
 	draw call/pipeline:
 		per-vertex-attributes:	 index, vertex, normals, tan, bitan, ...
-		per-instance-attributes: materialIdx, attribStartIndex
+		per-instance-attributes: attribStartIndex (when not streaming instace attribs), or the instance-attributes directly
 		buffer materialIndexBuffer[]
 
 	in shader:
@@ -70,17 +72,18 @@
 		modelMatrix = perInstanceAttributesBuffer[attribBase + gl_InstanceIndex].modelmatrix
 
 		// via streaming attribs
-		modelMatrix = in_perInstanceAttributes.modelmatrix
+		modelMatrix = in_perInstanceAttributes_modelmatrix
 
 
 	sponza: add some artificial modelmatrices to test (temporary only)
-	implement for forward rendering first, then add movers, only finally fix deferred shader
 	add opaque meshgroups first, remember index of first transparent one
+
+	implement for non-blending, forward rendering first, then add movers, only finally fix other rendering variants; mark todos with TODO-DII
+
+	TODO once it works, test with scenes with multiple orca-models, multiple orca-instances
 */
 
 #define FORWARD_RENDERING 1
-
-#define INDEXED_INDIRECT 1
 
 class wookiee : public gvk::invokee
 {
@@ -150,6 +153,8 @@ class wookiee : public gvk::invokee
 		glm::mat4 modelMatrix;
 	};
 	struct Meshgroup {
+		uint32_t numIndices;
+		uint32_t numVertices;
 		uint32_t baseIndex;		// indexbuffer-index  corresponding to the first index of this meshid
 		uint32_t baseVertex;	// vertexbuffer-index corresponding to the first index of this meshid (?)
 		std::vector<MeshgroupPerInstanceData> perInstanceData;
@@ -157,8 +162,6 @@ class wookiee : public gvk::invokee
 		bool     hasTransparency;
 
 		// these are mainly for debugging:
-		uint32_t numIndices;
-		uint32_t numVertices;
 		uint32_t orcaModelId;
 		uint32_t orcaMeshId;
 	};
@@ -658,7 +661,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto distinctMaterialsOrca = scene->distinct_material_configs_for_all_models();
 		std::vector<gvk::material_config> distinctMaterialConfigs;
 
-#if INDEXED_INDIRECT
+#if DRAW_INDEXED_INDIRECT
 		// for cache efficiency, we want to render meshgroups using the same material in sequence, so: walk the materials, find matching meshes, build meshgroup
 		for (const auto& pair : distinctMaterialsOrca) {
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
@@ -693,15 +696,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						auto bitangents           = gvk::get_bitangents(selection);
 
 						Meshgroup mg;
-						mg.baseIndex  = static_cast<uint32_t>(mSceneData.mIndices.size());
-						mg.baseVertex = static_cast<uint32_t>(mSceneData.mPositions.size());
+						mg.numIndices      = static_cast<uint32_t>(indices.size());
+						mg.numVertices     = static_cast<uint32_t>(positions.size());
+						mg.baseIndex       = static_cast<uint32_t>(mSceneData.mIndices.size());
+						mg.baseVertex      = static_cast<uint32_t>(mSceneData.mPositions.size());
 						mg.materialIndex   = materialIndex;
 						mg.hasTransparency = materialHasTransparency;
 						// for debugging:
 						mg.orcaModelId = static_cast<uint32_t>(modelAndMeshIndices.mModelIndex);
 						mg.orcaMeshId  = static_cast<uint32_t>(meshIndex);
-						mg.numIndices  = static_cast<uint32_t>(indices.size());
-						mg.numVertices = static_cast<uint32_t>(positions.size());
 
 						// append the data of the current mesh(group) to the scene vectors
 						gvk::append_indices_and_vertex_data(
@@ -731,6 +734,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
+		// create all the buffers - for details, see upload_materials_and_vertex_data_to_gpu()
+		size_t numMeshgroups = mSceneData.mMeshgroups.size();
+		size_t numInstances = 0;
+		for (auto &mg : mSceneData.mMeshgroups) numInstances += mg.perInstanceData.size();
+		mSceneData.mIndexBuffer           = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(mSceneData.mIndices));
+		mSceneData.mPositionsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mPositions).describe_only_member(mSceneData.mPositions[0], avk::content_description::position));
+		mSceneData.mTexCoordsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mTexCoords));
+		mSceneData.mNormalsBuffer         = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mNormals));
+		mSceneData.mTangentsBuffer        = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mTangents));
+		mSceneData.mBitangentsBuffer      = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mBitangents));
+		mSceneData.mMaterialIndexBuffer   = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
+		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
+		
 #else
 		// old:
 		for (const auto& pair : distinctMaterialsOrca) {
@@ -946,13 +964,38 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// All of the following are submitted to the same queue (due to cgb::device_queue_selection_strategy::prefer_everything_on_single_queue)
 		// That also means that this is the same queue which is used for graphics rendering.
 		// Furthermore, this means that it is sufficient to establish a memory barrier after the last call to cgb::fill. 
-#if INDEXED_INDIRECT
+#if DRAW_INDEXED_INDIRECT
 		mSceneData.mIndexBuffer     ->fill(mSceneData.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mPositionsBuffer ->fill(mSceneData.mPositions.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mTexCoordsBuffer ->fill(mSceneData.mTexCoords.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mNormalsBuffer   ->fill(mSceneData.mNormals.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mTangentsBuffer  ->fill(mSceneData.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mBitangentsBuffer->fill(mSceneData.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+
+		// build materialIndexBuffer (materialIndexBuffer[i] holds the material index for meshgroup i), attributes / attrib base index buffers, and draw commands buffer
+		std::vector<uint32_t> matIdxData    (mSceneData.mMeshgroups.size());
+		std::vector<uint32_t> attribBaseData(mSceneData.mMeshgroups.size());
+		std::vector<MeshgroupPerInstanceData> attributesData;
+		std::vector<VkDrawIndexedIndirectCommand> drawcommandsData(mSceneData.mMeshgroups.size());
+		for (auto i = 0; i < mSceneData.mMeshgroups.size(); ++i) {
+			auto &mg = mSceneData.mMeshgroups[i];
+			matIdxData[i] = mg.materialIndex;
+			attribBaseData[i] = static_cast<uint32_t>(attributesData.size());
+			gvk::insert_into(attributesData, mg.perInstanceData);
+			VkDrawIndexedIndirectCommand dc;
+			dc.indexCount    = mg.numIndices;
+			dc.instanceCount = static_cast<uint32_t>(mg.perInstanceData.size());
+			dc.firstIndex    = mg.baseIndex;
+			dc.vertexOffset  = 0;	// already taken care of
+			dc.firstInstance = 0;
+			drawcommandsData[i] = dc;
+		}
+		// and upload
+		mSceneData.mMaterialIndexBuffer  ->fill(matIdxData.data(),        0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mAttribBaseIndexBuffer->fill(attribBaseData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mAttributesBuffer     ->fill(attributesData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mDrawCommandsBuffer   ->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+
 #else
 		for (auto& dc : mDrawCalls) {
 			                                                       // Take care of the command buffer's lifetime, but do not establish a barrier before or after the command
@@ -1045,9 +1088,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
+#if DRAW_INDEXED_INDIRECT
+			"shaders/testing.vert",
+			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
+#else
 			"shaders/transform_and_pass_on.vert",
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
-			// The next lines define the format and location of the vertex shader inputs:
+#endif
+																																  // The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
 			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
@@ -1061,12 +1109,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//
 			// The following define additional data which we'll pass to the pipeline:
 			//   We'll pass two matrices to our vertex shader via push constants:
+			// TODO-DII: do we still need push constants at all? - maybe for movers, later
+#if !DRAW_INDEXED_INDIRECT
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+#if DRAW_INDEXED_INDIRECT
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
+
+		// TODO-DII: other pipes
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
@@ -1160,6 +1218,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
+#if DRAW_INDEXED_INDIRECT
+				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+#endif
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
 				descriptor_binding(1, 1, mLightsourcesBuffer[i])
 			}));
@@ -1169,6 +1232,37 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->bind_pipeline(firstPipe);
 			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
+#if DRAW_INDEXED_INDIRECT
+			// stuff that will probably go into avk::command_buffer_t::draw_indexed_indirect later
+			// bind vertex buffers
+			mModelsCommandBuffer[i]->handle().bindVertexBuffers(0,
+				{ mSceneData.mPositionsBuffer->handle(),
+				  mSceneData.mTexCoordsBuffer->handle(),
+				  mSceneData.mNormalsBuffer->handle(),
+				  mSceneData.mTangentsBuffer->handle(),
+				  mSceneData.mBitangentsBuffer->handle()
+				},
+				//{ ((void)mSceneData.mPositionsBuffer, vk::DeviceSize{0}), ... }	// ??
+				{ vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0} }
+			);
+			// bind index buffer
+			const auto& indexMeta = mSceneData.mIndexBuffer->template meta<avk::index_buffer_meta>();
+			vk::IndexType indexType;
+			switch (indexMeta.sizeof_one_element()) {
+				case sizeof(uint16_t): indexType = vk::IndexType::eUint16; break;
+				case sizeof(uint32_t): indexType = vk::IndexType::eUint32; break;
+				default: AVK_LOG_ERROR("The given size[" + std::to_string(indexMeta.sizeof_one_element()) + "] does not correspond to a valid vk::IndexType"); break;
+			}
+			mModelsCommandBuffer[i]->handle().bindIndexBuffer(mSceneData.mIndexBuffer->handle(), 0u, indexType);
+
+			mModelsCommandBuffer[i]->handle().drawIndexedIndirect(
+				mSceneData.mDrawCommandsBuffer->handle(),
+				vk::DeviceSize{ 0 },
+				static_cast<uint32_t>(mSceneData.mMeshgroups.size()),
+				sizeof(VkDrawIndexedIndirectCommand)
+			);
+
+#else
 			// Record all the draw calls into this command buffer:
 			for (auto& drawCall : mDrawCalls) {
 				// In forward rendering, only render opaque geometry in the first pass
@@ -1196,8 +1290,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					);
 				}
 			}
+#endif
 
 #if FORWARD_RENDERING
+#if !DRAW_INDEXED_INDIRECT
 			mModelsCommandBuffer[i]->next_subpass();
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
 			for (auto& drawCall : mDrawCalls) {
@@ -1218,6 +1314,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					);
 				}
 			}
+#endif
 #else
 			// Move on to next subpass, synchronizing all data to be written to memory,
 			// and to be made visible to the next subpass, which uses it as input.
@@ -1752,6 +1849,7 @@ private: // v== Member variables ==v
 
 	// draw indexed indirect stuff
 	struct {
+		// vertex attribute buffers
 		avk::buffer mIndexBuffer;
 		avk::buffer mPositionsBuffer;
 		avk::buffer mTexCoordsBuffer;
@@ -1759,7 +1857,17 @@ private: // v== Member variables ==v
 		avk::buffer mTangentsBuffer;
 		avk::buffer mBitangentsBuffer;
 
-		// temporary vectors, holding scene data until it is uploaded to the GPU
+		// per-meshgroup buffers
+		avk::buffer mMaterialIndexBuffer;
+		avk::buffer mAttribBaseIndexBuffer;		// [x] holds the index for mAttributesBuffer, so that mAttributesBuffer[x] is the attributes of the first instance of mesh group x
+
+		// buffers with entries for every mesh-instance
+		avk::buffer mAttributesBuffer;
+
+		// buffer holding draw parameters (VkDrawIndexedIndirectCommand)
+		avk::buffer mDrawCommandsBuffer;
+
+		// temporary vectors, holding data to be uploaded to the GPU
 		std::vector<uint32_t> mIndices;
 		std::vector<glm::vec3> mPositions;
 		std::vector<glm::vec2> mTexCoords;
@@ -1767,6 +1875,7 @@ private: // v== Member variables ==v
 		std::vector<glm::vec3> mTangents;
 		std::vector<glm::vec3> mBitangents;
 
+		// the mesh groups
 		std::vector<Meshgroup> mMeshgroups;
 	} mSceneData;
 };
