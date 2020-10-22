@@ -31,8 +31,56 @@
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
+/*
+	DrawIndexedIndirect plan:
+
+	create one big vertex and index buffer (for scenery only? - tbd) [and matching buffers for other vertex-attributes: texCoord,normals,tangents,bitangents]
+
+	meshgroup ~= what is now called drawcall_data -> all the instances for a given meshid (differing only in their modelmatrix)
+
+	build an array of VkDrawIndexedIndirectCommand (size = #meshgroups)
+	for each meshgroup mg:
+		instance count = #instances in mg
+		first index = start index of mg in huge index buffer
+		vertex offset = start vertex of mg in huge vertex buffer	(or keep 0 and adjust indices accordingly)
+		keep first instance = 0
+
+	create a materialIndexBuffer[#mg]	(NO alternative: stream it in via instance attributes? - is a waste of memory, need to replicate per-mg-value for each mesh-instance; there are no per-draw-attributes unfortunately)
+	create a perInstanceAttributesBuffer[# total instances] (for now holds only model matrix) (could stream this in via instance attribs)
+	create a attribStartIndexBuffer[#mg] -> holds index for perInstanceAttributesBuffer for the first instance of the mg (if not streaming attrib buffer)
+	(for motion vectors on static geo: attribs of last frame == same as this frame, so don't need anything extra)
+
+	example perInstanceAttributesBuffer layout (if mesh0 has 2 instances, mesh1 has 1 and mesh2 has 3):
+		perInstanceAttributesBuffer { mesh0_inst0, mesh0_inst1, mesh1_inst0, mesh2_inst0, mesh2_inst1, mesh2_inst2, mesh3_inst0, ... }
+		attribStartIndexBuffer		{ 0, 2, 3, 6, ... }
+
+	draw call/pipeline:
+		per-vertex-attributes:	 index, vertex, normals, tan, bitan, ...
+		per-instance-attributes: materialIdx, attribStartIndex
+		buffer materialIndexBuffer[]
+
+	in shader:
+		gl_DrawId        := mg being drawn
+		gl_InstanceIndex := instance of mg being drawn
+
+		materialIdx = materialIndexBuffer[gl_DrawId]
+
+		// via buffers
+		attribBase = attribStartIndexBuffer[gl_DrawId]
+		modelMatrix = perInstanceAttributesBuffer[attribBase + gl_InstanceIndex].modelmatrix
+
+		// via streaming attribs
+		modelMatrix = in_perInstanceAttributes.modelmatrix
+
+
+	sponza: add some artificial modelmatrices to test (temporary only)
+	implement for forward rendering first, then add movers, only finally fix deferred shader
+	add opaque meshgroups first, remember index of first transparent one
+*/
+
 #define FORWARD_RENDERING 1
 
+#define INDEXED_INDIRECT 1
 
 class wookiee : public gvk::invokee
 {
@@ -96,6 +144,23 @@ class wookiee : public gvk::invokee
 		std::vector<glm::vec3> mBitangents;
 
 		bool hasTransparency; // ac
+	};
+
+	struct MeshgroupPerInstanceData {
+		glm::mat4 modelMatrix;
+	};
+	struct Meshgroup {
+		uint32_t baseIndex;		// indexbuffer-index  corresponding to the first index of this meshid
+		uint32_t baseVertex;	// vertexbuffer-index corresponding to the first index of this meshid (?)
+		std::vector<MeshgroupPerInstanceData> perInstanceData;
+		int      materialIndex;
+		bool     hasTransparency;
+
+		// these are mainly for debugging:
+		uint32_t numIndices;
+		uint32_t numVertices;
+		uint32_t orcaModelId;
+		uint32_t orcaMeshId;
 	};
 
 	struct CameraState { char name[80];  glm::vec3 t; glm::quat r; };	// ugly char[80] for easier ImGui access...
@@ -591,8 +656,83 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Get all the different materials from the whole scene:
 		auto distinctMaterialsOrca = scene->distinct_material_configs_for_all_models();
-
 		std::vector<gvk::material_config> distinctMaterialConfigs;
+
+#if INDEXED_INDIRECT
+		// for cache efficiency, we want to render meshgroups using the same material in sequence, so: walk the materials, find matching meshes, build meshgroup
+		for (const auto& pair : distinctMaterialsOrca) {
+			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
+			distinctMaterialConfigs.push_back(pair.first);
+			assert (static_cast<size_t>(materialIndex + 1) == distinctMaterialConfigs.size());
+
+			bool materialHasTransparency = has_material_transparency(pair.first);
+
+			// walk the meshdefs having the current material (over ALL orca-models)
+			for (const auto& modelAndMeshIndices : pair.second) {
+				// Gather the model reference and the mesh indices of the same material in a vector:
+				auto& modelData = scene->model_at_index(modelAndMeshIndices.mModelIndex);
+				std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> modelRefAndMeshIndices = { std::make_tuple(std::cref(modelData.mLoadedModel), modelAndMeshIndices.mMeshIndices) };
+				helpers::exclude_a_curtain(modelRefAndMeshIndices);
+				if (modelRefAndMeshIndices.empty()) continue;
+
+				// walk the individual meshes (actually these correspond to "mesh groups", referring to the same meshId) in the same-material-group
+				for (auto& modelRefMeshIndicesPair : modelRefAndMeshIndices) {
+					for (auto meshIndex : std::get<std::vector<size_t>>(modelRefMeshIndicesPair)) {
+						std::vector<size_t> tmpMeshIndexVector = { meshIndex };
+						std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> selection = { std::make_tuple(std::cref(modelData.mLoadedModel), tmpMeshIndexVector) };
+
+
+						// build a meshgroup, covering ALL orca-instances
+						// TODO: this way of buffer-building is not very efficient; better build buffers for ALL meshes in one go...
+
+						// get the data of the current orca-mesh(group)
+						auto [positions, indices] = gvk::get_vertices_and_indices(selection);
+						auto texCoords            = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0) : gvk::get_2d_texture_coordinates(selection, 0);
+						auto normals              = gvk::get_normals   (selection);
+						auto tangents             = gvk::get_tangents  (selection);
+						auto bitangents           = gvk::get_bitangents(selection);
+
+						Meshgroup mg;
+						mg.baseIndex  = static_cast<uint32_t>(mSceneData.mIndices.size());
+						mg.baseVertex = static_cast<uint32_t>(mSceneData.mPositions.size());
+						mg.materialIndex   = materialIndex;
+						mg.hasTransparency = materialHasTransparency;
+						// for debugging:
+						mg.orcaModelId = static_cast<uint32_t>(modelAndMeshIndices.mModelIndex);
+						mg.orcaMeshId  = static_cast<uint32_t>(meshIndex);
+						mg.numIndices  = static_cast<uint32_t>(indices.size());
+						mg.numVertices = static_cast<uint32_t>(positions.size());
+
+						// append the data of the current mesh(group) to the scene vectors
+						gvk::append_indices_and_vertex_data(
+							gvk::additional_index_data (mSceneData.mIndices,	[&]() { return indices;	 }),
+							gvk::additional_vertex_data(mSceneData.mPositions,	[&]() { return positions; })
+						);
+						gvk::insert_into(mSceneData.mTexCoords,  texCoords);
+						gvk::insert_into(mSceneData.mNormals,    normals);
+						gvk::insert_into(mSceneData.mTangents,   tangents);
+						gvk::insert_into(mSceneData.mBitangents, bitangents);
+
+						// collect all the instances of the meshgroup
+						auto in_instance_transforms = get_mesh_instance_transforms(modelData.mLoadedModel, static_cast<int>(meshIndex), glm::mat4(1));
+						// for each orca-instance of the loaded model, apply the instance transform and store the final transforms in the meshgroup
+						for (size_t i = 0; i < modelData.mInstances.size(); ++i) {
+							auto baseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
+							for (auto t = 0; t < in_instance_transforms.size(); ++t) {
+								MeshgroupPerInstanceData pid;
+								pid.modelMatrix = baseTransform * in_instance_transforms[t];
+								mg.perInstanceData.push_back(pid);
+							}
+						}
+
+						mSceneData.mMeshgroups.push_back(mg);
+					}
+				}
+			}
+		}
+
+#else
+		// old:
 		for (const auto& pair : distinctMaterialsOrca) {
 			// Also gather the material configs along the way since we'll need to transfer them to the GPU as well
 			// (which we will do right after this for loop that gathers the draw call data).
@@ -751,7 +891,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			ref.mBitangents = std::move(bitangents);
 			ref.hasTransparency = false;
 		}
-
+#endif		
 
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
@@ -806,6 +946,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// All of the following are submitted to the same queue (due to cgb::device_queue_selection_strategy::prefer_everything_on_single_queue)
 		// That also means that this is the same queue which is used for graphics rendering.
 		// Furthermore, this means that it is sufficient to establish a memory barrier after the last call to cgb::fill. 
+#if INDEXED_INDIRECT
+		mSceneData.mIndexBuffer     ->fill(mSceneData.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mPositionsBuffer ->fill(mSceneData.mPositions.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mTexCoordsBuffer ->fill(mSceneData.mTexCoords.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mNormalsBuffer   ->fill(mSceneData.mNormals.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mTangentsBuffer  ->fill(mSceneData.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		mSceneData.mBitangentsBuffer->fill(mSceneData.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+#else
 		for (auto& dc : mDrawCalls) {
 			                                                       // Take care of the command buffer's lifetime, but do not establish a barrier before or after the command
 			dc.mIndexBuffer     ->fill(dc.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
@@ -815,6 +963,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			dc.mTangentsBuffer  ->fill(dc.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 			dc.mBitangentsBuffer->fill(dc.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		}
+#endif
 
 		// This is the last one of our TRANSFER commands. 
 		mMaterialBuffer->fill(mMaterialData.data(), 0, avk::sync::with_barriers(
@@ -1600,6 +1749,26 @@ private: // v== Member variables ==v
 	} mMovingObject;
 
 	glm::vec2 mCurrentJitter   = {};
+
+	// draw indexed indirect stuff
+	struct {
+		avk::buffer mIndexBuffer;
+		avk::buffer mPositionsBuffer;
+		avk::buffer mTexCoordsBuffer;
+		avk::buffer mNormalsBuffer;
+		avk::buffer mTangentsBuffer;
+		avk::buffer mBitangentsBuffer;
+
+		// temporary vectors, holding scene data until it is uploaded to the GPU
+		std::vector<uint32_t> mIndices;
+		std::vector<glm::vec3> mPositions;
+		std::vector<glm::vec2> mTexCoords;
+		std::vector<glm::vec3> mNormals;
+		std::vector<glm::vec3> mTangents;
+		std::vector<glm::vec3> mBitangents;
+
+		std::vector<Meshgroup> mMeshgroups;
+	} mSceneData;
 };
 
 int main(int argc, char **argv) // <== Starting point ==
