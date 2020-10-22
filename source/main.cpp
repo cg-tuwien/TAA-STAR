@@ -738,16 +738,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		size_t numMeshgroups = mSceneData.mMeshgroups.size();
 		size_t numInstances = 0;
 		for (auto &mg : mSceneData.mMeshgroups) numInstances += mg.perInstanceData.size();
-		mSceneData.mIndexBuffer           = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(mSceneData.mIndices));
-		mSceneData.mPositionsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mPositions).describe_only_member(mSceneData.mPositions[0], avk::content_description::position));
-		mSceneData.mTexCoordsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mTexCoords));
-		mSceneData.mNormalsBuffer         = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mNormals));
-		mSceneData.mTangentsBuffer        = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mTangents));
-		mSceneData.mBitangentsBuffer      = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(mSceneData.mBitangents));
-		mSceneData.mMaterialIndexBuffer   = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
-		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
+		mSceneData.mIndexBuffer           = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::index_buffer_meta::create_from_data(mSceneData.mIndices));
+		mSceneData.mPositionsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mPositions).describe_only_member(mSceneData.mPositions[0], avk::content_description::position));
+		mSceneData.mTexCoordsBuffer       = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mTexCoords));
+		mSceneData.mNormalsBuffer         = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mNormals));
+		mSceneData.mTangentsBuffer        = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mTangents));
+		mSceneData.mBitangentsBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mBitangents));
+		mSceneData.mMaterialIndexBuffer   = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
+		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {vk::BufferUsageFlagBits::eIndirectBuffer}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
 		
 #else
 		// old:
@@ -1292,9 +1292,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 #endif
 
+			// Move on to next subpass, synchronizing all data to be written to memory,
+			// and to be made visible to the next subpass, which uses it as input.
+			mModelsCommandBuffer[i]->next_subpass();
+
 #if FORWARD_RENDERING
 #if !DRAW_INDEXED_INDIRECT
-			mModelsCommandBuffer[i]->next_subpass();
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
 			for (auto& drawCall : mDrawCalls) {
 				// render only transparent geometry
@@ -1316,9 +1319,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 #endif
 #else
-			// Move on to next subpass, synchronizing all data to be written to memory,
-			// and to be made visible to the next subpass, which uses it as input.
-			mModelsCommandBuffer[i]->next_subpass();
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
 			mModelsCommandBuffer[i]->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
 				descriptor_binding(0, 0, mMaterialBuffer),
@@ -1991,7 +1991,10 @@ int main(int argc, char **argv) // <== Starting point ==
 			ui,
 			dev_extensions,
 			modifyValidationFunc,
-			[](vk::PhysicalDeviceFeatures& pdf) { pdf.independentBlend = VK_TRUE; } // request independent blending
+			[](vk::PhysicalDeviceFeatures& pdf) {
+				pdf.independentBlend  = VK_TRUE;	// request independent blending
+				pdf.multiDrawIndirect = VK_TRUE;	// request support for multiple draw indirect
+			} 
 		);
 	}
 	catch (gvk::logic_error&) {}
