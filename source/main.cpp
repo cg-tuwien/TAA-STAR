@@ -149,6 +149,11 @@ class wookiee : public gvk::invokee
 		bool hasTransparency; // ac
 	};
 
+	// push constants for DrawIndexedIndirect
+	struct push_constant_data_for_dii {
+		int mDrawIdOffset;
+	};
+
 	struct MeshgroupPerInstanceData {
 		glm::mat4 modelMatrix;
 	};
@@ -681,6 +686,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				// walk the individual meshes (actually these correspond to "mesh groups", referring to the same meshId) in the same-material-group
 				for (auto& modelRefMeshIndicesPair : modelRefAndMeshIndices) {
 					for (auto meshIndex : std::get<std::vector<size_t>>(modelRefMeshIndicesPair)) {
+						counter++;
+						std::cout << "Parsing scene " << counter << "\r"; std::cout.flush();
+
 						std::vector<size_t> tmpMeshIndexVector = { meshIndex };
 						std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> selection = { std::make_tuple(std::cref(modelData.mLoadedModel), tmpMeshIndexVector) };
 
@@ -716,6 +724,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						gvk::insert_into(mSceneData.mTangents,   tangents);
 						gvk::insert_into(mSceneData.mBitangents, bitangents);
 
+						if (mg.hasTransparency) mSceneData.mNumTransparentMeshgroups++; else mSceneData.mNumOpaqueMeshgroups++;
+
 						// collect all the instances of the meshgroup
 						auto in_instance_transforms = get_mesh_instance_transforms(modelData.mLoadedModel, static_cast<int>(meshIndex), glm::mat4(1));
 						// for each orca-instance of the loaded model, apply the instance transform and store the final transforms in the meshgroup
@@ -733,6 +743,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 			}
 		}
+		std::cout << std::endl;
+
+		// sort meshgroups by transparency (we want to render opaque objects first), and count opaque ones
+		std::sort(mSceneData.mMeshgroups.begin(), mSceneData.mMeshgroups.end(), [](Meshgroup a, Meshgroup b) { return static_cast<int>(a.hasTransparency) < static_cast<int>(b.hasTransparency); });
 
 		// create all the buffers - for details, see upload_materials_and_vertex_data_to_gpu()
 		size_t numMeshgroups = mSceneData.mMeshgroups.size();
@@ -749,6 +763,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
 		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {vk::BufferUsageFlagBits::eIndirectBuffer}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
 		
+		rdoc::labelBuffer(mSceneData.mIndexBuffer          ->handle(), "scene_IndexBuffer");
+		rdoc::labelBuffer(mSceneData.mPositionsBuffer      ->handle(), "scene_PositionsBuffer");
+		rdoc::labelBuffer(mSceneData.mTexCoordsBuffer      ->handle(), "scene_TexCoordsBuffer");
+		rdoc::labelBuffer(mSceneData.mNormalsBuffer        ->handle(), "scene_NormalsBuffer");
+		rdoc::labelBuffer(mSceneData.mTangentsBuffer       ->handle(), "scene_TangentsBuffer");
+		rdoc::labelBuffer(mSceneData.mBitangentsBuffer     ->handle(), "scene_BitangentsBuffer");
+		rdoc::labelBuffer(mSceneData.mMaterialIndexBuffer  ->handle(), "scene_MaterialIndexBuffer");
+		rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer->handle(), "scene_AttribBaseIndexBuffer");
+		rdoc::labelBuffer(mSceneData.mAttributesBuffer     ->handle(), "scene_AttributesBuffer");
+		rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   ->handle(), "scene_DrawCommandsBuffer");
+
 #else
 		// old:
 		for (const auto& pair : distinctMaterialsOrca) {
@@ -929,6 +954,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			avk::memory_usage::device, {},
 			avk::storage_buffer_meta::create_from_data(mMaterialData)
 		);
+		rdoc::labelBuffer(mMaterialBuffer->handle(), "mMaterialBuffer");
 
 		// ac: get the dir light source from the scene file
 		auto dirLights = scene->directional_lights();
@@ -1109,8 +1135,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//
 			// The following define additional data which we'll pass to the pipeline:
 			//   We'll pass two matrices to our vertex shader via push constants:
-			// TODO-DII: do we still need push constants at all? - maybe for movers, later
-#if !DRAW_INDEXED_INDIRECT
+#if DRAW_INDEXED_INDIRECT
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+#else
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
 #endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
@@ -1128,8 +1155,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
+#if DRAW_INDEXED_INDIRECT
+			"shaders/testing.vert",
+			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
+#else
 			"shaders/transform_and_pass_on.vert",
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
+#endif
 
 			//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
 			cfg::color_blending_config::enable_alpha_blending_for_attachment(0),
@@ -1149,17 +1181,31 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
 			//
+#if DRAW_INDEXED_INDIRECT
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+#else
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+#if DRAW_INDEXED_INDIRECT
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
 
 		// alternative pipeline - render transparency with simple alpha test only, no blending
 		mPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
+#if DRAW_INDEXED_INDIRECT
+			"shaders/testing.vert",
+			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
+#else
 			"shaders/transform_and_pass_on.vert",
 			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
+#endif
 
 			cfg::culling_mode::disabled,
 			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
@@ -1177,13 +1223,54 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
 							 //
+			// TODO-DII: do we still need push constants at all? - maybe for movers, later
+#if DRAW_INDEXED_INDIRECT
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+#else
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+#if DRAW_INDEXED_INDIRECT
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
 
+	}
+
+	// stuff that will eventually go into avk::command_buffer_t::draw_indexed_indirect later
+	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
+		// bind vertex buffers
+		cmd->handle().bindVertexBuffers(0,
+			{ mSceneData.mPositionsBuffer->handle(),
+			mSceneData.mTexCoordsBuffer->handle(),
+			mSceneData.mNormalsBuffer->handle(),
+			mSceneData.mTangentsBuffer->handle(),
+			mSceneData.mBitangentsBuffer->handle()
+			},
+			//{ ((void)mSceneData.mPositionsBuffer, vk::DeviceSize{0}), ... }	// ??
+			{ vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0} }
+		);
+		// bind index buffer
+		const auto& indexMeta = mSceneData.mIndexBuffer->template meta<avk::index_buffer_meta>();
+		vk::IndexType indexType;
+		switch (indexMeta.sizeof_one_element()) {
+			case sizeof(uint16_t): indexType = vk::IndexType::eUint16; break;
+				case sizeof(uint32_t): indexType = vk::IndexType::eUint32; break;
+				default: AVK_LOG_ERROR("The given size[" + std::to_string(indexMeta.sizeof_one_element()) + "] does not correspond to a valid vk::IndexType"); break;
+		}
+		cmd->handle().bindIndexBuffer(mSceneData.mIndexBuffer->handle(), 0u, indexType);
+
+		cmd->handle().drawIndexedIndirect(
+			mSceneData.mDrawCommandsBuffer->handle(),
+			vk::DeviceSize{ firstDraw * sizeof(VkDrawIndexedIndirectCommand) },
+			numDraws,
+			sizeof(VkDrawIndexedIndirectCommand)
+		);
 	}
 
 	// Record actual draw calls for all the drawcall-data that we have
@@ -1233,35 +1320,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
 #if DRAW_INDEXED_INDIRECT
-			// stuff that will probably go into avk::command_buffer_t::draw_indexed_indirect later
-			// bind vertex buffers
-			mModelsCommandBuffer[i]->handle().bindVertexBuffers(0,
-				{ mSceneData.mPositionsBuffer->handle(),
-				  mSceneData.mTexCoordsBuffer->handle(),
-				  mSceneData.mNormalsBuffer->handle(),
-				  mSceneData.mTangentsBuffer->handle(),
-				  mSceneData.mBitangentsBuffer->handle()
-				},
-				//{ ((void)mSceneData.mPositionsBuffer, vk::DeviceSize{0}), ... }	// ??
-				{ vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0}, vk::DeviceSize{0} }
-			);
-			// bind index buffer
-			const auto& indexMeta = mSceneData.mIndexBuffer->template meta<avk::index_buffer_meta>();
-			vk::IndexType indexType;
-			switch (indexMeta.sizeof_one_element()) {
-				case sizeof(uint16_t): indexType = vk::IndexType::eUint16; break;
-				case sizeof(uint32_t): indexType = vk::IndexType::eUint32; break;
-				default: AVK_LOG_ERROR("The given size[" + std::to_string(indexMeta.sizeof_one_element()) + "] does not correspond to a valid vk::IndexType"); break;
-			}
-			mModelsCommandBuffer[i]->handle().bindIndexBuffer(mSceneData.mIndexBuffer->handle(), 0u, indexType);
-
-			mModelsCommandBuffer[i]->handle().drawIndexedIndirect(
-				mSceneData.mDrawCommandsBuffer->handle(),
-				vk::DeviceSize{ 0 },
-				static_cast<uint32_t>(mSceneData.mMeshgroups.size()),
-				sizeof(VkDrawIndexedIndirectCommand)
-			);
-
+			push_constant_data_for_dii pushc_dii;
+			pushc_dii.mDrawIdOffset = 0;
+			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
+			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups);
 #else
 			// Record all the draw calls into this command buffer:
 			for (auto& drawCall : mDrawCalls) {
@@ -1297,8 +1359,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->next_subpass();
 
 #if FORWARD_RENDERING
-#if !DRAW_INDEXED_INDIRECT
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
+#if DRAW_INDEXED_INDIRECT
+			pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
+			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
+			draw_scene_indexed_indirect(mModelsCommandBuffer[i], mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
+#else
 			for (auto& drawCall : mDrawCalls) {
 				// render only transparent geometry
 				if (!drawCall.hasTransparency) continue;
@@ -1877,6 +1943,8 @@ private: // v== Member variables ==v
 
 		// the mesh groups
 		std::vector<Meshgroup> mMeshgroups;
+		uint32_t mNumOpaqueMeshgroups;
+		uint32_t mNumTransparentMeshgroups;
 	} mSceneData;
 };
 

@@ -18,6 +18,8 @@ layout (std430, set = 0, binding = 2) readonly buffer MaterialIndexBuffer   { ui
 layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { uint attrib_base[]; };			// per meshgroup
 layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
 
+layout(push_constant) uniform PushConstantsDII { int mDrawIdOffset; };
+
 // "mMatrices" uniform buffer containing camera matrices:
 // It is updated every frame.
 layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
@@ -27,7 +29,7 @@ layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 // ###### DATA PASSED ON ALONG THE PIPELINE ##############
 // Data from vert -> tesc or frag:
 layout (location = 0) out VertexData {
-	flat int drawID;		// gl_DrawID and
+	flat int drawID;		// gl_DrawID (already corrected by mDrawIdOffset) and
 	flat int instanceIndex;	// gl_InstanceIndex only exist in the vertex shader
 	vec3 positionOS;
 	vec3 positionVS;
@@ -41,7 +43,7 @@ layout (location = 0) out VertexData {
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
-	uint attribBase = attrib_base[gl_DrawID];
+	uint attribBase = attrib_base[gl_DrawID + mDrawIdOffset];
 	uint attribIndex = attribBase + gl_InstanceIndex;
 
 	mat4 mMatrix = attrib[attribIndex].modelMatrix;
@@ -57,7 +59,7 @@ void main()
 	vec3 tangentOS   = normalize(aTangent);
 	vec3 bitangentOS = normalize(aBitangent);
 
-	v_out.drawID      = gl_DrawID;
+	v_out.drawID      = gl_DrawID + mDrawIdOffset;
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;
 	v_out.texCoords   = aTexCoords;
