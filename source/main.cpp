@@ -15,8 +15,13 @@
 // use the gvk updater for shader hot reloading and window resizing ?
 #define USE_GVK_UPDATER 1
 
+// record (model) command buffer in render() instead of prerecording? (as workaround to allow shader hot reloading); note this is quite a bit slower (~ +2ms for Emerald Square)
+#define RECORD_CMDBUFFER_IN_RENDER 1
+
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
+
+	- strange "seam" in smooth sphere and soccer ball -> check if that is the model or some other problem!
 
 	- moving objs with more than one mesh/material
 
@@ -1136,10 +1141,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 	}
 
+#if !RECORD_CMDBUFFER_IN_RENDER
 	// Record actual draw calls for all the drawcall-data that we have
 	// gathered in load_and_prepare_scene() into a command buffer
-	void record_command_buffer_for_models(bool recordAllFramesInFlight = true, gvk::window::frame_id_t fifToRecord = 0)
-	{
+	void record_command_buffer_for_models() {
 		using namespace avk;
 		using namespace gvk;
 
@@ -1147,6 +1152,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		//auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
 		auto& commandPool = context().get_command_pool_for_resettable_command_buffers(*mQueue); // ac: we may need to re-record
 
+		auto fif = wnd->number_of_frames_in_flight();
+		for (decltype(fif) i=0; i < fif; ++i) {
+			if (!(mModelsCommandBuffer[i].has_value())) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+			record_single_command_buffer_for_models(mModelsCommandBuffer[i], i);
+		}
+	}
+#endif
+
+	void record_single_command_buffer_for_models(avk::command_buffer &commandBuffer, gvk::window::frame_id_t fif)
+	{
 #if FORWARD_RENDERING
 		const auto &firstPipe  = mPipelineFwdOpaque;
 		const auto &secondPipe = mUseAlphaBlending ? mPipelineFwdTransparent : mPipelineFwdTransparentNoBlend;
@@ -1155,89 +1170,86 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		const auto &secondPipe = mPipelineLightingPass;
 #endif
 
-		auto fif = wnd->number_of_frames_in_flight();
-		for (decltype(fif) i=0; i < fif; ++i) {
-			if (!recordAllFramesInFlight && i != fifToRecord) continue;
-			if (!(mModelsCommandBuffer[i].has_value())) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+		using namespace avk;
+		using namespace gvk;
 
-			mModelsCommandBuffer[i]->begin_recording();
-			rdoc::beginSection(mModelsCommandBuffer[i]->handle(), "Render models", i);
-			helpers::record_timing_interval_start(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
+		commandBuffer->begin_recording();
+		rdoc::beginSection(commandBuffer->handle(), "Render models", fif);
+		helpers::record_timing_interval_start(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
 
-			// Bind the descriptors for descriptor sets 0 and 1 before starting to render with a pipeline
-			mModelsCommandBuffer[i]->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
-				descriptor_binding(0, 0, mMaterialBuffer),
-				descriptor_binding(0, 1, mImageSamplers),
-				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
-				descriptor_binding(1, 1, mLightsourcesBuffer[i])
-			}));
+		// Bind the descriptors for descriptor sets 0 and 1 before starting to render with a pipeline
+		commandBuffer->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[fif])
+		}));
 
-			// Draw using our pipeline for the first pass (Initially this is the only
-			//   pass. After task 2 has been implemented, this is the G-Buffer pass):
-			mModelsCommandBuffer[i]->bind_pipeline(firstPipe);
-			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
+		// Draw using our pipeline for the first pass (Initially this is the only
+		//   pass. After task 2 has been implemented, this is the G-Buffer pass):
+		commandBuffer->bind_pipeline(firstPipe);
+		commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 
-			// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
-			push_constant_data_for_dii pushc_dii;
-			pushc_dii.mDrawIdOffset = 0;
-			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
+		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
+		push_constant_data_for_dii pushc_dii;
+		pushc_dii.mDrawIdOffset = 0;
+		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
 #if FORWARD_RENDERING
-			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups);
+		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups);
 #else
-			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups + mSceneData.mNumTransparentMeshgroups);
+		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + mSceneData.mNumTransparentMeshgroups);
 #endif
-			// draw moving object, if any
-			if (mMovingObject.enabled) {
-				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
-				mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
-				auto &drawCall = mDrawCalls[mMovingObject.moverId];
-				mModelsCommandBuffer[i]->draw_indexed(
-					*drawCall.mIndexBuffer,
-					*drawCall.mPositionsBuffer,
-					*drawCall.mTexCoordsBuffer,
-					*drawCall.mNormalsBuffer,
-					*drawCall.mTangentsBuffer,
-					*drawCall.mBitangentsBuffer
-				);
-			}
-
-			// Move on to next subpass, synchronizing all data to be written to memory,
-			// and to be made visible to the next subpass, which uses it as input.
-			mModelsCommandBuffer[i]->next_subpass();
-
-#if FORWARD_RENDERING
-			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
-			pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
-			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
-			draw_scene_indexed_indirect(mModelsCommandBuffer[i], mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
-#else
-			// TODO - is it necessary to rebind descriptors (pipes are compatible) ??
-			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
-			mModelsCommandBuffer[i]->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
-				descriptor_binding(0, 0, mMaterialBuffer),
-				descriptor_binding(0, 1, mImageSamplers),
-				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
-				descriptor_binding(1, 1, mLightsourcesBuffer[i]),
-				descriptor_binding(2, 0, mFramebuffer[i]->image_view_at(1)->as_input_attachment(), shader_type::fragment),
-				descriptor_binding(2, 1, mFramebuffer[i]->image_view_at(2)->as_input_attachment(), shader_type::fragment),
-				descriptor_binding(2, 2, mFramebuffer[i]->image_view_at(3)->as_input_attachment(), shader_type::fragment)
-			}));
-
-			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
-			mModelsCommandBuffer[i]->draw_indexed(quadIndices, quadVertices);
-#endif
-
-			helpers::record_timing_interval_end(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
-			mModelsCommandBuffer[i]->end_render_pass();
-			rdoc::endSection(mModelsCommandBuffer[i]->handle());
-			mModelsCommandBuffer[i]->end_recording();
+		// draw moving object, if any
+		if (mMovingObject.enabled) {
+			pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
+			commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
+			auto &drawCall = mDrawCalls[mMovingObject.moverId];
+			commandBuffer->draw_indexed(
+				*drawCall.mIndexBuffer,
+				*drawCall.mPositionsBuffer,
+				*drawCall.mTexCoordsBuffer,
+				*drawCall.mNormalsBuffer,
+				*drawCall.mTangentsBuffer,
+				*drawCall.mBitangentsBuffer
+			);
 		}
+
+		// Move on to next subpass, synchronizing all data to be written to memory,
+		// and to be made visible to the next subpass, which uses it as input.
+		commandBuffer->next_subpass();
+
+#if FORWARD_RENDERING
+		commandBuffer->bind_pipeline(secondPipe);
+		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
+		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
+		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
+#else
+		// TODO - is it necessary to rebind descriptors (pipes are compatible) ??
+		commandBuffer->bind_pipeline(secondPipe);
+		commandBuffer->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[fif]),
+			descriptor_binding(2, 0, mFramebuffer[fif]->image_view_at(1)->as_input_attachment(), shader_type::fragment),
+			descriptor_binding(2, 1, mFramebuffer[fif]->image_view_at(2)->as_input_attachment(), shader_type::fragment),
+			descriptor_binding(2, 2, mFramebuffer[fif]->image_view_at(3)->as_input_attachment(), shader_type::fragment)
+		}));
+
+		const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
+		commandBuffer->draw_indexed(quadIndices, quadVertices);
+#endif
+
+		helpers::record_timing_interval_end(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
+		commandBuffer->end_render_pass();
+		rdoc::endSection(commandBuffer->handle());
+		commandBuffer->end_recording();
 	}
 
 	void setup_ui_callback()
@@ -1482,7 +1494,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #else
 		prepare_deferred_shading_pipelines();
 #endif
+
+#if !RECORD_CMDBUFFER_IN_RENDER
 		record_command_buffer_for_models();
+#endif
 
 		// Add the camera to the composition (and let it handle the updates)
 		mQuakeCam.set_translation({ 0.0f, 1.0f, 0.0f });
@@ -1523,26 +1538,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if USE_GVK_UPDATER
 		mAntiAliasing.init_updater(mUpdater);
 
-		// TODO: this crashes for me, when the shader is changed!
+		// updating the pipelines crashes when using pre-recorded command buffers! (because pipeline is still in use)
+#if RECORD_CMDBUFFER_IN_RENDER
+
 #if FORWARD_RENDERING
-		//mPipelineFwdOpaque.enable_shared_ownership();
-		//mUpdater.on(gvk::shader_files_changed_event(mPipelineFwdOpaque)).update(mPipelineFwdOpaque);
-
-		// ->
-		// ERR:  Debug utils callback with Id[1534926743|VUID-VkSpecializationInfo-offset-00773] and Message[Validation Error: [ VUID-VkSpecializationInfo-offset-00773 ]
-		// Object 0: handle = 0x17d7c4b1950, type = VK_OBJECT_TYPE_DEVICE; | MessageID = 0x5b7d1f97 | Specialization entry 0 (for constant id 2133139768) references memory outside provided
-		// specialization data (bytes 381..388; 8 bytes provided).. The Vulkan spec states: The offset member of each element of pMapEntries must be less than dataSize (https://vulkan.lunarg.com/doc/view/1.2.148.0/windows/1.2-extensions/vkspec.html#VUID-VkSpecializationInfo-offset-00773)]
-		// (followed by the "Cannot call vkDestroyPipeline" error below)
+		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
 #else
-		//mPipelineFirstPass.enable_shared_ownership();
-		//mUpdater.on(gvk::shader_files_changed_event(mPipelineFirstPass)).update(mPipelineFirstPass);
-
-		// ->
-		// ERR:  Debug utils callback with Id[1809638909|VUID-vkDestroyPipeline-pipeline-00765] and Message[Validation Error: [ VUID-vkDestroyPipeline-pipeline-00765 ]
-		// Object 0: handle = 0x2cf9db88920, type = VK_OBJECT_TYPE_DEVICE; | MessageID = 0x6bdce5fd | Cannot call vkDestroyPipeline on VkPipeline 0x9280970000000092[] that is currently in use by a command buffer.
-		// The Vulkan spec states: All submitted commands that refer to pipeline must have completed execution (https://vulkan.lunarg.com/doc/view/1.2.148.0/windows/1.2-extensions/vkspec.html#VUID-vkDestroyPipeline-pipeline-00765)]
+		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFirstPass, &mPipelineLightingPass };
 #endif
 
+		for (auto ppipe : gfx_pipes) {
+			ppipe->enable_shared_ownership();
+			mUpdater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+		}
+#endif
 		gvk::current_composition()->add_element(mUpdater);
 #endif
 	}
@@ -1655,19 +1664,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
+#if !RECORD_CMDBUFFER_IN_RENDER
 		// re-record command buffers if necessary (this is only in response to gui selections)
 		if (mReRecordCommandBuffers) {
 			gvk::context().device().waitIdle(); // this is ok in THIS application, not generally though!
 			record_command_buffer_for_models();
-			mReRecordCommandBuffers = false;
 		}
-
-		// re-record for current fif only, always (need to squeeze dynamic objects into subpasses)
-		// WHY is command buffer for current fif still pending here?
-		//if (mModelsCommandBuffer[inFlightIndex].has_value()) {
-		//	// do something... wait for a fence?
-		//}
-		//record_command_buffer_for_models(false, inFlightIndex);
+#endif
+		mReRecordCommandBuffers = false;
 
 
 		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
@@ -1697,7 +1701,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+
+#if RECORD_CMDBUFFER_IN_RENDER
+		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
+		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
+		mQueue->submit(cmdbfr, std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+		mainWnd->handle_lifetime(std::move(cmdbfr));
+#else
 		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+#endif
 
 		// anti_asiasing::render() will be invoked after this
 	}
@@ -1745,7 +1758,9 @@ private: // v== Member variables ==v
 	avk::buffer mMaterialBuffer;
 	std::vector<avk::image_sampler> mImageSamplers;
 	std::vector<drawcall_data> mDrawCalls;
+#if !RECORD_CMDBUFFER_IN_RENDER
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
+#endif
 
 	// Different pipelines used for (deferred) shading:
 	avk::graphics_pipeline mPipelineFirstPass;
