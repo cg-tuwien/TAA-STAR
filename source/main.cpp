@@ -12,6 +12,8 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
+	- moving objs with more than one mesh/material
+
 	- when using deferred shading - any point in using a compute shader for the lighting pass ?
 
 	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
@@ -120,7 +122,7 @@ class wookiee : public gvk::invokee
 		std::array<gvk::lightsource_gpu_data, 128> mLightData;
 	};
 
-	// Constant data to be pushed per draw call that renders one or multiple meshes
+	// Constant data to be pushed per draw call that renders one or multiple meshes (not used with the DrawIndexedIndirect variant)
 	struct push_constant_data_per_drawcall {
 		glm::mat4 mModelMatrix;
 		int mMaterialIndex;
@@ -745,7 +747,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 		std::cout << std::endl;
 
-		// sort meshgroups by transparency (we want to render opaque objects first), and count opaque ones
+		// sort meshgroups by transparency (we want to render opaque objects first)
 		std::sort(mSceneData.mMeshgroups.begin(), mSceneData.mMeshgroups.end(), [](Meshgroup a, Meshgroup b) { return static_cast<int>(a.hasTransparency) < static_cast<int>(b.hasTransparency); });
 
 		// create all the buffers - for details, see upload_materials_and_vertex_data_to_gpu()
@@ -885,6 +887,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (counter > counterlimit && counterlimit > 0) break;
 		}
 		std::cout << std::endl;
+#endif		
 
 		// load and add moving objects
 		mMovingObjectFirstMatIdx = static_cast<int>(distinctMaterialConfigs.size());
@@ -934,7 +937,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			ref.mBitangents = std::move(bitangents);
 			ref.hasTransparency = false;
 		}
-#endif		
+		// --end moving objects
+
 
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
@@ -1021,8 +1025,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mAttribBaseIndexBuffer->fill(attribBaseData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mAttributesBuffer     ->fill(attributesData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mDrawCommandsBuffer   ->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+#endif
 
-#else
+		// upload data for other models
 		for (auto& dc : mDrawCalls) {
 			                                                       // Take care of the command buffer's lifetime, but do not establish a barrier before or after the command
 			dc.mIndexBuffer     ->fill(dc.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
@@ -1032,7 +1037,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			dc.mTangentsBuffer  ->fill(dc.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 			dc.mBitangentsBuffer->fill(dc.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		}
-#endif
 
 		// This is the last one of our TRANSFER commands. 
 		mMaterialBuffer->fill(mMaterialData.data(), 0, avk::sync::with_barriers(
@@ -1110,17 +1114,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-		const uint32_t specConstId_transparentPass = 1u; // corresponds to shader: layout(constant_id = 1) const uint transparentPass
+#if DRAW_INDEXED_INDIRECT
+		const char * vert_shader_name = "shaders/testing.vert";
+		const char * frag_shader_name = "shaders/testing.frag";
+#else
+		const char * vert_shader_name = "shaders/transform_and_pass_on.vert";
+		const char * frag_shader_name = "shaders/fwd_geometry.frag";
+#endif
 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
-#if DRAW_INDEXED_INDIRECT
-			"shaders/testing.vert",
-			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
-#else
-			"shaders/transform_and_pass_on.vert",
-			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 0 }), // 0 = opaque pass
-#endif
+			vert_shader_name,
+			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
 																																  // The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
@@ -1155,13 +1160,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
-#if DRAW_INDEXED_INDIRECT
-			"shaders/testing.vert",
-			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
-#else
-			"shaders/transform_and_pass_on.vert",
-			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
-#endif
+			vert_shader_name,
+			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
 			//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
 			cfg::color_blending_config::enable_alpha_blending_for_attachment(0),
@@ -1199,13 +1199,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// alternative pipeline - render transparency with simple alpha test only, no blending
 		mPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
-#if DRAW_INDEXED_INDIRECT
-			"shaders/testing.vert",
-			fragment_shader("shaders/testing.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
-#else
-			"shaders/transform_and_pass_on.vert",
-			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(specConstId_transparentPass, uint32_t{ 1 }), // 1 = transparent pass
-#endif
+			vert_shader_name,
+			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
 			cfg::culling_mode::disabled,
 			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
@@ -1275,7 +1270,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	// Record actual draw calls for all the drawcall-data that we have
 	// gathered in load_and_prepare_scene() into a command buffer
-	void record_command_buffer_for_models()
+	void record_command_buffer_for_models(bool recordAllFramesInFlight = true, gvk::window::frame_id_t fifToRecord = 0)
 	{
 		using namespace avk;
 		using namespace gvk;
@@ -1283,8 +1278,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto* wnd = gvk::context().main_window();
 		//auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
 		auto& commandPool = context().get_command_pool_for_resettable_command_buffers(*mQueue); // ac: we may need to re-record
-
-		mAlphaBlendingActive = mUseAlphaBlending;
 
 #if FORWARD_RENDERING
 		const auto &firstPipe  = mPipelineFwdOpaque;
@@ -1296,7 +1289,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			if (!mDidAllocCommandBuffers) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+			if (!recordAllFramesInFlight && i != fifToRecord) continue;
+			if (!(mModelsCommandBuffer[i].has_value())) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+
 			mModelsCommandBuffer[i]->begin_recording();
 			rdoc::beginSection(mModelsCommandBuffer[i]->handle(), "Render models", i);
 			helpers::record_timing_interval_start(mModelsCommandBuffer[i]->handle(), fmt::format("mModelsCommandBuffer{} time", i));
@@ -1320,10 +1315,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
 #if DRAW_INDEXED_INDIRECT
+			// draw the opaque parts of the scene
 			push_constant_data_for_dii pushc_dii;
 			pushc_dii.mDrawIdOffset = 0;
 			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
 			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups);
+
+			// draw moving object, if any
+			if (mMovingObject.enabled) {
+				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
+				mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
+				auto &drawCall = mDrawCalls[mMovingObject.moverId];
+				mModelsCommandBuffer[i]->draw_indexed(
+					*drawCall.mIndexBuffer,
+					*drawCall.mPositionsBuffer,
+					*drawCall.mTexCoordsBuffer,
+					*drawCall.mNormalsBuffer,
+					*drawCall.mTangentsBuffer,
+					*drawCall.mBitangentsBuffer
+				);
+			}
 #else
 			// Record all the draw calls into this command buffer:
 			for (auto& drawCall : mDrawCalls) {
@@ -1405,8 +1416,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::endSection(mModelsCommandBuffer[i]->handle());
 			mModelsCommandBuffer[i]->end_recording();
 		}
-
-		mDidAllocCommandBuffers = true;
 	}
 
 	void setup_ui_callback()
@@ -1505,7 +1514,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
-				Checkbox("alpha blending", &mUseAlphaBlending); HelpMarker("When disabled, simple alpha-testing is used.");
+				if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
+				HelpMarker("When disabled, simple alpha-testing is used.");
 				PushItemWidth(60);
 				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
 				PopItemWidth();
@@ -1551,6 +1561,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 				}
 				if (CollapsingHeader("Moving object")) {
+					bool old_enabled = mMovingObject.enabled;
+					int  old_moverId = mMovingObject.moverId;
 					PushID("Movers");
 					Checkbox("enable", &mMovingObject.enabled);
 					struct FuncHolder {
@@ -1589,6 +1601,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("cont rot", &mMovingObject.rotContinous);
 					if (Button("reset")) mMovingObject.t = 0.f;
 					PopID();
+
+					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
 				}
 				if (CollapsingHeader("Debug")) {
 					if (rdoc::active()) {
@@ -1783,11 +1797,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
-		// re-record command buffers if necessary
-		if (mUseAlphaBlending != mAlphaBlendingActive) {
-			gvk::context().device().waitIdle();
+		// re-record command buffers if necessary (this is only in response to gui selections)
+		if (mReRecordCommandBuffers) {
+			gvk::context().device().waitIdle(); // this is ok in THIS application, not generally though!
 			record_command_buffer_for_models();
+			mReRecordCommandBuffers = false;
 		}
+
+		// re-record for current fif only, always (need to squeeze dynamic objects into subpasses)
+		// WHY is command buffer for current fif still pending here?
+		//if (mModelsCommandBuffer[inFlightIndex].has_value()) {
+		//	// do something... wait for a fence?
+		//}
+		//record_command_buffer_for_models(false, inFlightIndex);
+
 
 		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
 	}
@@ -1883,8 +1906,6 @@ private: // v== Member variables ==v
 	struct { glm::vec3 col; float boost; } mAmbLight = { {1.f, 1.f, 1.f}, 0.1f };
 
 	float mAlphaThreshold = 0.5f; // 0.001f; // alpha threshold for rendering transparent parts (0.5 ok for alpha-testing, 0.001 for alpha-blending)
-	bool mAlphaBlendingActive;
-	bool mDidAllocCommandBuffers = false;
 	float mLodBias;
 	bool mLoadBiasTaaOnly = true;
 
@@ -1895,6 +1916,8 @@ private: // v== Member variables ==v
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
 
 	int mMovingObjectFirstMatIdx = -1;
+
+	bool mReRecordCommandBuffers = false;
 
 	struct {
 		bool      enabled = 0;

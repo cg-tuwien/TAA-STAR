@@ -4,6 +4,13 @@
 // is the output from taa.comp already converted to sRGB-values?
 #define TAA_OUTPUT_IS_SRGB	0
 
+// specialization constants
+#define SPECCONST_ID_TRANSPARENCY	    1u
+#define SPECCONST_VAL_OPAQUE			0u
+#define SPECCONST_VAL_TRANSPARENT		1u
+
+// don't have transparent movers (yet)
+
 #if TAA_OUTPUT_IS_SRGB
 
 // ye olde way
