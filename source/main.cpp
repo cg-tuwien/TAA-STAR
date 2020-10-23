@@ -86,7 +86,7 @@
 	TODO once it works, test with scenes with multiple orca-models, multiple orca-instances
 */
 
-#define FORWARD_RENDERING 1
+#define FORWARD_RENDERING 0
 
 class wookiee : public gvk::invokee
 {
@@ -959,9 +959,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//
 			// The following define additional data which we'll pass to the pipeline:
 			//   We'll pass two matrices to our vertex shader via push constants:
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -982,11 +985,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// between the two different pipelines for push constants and descriptor sets 0 and 1, we can re-use
 			// the descriptors across the pipelines and do not have to bind them again for each pipeline.
 			// (see record_command_buffer_for_models() when drawing with the mPipelineLightingPass pipeline)
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) },
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			// Further bindings which contribute to the pipeline layout:
 			//   Descriptor sets 0 and 1 are exactly the same as in mPipelineFirstPass
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
 			descriptor_binding(2, 0, mFramebuffer[0]->image_view_at(1)->as_input_attachment(), shader_type::fragment),
@@ -1175,12 +1181,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->bind_pipeline(firstPipe);
 			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
-			// draw the opaque parts of the scene
+			// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
 			push_constant_data_for_dii pushc_dii;
 			pushc_dii.mDrawIdOffset = 0;
 			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
+#if FORWARD_RENDERING
 			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups);
-
+#else
+			draw_scene_indexed_indirect(mModelsCommandBuffer[i], 0, mSceneData.mNumOpaqueMeshgroups + mSceneData.mNumTransparentMeshgroups);
+#endif
 			// draw moving object, if any
 			if (mMovingObject.enabled) {
 				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
@@ -1206,10 +1215,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
 			draw_scene_indexed_indirect(mModelsCommandBuffer[i], mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
 #else
+			// TODO - is it necessary to rebind descriptors (pipes are compatible) ??
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
 			mModelsCommandBuffer[i]->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
+				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
 				descriptor_binding(1, 1, mLightsourcesBuffer[i]),
 				descriptor_binding(2, 0, mFramebuffer[i]->image_view_at(1)->as_input_attachment(), shader_type::fragment),

@@ -233,7 +233,7 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 
 // -------------------------------------------------------
 
-// ###### VERTEX SHADER MAIN #############################
+// ###### FRAGMENT SHADER MAIN #############################
 void main()
 {
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);

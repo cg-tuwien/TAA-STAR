@@ -18,10 +18,7 @@ layout(set = 0, binding = 1) uniform sampler2D textures[];
 // -------------------------------------------------------
 
 // ###### PIPELINE INPUT DATA ############################
-layout(push_constant) uniform PushConstants {
-	mat4 mModelMatrix;
-	int mMaterialIndex;
-} pushConstants;
+
 // "mMatrices" uniform buffer containing camera matrices:
 // It is updated every frame.
 layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
