@@ -33,3 +33,4 @@ taa.vcxproj.user
 
 # Other files to ignore
 notes.txt
+extras/TestScene/*.blend1

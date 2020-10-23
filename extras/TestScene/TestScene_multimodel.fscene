@@ -1,0 +1,98 @@
+{
+    "version": 2,
+    "camera_speed": 1.0,
+    "lighting_scale": 1.0,
+    "active_camera": "Camera0",
+    "models": [
+        {
+            "file": "TestScene.fbx",
+            "name": "TestScene",
+            "instances": [
+                {
+                    "name": "TestScene_inst0",
+                    "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "scaling": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                }
+            ]
+        },
+        {
+            "file": "TestScene2.fbx",
+            "name": "TestScene2",
+            "instances": [
+                {
+                    "name": "TestScene2_inst0",
+                    "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "scaling": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                }
+            ]
+        }
+    ],
+    "lights": [
+        {
+            "name": "SunLight",
+            "type": "dir_light",
+            "intensity": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "direction": [
+                -0.33333333333333333,
+                -0.66666666666666666,
+                -0.33333333333333333
+            ]
+        }
+    ],
+    "cameras": [
+        {
+            "name": "Camera0",
+            "pos": [
+                0.01715730130672455,
+                3.184415578842163,
+                71.125
+            ],
+            "target": [
+                0.008677838370203972,
+                3.20275616645813,
+                70.12520599365235
+            ],
+            "up": [
+                0.002032371936365962,
+                0.999836266040802,
+                0.01836729794740677
+            ],
+            "focal_length": 21.0,
+            "depth_range": [
+                0.10000000149011612,
+                10000.0
+            ],
+            "aspect_ratio": 1.0
+        }
+    ]
+}

@@ -9,6 +9,9 @@
 
 #include <string>
 
+// use forward rendering? (if 0: use deferred shading)
+#define FORWARD_RENDERING 1
+
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -35,7 +38,7 @@
 
 
 /*
-	DrawIndexedIndirect plan:
+	DrawIndexedIndirect scheme:
 
 	create one big vertex and index buffer (for scenery only? - tbd) [and matching buffers for other vertex-attributes: texCoord,normals,tangents,bitangents]
 
@@ -78,15 +81,8 @@
 		modelMatrix = in_perInstanceAttributes_modelmatrix
 
 
-	sponza: add some artificial modelmatrices to test (temporary only)
-	add opaque meshgroups first, remember index of first transparent one
-
-	implement for non-blending, forward rendering first, then add movers, only finally fix other rendering variants; mark todos with TODO-DII
-
-	TODO once it works, test with scenes with multiple orca-models, multiple orca-instances
+	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
-
-#define FORWARD_RENDERING 0
 
 class wookiee : public gvk::invokee
 {
