@@ -18,6 +18,9 @@
 // record (model) command buffer in render() instead of prerecording? (as workaround to allow shader hot reloading); note this is quite a bit slower (~ +2ms for Emerald Square)
 #define RECORD_CMDBUFFER_IN_RENDER 1
 
+// test new avk::command_buffer_t::draw_indexed_indirect() - this is not yet merged to master, set to 0 if compile fails
+#define TEST_AVK_DII 1
+
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -767,7 +770,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mMaterialIndexBuffer   = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
 		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
 		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
+#if TEST_AVK_DII
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
+		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, sizeof(VkDrawIndexedIndirectCommand)));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, 13)); // ok, warns
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, 24));
+		//std::vector<vk::DrawIndexedIndirectCommand> testvec(numMeshgroups);
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_data(testvec));
+		{
+			auto bufsize = mSceneData.mDrawCommandsBuffer->config().size;
+			auto quot = bufsize / sizeof(VkDrawIndexedIndirectCommand);
+			auto remd = bufsize % sizeof(VkDrawIndexedIndirectCommand);
+			printf("***** TEST_AVK_DII: Created buffer has %lld bytes, this is %lld * sizeof(VkDrawIndexedIndirectCommand) + %lld\n", bufsize, quot, remd);
+		}
+#else
 		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {vk::BufferUsageFlagBits::eIndirectBuffer}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
+#endif
 		
 		rdoc::labelBuffer(mSceneData.mIndexBuffer          ->handle(), "scene_IndexBuffer");
 		rdoc::labelBuffer(mSceneData.mPositionsBuffer      ->handle(), "scene_PositionsBuffer");
@@ -1112,6 +1131,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	// stuff that will eventually go into avk::command_buffer_t::draw_indexed_indirect later
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
+#if TEST_AVK_DII
+		cmd->draw_indexed_indirect(
+			*mSceneData.mDrawCommandsBuffer,
+			*mSceneData.mIndexBuffer,
+			numDraws,
+			vk::DeviceSize{ firstDraw * sizeof(VkDrawIndexedIndirectCommand) },
+			static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)),	// cast is critical, won't compile without; draw_indexed suffers from the same problem btw.
+			*mSceneData.mPositionsBuffer,
+			*mSceneData.mTexCoordsBuffer,
+			*mSceneData.mNormalsBuffer,
+			*mSceneData.mTangentsBuffer,
+			*mSceneData.mBitangentsBuffer
+		);
+#else
 		// bind vertex buffers
 		cmd->handle().bindVertexBuffers(0,
 			{ mSceneData.mPositionsBuffer->handle(),
@@ -1128,8 +1161,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		vk::IndexType indexType;
 		switch (indexMeta.sizeof_one_element()) {
 			case sizeof(uint16_t): indexType = vk::IndexType::eUint16; break;
-				case sizeof(uint32_t): indexType = vk::IndexType::eUint32; break;
-				default: AVK_LOG_ERROR("The given size[" + std::to_string(indexMeta.sizeof_one_element()) + "] does not correspond to a valid vk::IndexType"); break;
+			case sizeof(uint32_t): indexType = vk::IndexType::eUint32; break;
+			default: AVK_LOG_ERROR("The given size[" + std::to_string(indexMeta.sizeof_one_element()) + "] does not correspond to a valid vk::IndexType"); break;
 		}
 		cmd->handle().bindIndexBuffer(mSceneData.mIndexBuffer->handle(), 0u, indexType);
 
@@ -1139,6 +1172,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			numDraws,
 			sizeof(VkDrawIndexedIndirectCommand)
 		);
+#endif
 	}
 
 #if !RECORD_CMDBUFFER_IN_RENDER
