@@ -33,6 +33,7 @@
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
+
 /*
 	DrawIndexedIndirect plan:
 
@@ -668,7 +669,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto distinctMaterialsOrca = scene->distinct_material_configs_for_all_models();
 		std::vector<gvk::material_config> distinctMaterialConfigs;
 
-#if DRAW_INDEXED_INDIRECT
 		// for cache efficiency, we want to render meshgroups using the same material in sequence, so: walk the materials, find matching meshes, build meshgroup
 		for (const auto& pair : distinctMaterialsOrca) {
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
@@ -776,119 +776,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		rdoc::labelBuffer(mSceneData.mAttributesBuffer     ->handle(), "scene_AttributesBuffer");
 		rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   ->handle(), "scene_DrawCommandsBuffer");
 
-#else
-		// old:
-		for (const auto& pair : distinctMaterialsOrca) {
-			// Also gather the material configs along the way since we'll need to transfer them to the GPU as well
-			// (which we will do right after this for loop that gathers the draw call data).
-			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
-			distinctMaterialConfigs.push_back(pair.first);
-			assert (static_cast<size_t>(materialIndex + 1) == distinctMaterialConfigs.size());
-
-			bool materialHasTransparency = has_material_transparency(pair.first);
-
-			for (const auto& modelAndMeshIndices : pair.second) {
-				// Gather the model reference and the mesh indices of the same material in a vector:
-				auto& modelData = scene->model_at_index(modelAndMeshIndices.mModelIndex);
-				std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> modelRefAndMeshIndices = { std::make_tuple(std::cref(modelData.mLoadedModel), modelAndMeshIndices.mMeshIndices) };
-				helpers::exclude_a_curtain(modelRefAndMeshIndices);
-				if (modelRefAndMeshIndices.empty()) {
-					continue;
-				}
-
-				//// Create a draw call for all those gathered meshes, once per ORCA-instance:
-				//for (size_t i = 0; i < modelData.mInstances.size(); ++i) {
-				//	auto [vertices, indices] = gvk::get_vertices_and_indices(modelRefAndMeshIndices);
-				//	auto texCoords = gvk::get_2d_texture_coordinates(modelRefAndMeshIndices, 0);
-				//	auto normals = gvk::get_normals(modelRefAndMeshIndices);
-				//	auto tangents = gvk::get_tangents(modelRefAndMeshIndices);
-				//	auto bitangents = gvk::get_bitangents(modelRefAndMeshIndices);
-				//	auto& ref = mDrawCalls.emplace_back(drawcall_data {
-				//		// Create all the GPU buffers, but don't fill yet:
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
-				//		gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
-				//		push_constant_data_per_drawcall {
-				//			gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling),
-				//			materialIndex // Assign material at the given index to this draw call
-				//		}
-				//	});
-				//	ref.mIndices = std::move(indices);
-				//	ref.mPositions = std::move(vertices);
-				//	ref.mTexCoords = std::move(texCoords);
-				//	ref.mNormals = std::move(normals);
-				//	ref.mTangents = std::move(tangents);
-				//	ref.mBitangents = std::move(bitangents);
-				//}
-
-				// Create a draw call for all those gathered meshes, once per ORCA-instance:
-				// ac: scene graph fix, quick & dirty for now
-				// - use one drawcall per mesh (or more drawcalls if the mesh appears in multiple nodes); don't combine meshes
-				// TODO: combine meshes that are unique
-				// TODO: use instanced drawing?
-				for (size_t i = 0; i < modelData.mInstances.size(); ++i) {
-					for (auto& pair : modelRefAndMeshIndices) {
-						for (auto meshIndex : std::get<std::vector<size_t>>(pair)) {
-
-							counter++;
-							std::cout << "Parsing scene " << counter << "\r"; std::cout.flush();
-
-							std::vector<size_t> tmpMeshIndexVector = { meshIndex };
-							std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> singleMesh_modelRefAndMeshIndices = { std::make_tuple(std::cref(modelData.mLoadedModel), tmpMeshIndexVector) };
-
-							// get all the common (per-mesh) properties
-							auto [vertices, indices] = gvk::get_vertices_and_indices(singleMesh_modelRefAndMeshIndices);
-							auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(singleMesh_modelRefAndMeshIndices, 0)
-														   : gvk::get_2d_texture_coordinates        (singleMesh_modelRefAndMeshIndices, 0);
-							auto normals = gvk::get_normals(singleMesh_modelRefAndMeshIndices);
-							auto tangents = gvk::get_tangents(singleMesh_modelRefAndMeshIndices);
-							auto bitangents = gvk::get_bitangents(singleMesh_modelRefAndMeshIndices);
-
-							// flippedy-flip
-							//if (mFlipManually) {
-							//	for (auto &c : texCoords)	c.y = 1.0f - c.y;
-
-							//}
-
-							// collect all the instances of the mesh (it may appear in multiple nodes, thus using different transforms)
-							auto modelBaseTransform = gvk::matrix_from_transforms(modelData.mInstances[i].mTranslation, glm::quat(modelData.mInstances[i].mRotation), modelData.mInstances[i].mScaling);
-							auto transforms = get_mesh_instance_transforms(modelData.mLoadedModel, static_cast<int>(meshIndex), modelBaseTransform);
-							//std::cout << "Mesh " << meshIndex << ": " << transforms.size() << " transforms" << std::endl;
-
-							// build push constants (per mesh-instance) vector
-							std::vector<push_constant_data_per_drawcall> pcvec;
-							for (auto tform : transforms) pcvec.push_back(push_constant_data_per_drawcall{ tform, materialIndex });
-
-							auto& ref = mDrawCalls.emplace_back(drawcall_data{
-								// Create all the GPU buffers, but don't fill yet:
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
-								gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
-								pcvec
-								});
-							ref.mIndices = std::move(indices);
-							ref.mPositions = std::move(vertices);
-							ref.mTexCoords = std::move(texCoords);
-							ref.mNormals = std::move(normals);
-							ref.mTangents = std::move(tangents);
-							ref.mBitangents = std::move(bitangents);
-
-							ref.hasTransparency = materialHasTransparency;
-						}
-					}
-				}
-			}
-			if (counter > counterlimit && counterlimit > 0) break;
-		}
-		std::cout << std::endl;
-#endif		
-
 		// load and add moving objects
 		mMovingObjectFirstMatIdx = static_cast<int>(distinctMaterialConfigs.size());
 		for (size_t iMover = 0; iMover < mMovingObjectDefs.size(); iMover++)
@@ -994,7 +881,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// All of the following are submitted to the same queue (due to cgb::device_queue_selection_strategy::prefer_everything_on_single_queue)
 		// That also means that this is the same queue which is used for graphics rendering.
 		// Furthermore, this means that it is sufficient to establish a memory barrier after the last call to cgb::fill. 
-#if DRAW_INDEXED_INDIRECT
+
 		mSceneData.mIndexBuffer     ->fill(mSceneData.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mPositionsBuffer ->fill(mSceneData.mPositions.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mTexCoordsBuffer ->fill(mSceneData.mTexCoords.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
@@ -1025,7 +912,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mAttribBaseIndexBuffer->fill(attribBaseData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mAttributesBuffer     ->fill(attributesData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mDrawCommandsBuffer   ->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-#endif
 
 		// upload data for other models
 		for (auto& dc : mDrawCalls) {
@@ -1114,13 +1000,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-#if DRAW_INDEXED_INDIRECT
-		const char * vert_shader_name = "shaders/testing.vert";
-		const char * frag_shader_name = "shaders/testing.frag";
-#else
 		const char * vert_shader_name = "shaders/transform_and_pass_on.vert";
 		const char * frag_shader_name = "shaders/fwd_geometry.frag";
-#endif
 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
@@ -1140,18 +1021,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//
 			// The following define additional data which we'll pass to the pipeline:
 			//   We'll pass two matrices to our vertex shader via push constants:
-#if DRAW_INDEXED_INDIRECT
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-#else
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
-#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-#if DRAW_INDEXED_INDIRECT
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1181,18 +1056,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
 			//
-#if DRAW_INDEXED_INDIRECT
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-#else
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
-#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-#if DRAW_INDEXED_INDIRECT
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1219,18 +1088,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
 							 //
 			// TODO-DII: do we still need push constants at all? - maybe for movers, later
-#if DRAW_INDEXED_INDIRECT
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-#else
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_per_drawcall) }, // We also have to declare that we're going to submit push constants
-#endif
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-#if DRAW_INDEXED_INDIRECT
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-#endif
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1300,11 +1163,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
-#if DRAW_INDEXED_INDIRECT
 				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-#endif
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[i]),
 				descriptor_binding(1, 1, mLightsourcesBuffer[i])
 			}));
@@ -1314,7 +1175,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mModelsCommandBuffer[i]->bind_pipeline(firstPipe);
 			mModelsCommandBuffer[i]->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[i]);
 
-#if DRAW_INDEXED_INDIRECT
 			// draw the opaque parts of the scene
 			push_constant_data_for_dii pushc_dii;
 			pushc_dii.mDrawIdOffset = 0;
@@ -1335,35 +1195,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					*drawCall.mBitangentsBuffer
 				);
 			}
-#else
-			// Record all the draw calls into this command buffer:
-			for (auto& drawCall : mDrawCalls) {
-				// In forward rendering, only render opaque geometry in the first pass
-#if FORWARD_RENDERING
-				if (drawCall.hasTransparency) continue;
-#endif
-				// Issue a separate drawcall for each transform stored in drawCall.mPushConstantsVector ; ac: TODO: make that an instanced draw ?
-				for (auto pushc : drawCall.mPushConstantsVector) {
-
-					// Set model/material-specific data for this draw call in the form of push constants:
-					mModelsCommandBuffer[i]->push_constants(
-						firstPipe->layout(),	// Push constants must match the pipeline's layout
-						pushc					// Push the actual data
-					);
-
-					// Bind the vertex input buffers in the right order (corresponding to the layout
-					// specifiers in the vertex shader) and issue the actual draw call:
-					mModelsCommandBuffer[i]->draw_indexed(
-						*drawCall.mIndexBuffer,
-						*drawCall.mPositionsBuffer,
-						*drawCall.mTexCoordsBuffer,
-						*drawCall.mNormalsBuffer,
-						*drawCall.mTangentsBuffer,
-						*drawCall.mBitangentsBuffer
-					);
-				}
-			}
-#endif
 
 			// Move on to next subpass, synchronizing all data to be written to memory,
 			// and to be made visible to the next subpass, which uses it as input.
@@ -1371,30 +1202,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if FORWARD_RENDERING
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
-#if DRAW_INDEXED_INDIRECT
 			pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 			mModelsCommandBuffer[i]->push_constants(firstPipe->layout(), pushc_dii);
 			draw_scene_indexed_indirect(mModelsCommandBuffer[i], mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
-#else
-			for (auto& drawCall : mDrawCalls) {
-				// render only transparent geometry
-				if (!drawCall.hasTransparency) continue;
-				for (auto pushc : drawCall.mPushConstantsVector) {
-					mModelsCommandBuffer[i]->push_constants(
-						firstPipe->layout(),	// Push constants must match the pipeline's layout
-						pushc					// Push the actual data
-					);
-					mModelsCommandBuffer[i]->draw_indexed(
-						*drawCall.mIndexBuffer,
-						*drawCall.mPositionsBuffer,
-						*drawCall.mTexCoordsBuffer,
-						*drawCall.mNormalsBuffer,
-						*drawCall.mTangentsBuffer,
-						*drawCall.mBitangentsBuffer
-					);
-				}
-			}
-#endif
 #else
 			mModelsCommandBuffer[i]->bind_pipeline(secondPipe);
 			mModelsCommandBuffer[i]->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 

@@ -5,9 +5,10 @@
 // -------------------------------------------------------
 
 #include "shader_common_main.glsl"
+#include "shader_cpu_common.h"
 
 // ac: specialization constant to differentiate between opaque pass (0) and transparent pass (1)
-layout(constant_id = 1) const uint transparentPass = 0;
+layout(constant_id = SPECCONST_ID_TRANSPARENCY) const uint transparentPass = SPECCONST_VAL_OPAQUE;
 
 
 // ac: disable this, otherwise discarded fragments write to depth buffer!
@@ -26,15 +27,12 @@ layout(set = 0, binding = 0) BUFFERDEF_Material materialsBuffer;
 // These samplers are referenced from materials by
 // index, namely by all those m*TexIndex members.
 layout(set = 0, binding = 1) uniform sampler2D textures[];
+
+// set 0, binding 2-4 used in vertex shader
+
 // -------------------------------------------------------
 
 // ###### PIPELINE INPUT DATA ############################
-// Unique push constants per draw call (You can think of
-// these like single uniforms in OpenGL):
-layout(push_constant) uniform PushConstants {
-	mat4 mModelMatrix;
-	int mMaterialIndex;
-} pushConstants;
 
 // Uniform buffer containing camera matrices and user input:
 // It is updated every frame.
@@ -56,6 +54,10 @@ layout (location = 0) in VertexData
 	vec3 bitangentOS; // interpolated vertex bitangent in object-space
 	vec4 positionCS;		// TODO: don't really need this! can calc from gl_FragCoord
 	vec4 positionCS_prev;	// position in previous frame
+
+	flat uint materialIndex;
+	flat mat4 modelMatrix;
+	flat int movingObjectId;
 } fs_in;
 // -------------------------------------------------------
 
@@ -69,7 +71,7 @@ layout (location = 2) out vec4 oFragVelocity;
 
 vec4 sample_from_normals_texture()
 {
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
@@ -80,7 +82,7 @@ vec4 sample_from_normals_texture()
 
 vec4 sample_from_diffuse_texture()
 {
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
@@ -89,7 +91,7 @@ vec4 sample_from_diffuse_texture()
 
 vec4 sample_from_specular_texture()
 {
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 	int texIndex = materialsBuffer.materials[matIndex].mSpecularTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mSpecularTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
@@ -98,7 +100,7 @@ vec4 sample_from_specular_texture()
 
 vec4 sample_from_emissive_texture()
 {
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 	int texIndex = materialsBuffer.materials[matIndex].mEmissiveTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mEmissiveTexOffsetTiling;
 	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
@@ -116,7 +118,7 @@ vec3 re_orthogonalize(vec3 first, vec3 second)
 // normal from the normal map and transforming it with the TBN-matrix.
 vec3 calc_normalized_normalVS(vec3 sampledNormal)
 {
-	mat4 vmMatrix = uboMatUsr.mViewMatrix * EFFECTIVE_MODELMATRIX;
+	mat4 vmMatrix = uboMatUsr.mViewMatrix * fs_in.modelMatrix;
 	mat3 vmNormalMatrix = mat3(inverse(transpose(vmMatrix)));
 
 	// build the TBN matrix from the varyings
@@ -129,7 +131,7 @@ vec3 calc_normalized_normalVS(vec3 sampledNormal)
 	// sample the normal from the normal map and bring it into view space
 	vec3 normalSample = normalize(sampledNormal * 2.0 - 1.0);
 
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 	float normalMappingStrengthFactor = 1.0f - materialsBuffer.materials[matIndex].mCustomData[2];
 
 	float userDefinedDisplacementStrength = uboMatUsr.mUserInput[1];
@@ -234,23 +236,21 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
-	if (IS_INACTIVE_MOVING_OBJECT) { discard; return; }
-
 	vec3 normalVS = calc_normalized_normalVS(sample_from_normals_texture().rgb);
 	vec3 positionVS = fs_in.positionVS;
-	int matIndex = pushConstants.mMaterialIndex;
+	uint matIndex = fs_in.materialIndex;
 
 	vec4  diffTexColorRGBA = sample_from_diffuse_texture().rgba;
 	float specTexValue     = sample_from_specular_texture().r;
 	vec3  emissiveTexColor = sample_from_emissive_texture().rgb;
 
-	float alpha = (transparentPass == 1) ? diffTexColorRGBA.a : 1.0;
+	float alpha = (transparentPass == SPECCONST_VAL_TRANSPARENT) ? diffTexColorRGBA.a : 1.0;
 
 	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write, even when using alpha-blending
-	if (transparentPass == 1 && alpha < uboMatUsr.mUserInput.w) { discard; return; }
+	if (transparentPass == SPECCONST_VAL_TRANSPARENT && alpha < uboMatUsr.mUserInput.w) { discard; return; }
 
 	// write material // TODO: better flag specific/problematic materials that require different TAA handling
-	oFragMatId = pushConstants.mMaterialIndex;
+	oFragMatId = fs_in.materialIndex;
 
 	// calculate and write velocity
 	vec3 positionNDC      = fs_in.positionCS.xyz      / fs_in.positionCS.w;
@@ -259,7 +259,7 @@ void main()
 	positionNDC.xy      -= uboMatUsr.mJitterCurrentPrev.xy;
 	positionNDC_prev.xy -= uboMatUsr.mJitterCurrentPrev.zw;
 	vec3 motionVector = (positionNDC - positionNDC_prev) * vec3(0.5, 0.5, 1.0); // TODO: check if z scale is ok
-	oFragVelocity = vec4(motionVector, IS_ACTIVE_MOVING_OBJECT ? 1 : 0);
+	oFragVelocity = vec4(motionVector, fs_in.movingObjectId);
 
 	// Initialize all the colors:
 	vec3 ambient    = materialsBuffer.materials[matIndex].mAmbientReflectivity.rgb  * diffTexColorRGBA.rgb;
@@ -292,7 +292,7 @@ void main()
 		oFragColor = vec4(normalWS.xyz, 1.0);
 	} else {
 		// Debug2: show geometry normals (not affected by normal mapping)
-		vec3 normalWS = normalize(mat3(inverse(transpose(EFFECTIVE_MODELMATRIX))) * normalize(fs_in.normalOS));
+		vec3 normalWS = normalize(mat3(inverse(transpose(fs_in.modelMatrix))) * normalize(fs_in.normalOS));
 		oFragColor = vec4(normalWS.xyz, 1.0);
 
 		//oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;

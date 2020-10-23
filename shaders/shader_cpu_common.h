@@ -1,6 +1,3 @@
-// use DrawIndexedIndirect (for scene)?
-#define DRAW_INDEXED_INDIRECT 1
-
 // is the output from taa.comp already converted to sRGB-values?
 #define TAA_OUTPUT_IS_SRGB	0
 
