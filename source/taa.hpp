@@ -366,6 +366,19 @@ public:
 		}
 	}
 
+	// called from main
+	void init_updater(gvk::updater &updater) {
+		LOG_DEBUG("TAA: initing updater");
+		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline };
+#if TAA_USE_POSTPROCESS_STEP
+		comp_pipes.push_back(&mPostProcessPipeline);
+#endif
+		for (auto ppipe : comp_pipes) {
+			ppipe->enable_shared_ownership();
+			updater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+		}
+	}
+
 	// Create all the compute pipelines used for the post processing effect(s),
 	// prepare some command buffers with pipeline barriers to synchronize with subsequent commands,
 	// create a new ImGui window that allows to enable/disable anti-aliasing, and to modify parameters:

@@ -12,6 +12,9 @@
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
+// use the gvk updater for shader hot reloading and window resizing ?
+#define USE_GVK_UPDATER 1
+
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -1508,10 +1511,46 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
+
+	}
+
+	void init_updater_only_once() {
+		static bool beenThereDoneThat = false;
+		if (beenThereDoneThat) return;
+		beenThereDoneThat = true;
+
+		// allow the updater to reload shaders
+#if USE_GVK_UPDATER
+		mAntiAliasing.init_updater(mUpdater);
+
+		// TODO: this crashes for me, when the shader is changed!
+#if FORWARD_RENDERING
+		//mPipelineFwdOpaque.enable_shared_ownership();
+		//mUpdater.on(gvk::shader_files_changed_event(mPipelineFwdOpaque)).update(mPipelineFwdOpaque);
+
+		// ->
+		// ERR:  Debug utils callback with Id[1534926743|VUID-VkSpecializationInfo-offset-00773] and Message[Validation Error: [ VUID-VkSpecializationInfo-offset-00773 ]
+		// Object 0: handle = 0x17d7c4b1950, type = VK_OBJECT_TYPE_DEVICE; | MessageID = 0x5b7d1f97 | Specialization entry 0 (for constant id 2133139768) references memory outside provided
+		// specialization data (bytes 381..388; 8 bytes provided).. The Vulkan spec states: The offset member of each element of pMapEntries must be less than dataSize (https://vulkan.lunarg.com/doc/view/1.2.148.0/windows/1.2-extensions/vkspec.html#VUID-VkSpecializationInfo-offset-00773)]
+		// (followed by the "Cannot call vkDestroyPipeline" error below)
+#else
+		//mPipelineFirstPass.enable_shared_ownership();
+		//mUpdater.on(gvk::shader_files_changed_event(mPipelineFirstPass)).update(mPipelineFirstPass);
+
+		// ->
+		// ERR:  Debug utils callback with Id[1809638909|VUID-vkDestroyPipeline-pipeline-00765] and Message[Validation Error: [ VUID-vkDestroyPipeline-pipeline-00765 ]
+		// Object 0: handle = 0x2cf9db88920, type = VK_OBJECT_TYPE_DEVICE; | MessageID = 0x6bdce5fd | Cannot call vkDestroyPipeline on VkPipeline 0x9280970000000092[] that is currently in use by a command buffer.
+		// The Vulkan spec states: All submitted commands that refer to pipeline must have completed execution (https://vulkan.lunarg.com/doc/view/1.2.148.0/windows/1.2-extensions/vkspec.html#VUID-vkDestroyPipeline-pipeline-00765)]
+#endif
+
+		gvk::current_composition()->add_element(mUpdater);
+#endif
 	}
 
 	void update() override
 	{
+		init_updater_only_once(); // don't init in initialize, taa hasn't created its pipelines there yet.
+
 		// global GUI toggle
 		if (gvk::input().key_pressed(gvk::key_code::f3)) imgui_helper::globalEnable = !imgui_helper::globalEnable;
 
@@ -1719,6 +1758,10 @@ private: // v== Member variables ==v
 
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
+
+#if USE_GVK_UPDATER
+	gvk::updater mUpdater;	// handles shader hot reloading, window resizing
+#endif
 
 	int mLightingMode = 0; // 0 = typical; 1 = no lights, just diff color;  2 = debug
 	struct { glm::vec3 dir, intensity; float boost; } mDirLight = { {1.f,1.f,1.f}, { 1.f,1.f,1.f }, 1.f }; // this is overwritten with the dir light from the .fscene file
