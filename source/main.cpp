@@ -189,6 +189,7 @@ class wookiee : public gvk::invokee
 		{ "ES street flicker", {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
 		{ "ES window flicker", {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
 		{ "ES fence \"hole\"", {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
+		{ "ES strafe problem", {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
 	};
 
 	struct MovingObjectDef {
@@ -804,7 +805,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		rdoc::labelBuffer(mSceneData.mAttributesBuffer     ->handle(), "scene_AttributesBuffer");
 		rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   ->handle(), "scene_DrawCommandsBuffer");
 
+		double tParse = glfwGetTime();
+
 		// load and add moving objects
+		std::cout << "Loading extra models" << std::endl;
 		mMovingObjectFirstMatIdx = static_cast<int>(distinctMaterialConfigs.size());
 		for (size_t iMover = 0; iMover < mMovingObjectDefs.size(); iMover++)
 		{
@@ -900,12 +904,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 
-		double tParse = glfwGetTime();
-		printf("Loading took %.1f sec, parsing took %.1f sec, total = %.1f sec\n", tLoad-t0, tParse-tLoad, tParse-t0);
+		double tFini  = glfwGetTime();
+		printf("Loading took %.1f sec, parsing %.1f sec, rest  %.1f sec => total = %.1f sec\n", tLoad-t0, tParse-tLoad, tFini-tParse, tFini-t0);
 	}
 
 	void upload_materials_and_vertex_data_to_gpu()
 	{
+		std::cout << "Uploading data to GPU..."; std::cout.flush();
+
 		// All of the following are submitted to the same queue (due to cgb::device_queue_selection_strategy::prefer_everything_on_single_queue)
 		// That also means that this is the same queue which is used for graphics rendering.
 		// Furthermore, this means that it is sufficient to establish a memory barrier after the last call to cgb::fill. 
@@ -962,6 +968,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					srcAccess,  /* -> */ avk::memory_access::any_graphics_read_access // Transfered memory must be made visible to any kind of of graphics pipeline read access types.
 				);
 			}));
+
+		std::cout << " done" << std::endl;
 	}
 
 	void prepare_deferred_shading_pipelines()
