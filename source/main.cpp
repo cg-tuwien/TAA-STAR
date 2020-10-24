@@ -25,6 +25,7 @@
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
 	- strange "seam" in smooth sphere and soccer ball -> check if that is the model or some other problem!
+	  => it's the model (soccerball, has holes too), and for the sphere normal mapping was the problem (no uv, no tangents)
 
 	- moving objs with more than one mesh/material
 
@@ -190,7 +191,11 @@ class wookiee : public gvk::invokee
 		{ "ES fence \"hole\"", {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
 	};
 
-	std::vector<std::pair<const char*, const char*>> mMovingObjectDefs = {	// name, filename
+	struct MovingObjectDef {
+		const char *name;
+		const char *filename;
+	};
+	std::vector<MovingObjectDef> mMovingObjectDefs = {	// name, filename
 		{ "Smooth sphere",	"assets/sphere_smooth.obj" },
 		{ "Sharp sphere",	"assets/sphere.obj" },
 		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj" },
@@ -805,12 +810,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
 			auto &objdef = mMovingObjectDefs[iMover];
-			auto filename = objdef.second;
+			auto filename = objdef.filename;
 			if (!std::filesystem::exists(filename)) {
 				LOG_WARNING("Object file \"" + std::string(filename) + "\" does not exist - falling back to default sphere)");
 				filename = "assets/sphere.obj";
 			}
-			auto model = gvk::model_t::load_from_file(filename);
+			auto model = gvk::model_t::load_from_file(filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
 
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
 			auto material = model->material_config_for_mesh(0);
@@ -1435,7 +1440,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("enable", &mMovingObject.enabled);
 					struct FuncHolder {
 						static bool MoverGetter(void* data, int idx, const char** out_str) {
-							*out_str = reinterpret_cast<wookiee*>(data)->mMovingObjectDefs[idx].first;
+							*out_str = reinterpret_cast<wookiee*>(data)->mMovingObjectDefs[idx].name;
 							return true;
 						}
 					};
