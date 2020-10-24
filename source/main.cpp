@@ -777,13 +777,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
 		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
 #if TEST_AVK_DII
-		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
-		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups));
-		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, sizeof(VkDrawIndexedIndirectCommand)));
-		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, 13)); // ok, warns
-		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_num_elements(numMeshgroups, 24));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_size(numMeshgroups * sizeof(VkDrawIndexedIndirectCommand)));
+		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(numMeshgroups));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements(numMeshgroups, sizeof(VkDrawIndexedIndirectCommand)));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements(numMeshgroups, 13));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements(numMeshgroups, 24));
 		//std::vector<vk::DrawIndexedIndirectCommand> testvec(numMeshgroups);
-		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::draw_indexed_indirect_command_buffer_meta::create_from_data(testvec));
+		//mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_data(testvec));
 		{
 			auto bufsize = mSceneData.mDrawCommandsBuffer->config().size;
 			auto quot = bufsize / sizeof(VkDrawIndexedIndirectCommand);
