@@ -35,6 +35,7 @@ layout(push_constant) uniform PushConstants {
 	float mRejectionAlpha;
 	bool mRejectOutside;
 	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
+	int mInterpolationMode;			// 0=bilinear 1=bicubic catmull-rom
 
 	int  mDebugMode;
 	float mDebugScale;
@@ -251,6 +252,103 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 	// TODO: need to adjust for current jitter if history buf is considered unjittered?
 }
 
+// see https://vec3.ca/bicubic-filtering-in-fewer-taps/
+vec4 sample_history_bicubic_catmullrom(vec2 uv) {
+	vec2 texSize = textureSize(uHistoryFrame, 0);
+	vec2 invTexSize = 1.0 / texSize;
+
+	vec2 iTc = uv * texSize;
+	vec2 tc = floor(iTc - 0.5) + 0.5;	// round *down* to nearest texel center
+	vec2 f = iTc - tc;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+
+	// Calculate weights:
+	//                   9|d|^3 - 15|d|^2         +  6   for 0 <= |d| <= 1
+	// w(d) = (1/6) * { -3|d|^3 + 15|d|^2 - 24|d| + 12   for 1 <  |d| <= 2
+	//                   0                               otherwise
+	//
+	// |d0|=f+1   |d1|=f   |d2|=1-f   |d3|=2-f
+	//
+	// expands to:
+	//  w0 = (-3 * f^3 +  6 * f^2 - 3 * f     ) / 6
+	//  w1 = ( 9 * f^3 - 15 * f^2         + 6 ) / 6	      ! there is a typo in the linked article! coefficient for f^3 is 9, not 6 !
+	//  w2 = (-9 * f^3 + 12 * f^2 + 3 * f     ) / 6
+	//  w3 = ( 3 * f^3 -  3 * f^2             ) / 6
+
+	vec2 w0 = -0.5 * f3 +        f2 - 0.5 * f       ;
+	vec2 w1 =  1.5 * f3 -  2.5 * f2           + 1.0 ;
+	vec2 w2 = -1.5 * f3 +  2.0 * f2 + 0.5 * f       ;
+	vec2 w3 =  0.5 * f3 -  0.5 * f2                 ;
+
+	#if 0
+		// naive implementation, slow (16 taps!), just for comparison
+
+		// Note: there is *no* linear interpolation going on, we sample the texture at exact texel centers.
+		//       Works equally well with texture() or texelFetch() (which needs manual clamping)
+		//       Tests showed the texelFetch-variant is minusculely faster, but the difference is barely noticeable 
+		ivec2 tc0 = clamp(ivec2(tc - 1), ivec2(0), ivec2(texSize));
+		ivec2 tc1 = clamp(ivec2(tc 	  ), ivec2(0), ivec2(texSize));
+		ivec2 tc2 = clamp(ivec2(tc + 1), ivec2(0), ivec2(texSize));
+		ivec2 tc3 = clamp(ivec2(tc + 2), ivec2(0), ivec2(texSize));
+		return
+		  texelFetch(uHistoryFrame, ivec2(tc0.x, tc0.y), 0) * w0.x * w0.y
+		+ texelFetch(uHistoryFrame, ivec2(tc1.x, tc0.y), 0) * w1.x * w0.y
+		+ texelFetch(uHistoryFrame, ivec2(tc2.x, tc0.y), 0) * w2.x * w0.y
+		+ texelFetch(uHistoryFrame, ivec2(tc3.x, tc0.y), 0) * w3.x * w0.y
+		+ texelFetch(uHistoryFrame, ivec2(tc0.x, tc1.y), 0) * w0.x * w1.y
+		+ texelFetch(uHistoryFrame, ivec2(tc1.x, tc1.y), 0) * w1.x * w1.y
+		+ texelFetch(uHistoryFrame, ivec2(tc2.x, tc1.y), 0) * w2.x * w1.y
+		+ texelFetch(uHistoryFrame, ivec2(tc3.x, tc1.y), 0) * w3.x * w1.y
+		+ texelFetch(uHistoryFrame, ivec2(tc0.x, tc2.y), 0) * w0.x * w2.y
+		+ texelFetch(uHistoryFrame, ivec2(tc1.x, tc2.y), 0) * w1.x * w2.y
+		+ texelFetch(uHistoryFrame, ivec2(tc2.x, tc2.y), 0) * w2.x * w2.y
+		+ texelFetch(uHistoryFrame, ivec2(tc3.x, tc2.y), 0) * w3.x * w2.y
+		+ texelFetch(uHistoryFrame, ivec2(tc0.x, tc3.y), 0) * w0.x * w3.y
+		+ texelFetch(uHistoryFrame, ivec2(tc1.x, tc3.y), 0) * w1.x * w3.y
+		+ texelFetch(uHistoryFrame, ivec2(tc2.x, tc3.y), 0) * w2.x * w3.y
+		+ texelFetch(uHistoryFrame, ivec2(tc3.x, tc3.y), 0) * w3.x * w3.y;
+	#else
+		// optimized version, 9 taps only
+		vec2 wC = w1 + w2;
+		// FIXME - texelFetch-version not working correctly!
+		// ivec2 tc0 = clamp(ivec2(tc - 1    ), ivec2(0), ivec2(texSize));
+		// ivec2 tcC = clamp(ivec2(tc + w2/wC), ivec2(0), ivec2(texSize));
+		// ivec2 tc3 = clamp(ivec2(tc + 2    ), ivec2(0), ivec2(texSize));
+		// return
+		//   texelFetch(uHistoryFrame, ivec2(tc0.x, tc0.y), 0) * w0.x * w0.y
+		// + texelFetch(uHistoryFrame, ivec2(tcC.x, tc0.y), 0) * wC.x * w0.y
+		// + texelFetch(uHistoryFrame, ivec2(tc3.x, tc0.y), 0) * w3.x * w0.y
+		// + texelFetch(uHistoryFrame, ivec2(tc0.x, tcC.y), 0) * w0.x * wC.y
+		// + texelFetch(uHistoryFrame, ivec2(tcC.x, tcC.y), 0) * wC.x * wC.y
+		// + texelFetch(uHistoryFrame, ivec2(tc3.x, tcC.y), 0) * w3.x * wC.y
+		// + texelFetch(uHistoryFrame, ivec2(tc0.x, tc3.y), 0) * w0.x * w3.y
+		// + texelFetch(uHistoryFrame, ivec2(tcC.x, tc3.y), 0) * wC.x * w3.y
+		// + texelFetch(uHistoryFrame, ivec2(tc3.x, tc3.y), 0) * w3.x * w3.y;
+		vec2 tc0 = (tc - 1    ) * invTexSize;
+		vec2 tcC = (tc + w2/wC) * invTexSize;
+		vec2 tc3 = (tc + 2    ) * invTexSize;
+		return
+		  texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tc0.y), 0) * w0.x * w0.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tc0.y), 0) * wC.x * w0.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tc0.y), 0) * w3.x * w0.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tcC.y), 0) * w0.x * wC.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tcC.y), 0) * wC.x * wC.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tcC.y), 0) * w3.x * wC.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tc3.y), 0) * w0.x * w3.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tc3.y), 0) * wC.x * w3.y
+		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tc3.y), 0) * w3.x * w3.y;
+	#endif
+}
+
+vec4 sample_history_rgb(vec2 uv) {
+	if (pushConstants.mInterpolationMode == 0) {
+		return texture(sampler2D(uHistoryFrame, uSampler), uv);
+	} else {
+		return sample_history_bicubic_catmullrom(uv);
+	}
+}
+
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -290,7 +388,7 @@ void main()
 	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
 	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentFrame, 0));
 	
-	vec3 historyColor = maybe_rgb_to_ycocg(texture(sampler2D(uHistoryFrame, uSampler), historyUv).rgb);
+	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
 
 	vec2 jitter = pushConstants.mJitterAndAlpha.xy;
 	float alpha = pushConstants.mJitterAndAlpha.a;

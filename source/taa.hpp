@@ -42,6 +42,7 @@ class taa : public gvk::invokee
 		float mRejectionAlpha;
 		VkBool32 mRejectOutside;
 		int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
+		int mInterpolationMode;			// 0=bilinear 1=bicubic catmull-rom
 
 		int mDebugMode;
 		float mDebugScale;
@@ -320,6 +321,7 @@ public:
 				SliderFloat("a_max", &mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
 				Combo("use velocity", &mUseVelocityVectors, "none\0movers\0all\0");
+				Combo("interpol", &mInterpolationMode, "bilinear\0bicub.Catmull-Rom\0");
 				if (Button("reset")) mResetHistory = true;
 				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "debug" /* always last */ };
 				Checkbox("debug##show debug", &mShowDebug);
@@ -390,7 +392,7 @@ public:
 		// Create a descriptor cache that helps us to conveniently create descriptor sets:
 		mDescriptorCache = gvk::context().create_descriptor_cache();
 
-		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0);
+		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0);	// ac: changed from clamp_to_border to clamp_to_edge
 
 		for (size_t i = 0; i < CF; ++i) {
 			mMatricesBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(matrices_for_taa)));
@@ -629,6 +631,7 @@ public:
 		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
 		mTaaPushConstants.mRejectOutside = mRejectOutside;
 		mTaaPushConstants.mUseVelocityVectors = mUseVelocityVectors;
+		mTaaPushConstants.mInterpolationMode = mInterpolationMode;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -835,4 +838,5 @@ private:
 	bool mTriggerCapture = false;
 	bool mRejectOutside = false;
 	int mUseVelocityVectors = 1;		// 0=off 1=for movers only 2=for everything
+	int mInterpolationMode;			// 0=bilinear 1=bicubic catmull-rom
 };
