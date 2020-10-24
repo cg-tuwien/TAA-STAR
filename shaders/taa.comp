@@ -258,6 +258,8 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 void main()
 {
 	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(iuv, textureSize(uCurrentFrame, 0)))) return;
+
 	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uCurrentFrame, 0);
 
 	if (pushConstants.mBypassHistoryUpdate) {
