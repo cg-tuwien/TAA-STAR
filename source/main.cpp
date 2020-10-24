@@ -183,10 +183,11 @@ class wookiee : public gvk::invokee
 
 	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
 		{ "Start" },	// t,r filled in from code
-		{ "ES street flicker", {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
-		{ "ES window flicker", {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
-		{ "ES fence \"hole\"", {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
-		{ "ES strafe problem", {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
+		{ "ES street flicker",   {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
+		{ "ES window flicker",   {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
+		{ "ES fence \"hole\"",   {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
+		{ "ES strafe problem",   {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
+		{ "ES catmull showcase", {-30.011652f, 0.829173f, 27.225056f}, {-0.224099f, 0.012706f, -0.972886f, -0.055162f} },	// enable camera bobbing to see difference
 	};
 
 	struct MovingObjectDef {

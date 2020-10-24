@@ -42,7 +42,7 @@ class taa : public gvk::invokee
 		float mRejectionAlpha;
 		VkBool32 mRejectOutside;
 		int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
-		int mInterpolationMode;			// 0=bilinear 1=bicubic catmull-rom
+		int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 
 		int mDebugMode;
 		float mDebugScale;
@@ -321,7 +321,7 @@ public:
 				SliderFloat("a_max", &mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
 				Combo("use velocity", &mUseVelocityVectors, "none\0movers\0all\0");
-				Combo("interpol", &mInterpolationMode, "bilinear\0bicub.Catmull-Rom\0");
+				Combo("interpol", &mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
 				if (Button("reset")) mResetHistory = true;
 				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "debug" /* always last */ };
 				Checkbox("debug##show debug", &mShowDebug);
@@ -837,6 +837,6 @@ private:
 	float mRejectionAlpha = 1.0f;
 	bool mTriggerCapture = false;
 	bool mRejectOutside = false;
-	int mUseVelocityVectors = 1;		// 0=off 1=for movers only 2=for everything
-	int mInterpolationMode;			// 0=bilinear 1=bicubic catmull-rom
+	int mUseVelocityVectors = 1;	// 0=off 1=for movers only 2=for everything
+	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 };
