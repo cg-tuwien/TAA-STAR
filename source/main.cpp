@@ -1360,9 +1360,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
 				if (CollapsingHeader("Camera")) {
-					Checkbox("rot", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
-					Checkbox("bobbing", &mAutoBob);
-					Checkbox("auto move", &mAutoMovement);
+					Checkbox("move", &mAutoMovement);
 					SameLine();
 					PushItemWidth(60);
 					Combo("##auto movement unit", &mAutoMovementUnits, "/sec\0/frame\0");
@@ -1372,6 +1370,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						mAutoMovement = true;
 						mStartCapture = true;
 					}
+					Checkbox("rotation", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
+					Checkbox("bobbing", &mAutoBob);
+					Separator();
 					if (Button("save cam")) { savedCamState.t = mQuakeCam.translation(); savedCamState.r = mQuakeCam.rotation(); };
 					SameLine();
 					if (Button("restore cam")) { mQuakeCam.set_translation(savedCamState.t); mQuakeCam.set_rotation(savedCamState.r); }
@@ -1578,6 +1579,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// slow-mo
 			Sleep(500);
 			dt_offset = 0.5f;
+		}
+
+		if (gvk::input().key_pressed(gvk::key_code::b)) {	// bobbing on off shortcut key
+			mAutoBob = !mAutoBob;
+			if (mAutoBob) mAutoMovement = true;
 		}
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
@@ -1795,8 +1801,8 @@ private: // v== Member variables ==v
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = false;
-	bool mAutoBob = true;
-	bool mAutoMovement = false;
+	bool mAutoBob = false;
+	bool mAutoMovement = true;
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
 
 	int mMovingObjectFirstMatIdx = -1;
