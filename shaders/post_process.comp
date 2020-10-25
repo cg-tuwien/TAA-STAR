@@ -15,6 +15,7 @@ layout(push_constant) uniform PushConstants {
 	ivec4 zoomDstLTWH;
 	bool zoom;
 	bool showZoomBox;
+	int splitX;
 } pushConstants;
 
 // -------------------------------------------------------
@@ -29,6 +30,12 @@ void main()
 	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uInputFrame, 0);
 
 	ivec2 iuvFetchFrom = iuv;
+
+	// splitscreen-splitter
+	if (iuv.x == pushConstants.splitX) {
+		imageStore(uOutput, iuv, vec4(0,0,0,0));
+		return;
+	}
 
 	// zoom source border box
 	if (pushConstants.zoom && pushConstants.showZoomBox) {

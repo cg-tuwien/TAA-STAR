@@ -1476,6 +1476,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto* wnd = context().main_window();
 
+		// hide the window, so we can see the scene loading progress
+		GLFWwindow *glfwWin = wnd->handle()->mHandle;
+		glfwHideWindow(glfwWin);
+
 		// init Renderdoc debug markers
 		rdoc::init_debugmarkers(context().device());
 
@@ -1526,6 +1530,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
 
+		glfwShowWindow(glfwWin);
 	}
 
 	void init_updater_only_once() {
@@ -1863,6 +1868,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool enableAlphaBlending = false;
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
+		bool skip_scene_filename = false;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strcmp("--", argv[i])) {
@@ -1888,12 +1894,16 @@ int main(int argc, char **argv) // <== Starting point ==
 					if (i >= argc) { badCmd = true; break; }
 					capture_n_frames = atoi(argv[i]);
 					if (capture_n_frames < 1) { badCmd = true; break; }
-
+				} else if (0 == _stricmp(argv[i], "-sponza")) {
+					skip_scene_filename = true;
+				} else if (0 == _stricmp(argv[i], "-test")) {
+					skip_scene_filename = true;
+					sceneFileName = "../../extras/TestScene/TestScene.fscene";
 				} else {
 					badCmd = true;
 					break;
 				}
-			} else {
+			} else if (!skip_scene_filename) {
 				if (sceneFileName.length()) {
 					badCmd = true;
 					break;
@@ -1902,7 +1912,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-capture <numFrames>] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 

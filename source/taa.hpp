@@ -24,29 +24,38 @@
 template <size_t CF>
 class taa : public gvk::invokee
 {
-	struct push_constants_for_taa {		// Note to self: be careful about alignment, esp. with vec#!
-		glm::vec4 mJitterAndAlpha;
-		int mColorClampingOrClipping;
-		VkBool32 mDepthCulling;
+	// TODO: fix "non-shader parameters"
+	struct Parameters {		// Note to self: be careful about alignment, esp. with vec#!
+		glm::vec4 mJitterAndAlpha			= glm::vec4(0.f, 0.f, 0.f, 0.05f);
+		int mColorClampingOrClipping		= 1;
+		VkBool32 mDepthCulling				= VK_FALSE;
 		//VkBool32 mTextureLookupUnjitter;
-		VkBool32 mUnjitterNeighbourhood;
-		VkBool32 mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
-		float mUnjitterFactor;				// -1 or +1
-		VkBool32 mBypassHistoryUpdate;
-		VkBool32 mUseYCoCg;
-		VkBool32 mVarianceClipping;
-		VkBool32 mLumaWeighting;
-		float mVarClipGamma;
-		float mMinAlpha;			// used for luminance-based weighting
-		float mMaxAlpha;			// used for luminance-based weighting
-		float mRejectionAlpha;
-		VkBool32 mRejectOutside;
-		int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
-		int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
+		VkBool32 mUnjitterNeighbourhood		= VK_FALSE;
+		VkBool32 mUnjitterCurrentSample		= VK_FALSE;		// TODO: anything for depth/history depth??
+		float mUnjitterFactor				= 1.0f;			// -1 or +1
+		VkBool32 mBypassHistoryUpdate		= VK_FALSE;		// used by jitter debug slow motion
+		VkBool32 mPassThrough				= VK_FALSE;		// effectively disables TAA: result <- input,
+		VkBool32 mUseYCoCg					= VK_FALSE;
+		VkBool32 mVarianceClipping			= VK_FALSE;
+		VkBool32 mLumaWeighting				= VK_FALSE;;
+		float mVarClipGamma					= 1.0f;
+		float mMinAlpha						= 1.0f - 0.97f;	// used for luminance-based weighting
+		float mMaxAlpha						= 1.0f - 0.88f;	// used for luminance-based weighting
+		float mRejectionAlpha				= 1.0f;
+		VkBool32 mRejectOutside				= VK_FALSE;
+		int mUseVelocityVectors				= 1;			// 0=off 1=for movers only 2=for everything
+		int mInterpolationMode				= 0;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 
-		int mDebugMode;
-		float mDebugScale;
-		VkBool32 mDebugCenter;
+		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
+		float mDebugScale					= 1.0f;
+		VkBool32 mDebugCenter				= VK_FALSE;
+	};
+	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
+
+	struct push_constants_for_taa {		// Note to self: be careful about alignment, esp. with vec#!
+		Parameters	param[2];
+		VkBool32	splitScreen;
+		int			splitX;
 	};
 
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
@@ -54,6 +63,7 @@ class taa : public gvk::invokee
 		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
 		VkBool32 zoom			= false;
 		VkBool32 showZoomBox	= true;
+		int splitX = -1;
 	};
 
 	struct matrices_for_taa {
@@ -297,71 +307,106 @@ public:
 
 				if (!imgui_helper::globalEnable) return;
 
-				Begin("Anti-Aliasing Settings");
-				SetWindowPos(ImVec2(270.0f, 555.0f), ImGuiCond_FirstUseEver);
-				SetWindowSize(ImVec2(220.0f, 130.0f), ImGuiCond_FirstUseEver);
-				Checkbox("enabled", &mTaaEnabled);
-				SameLine(); if (Button("En&cap")) { mTaaEnabled = true; mTriggerCapture = true; }
-				static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
-				Combo("color clamp/clip", &mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
-				Checkbox("variance clipping", &mVarianceClipping);
-				SliderFloat("gamma", &mVarClipGamma, 0.f, 2.f, "%.2f");
-				Checkbox("use YCoCg", &mUseYCoCg);
-				Checkbox("luma weighting", &mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
-				Checkbox("depth culling", &mDepthCulling);
-				Checkbox("reject out-of-screen", &mRejectOutside);
-				//Checkbox("texture lookup unjitter", &mTextureLookupUnjitter);
-				Checkbox("unjitter neighbourhood",  &mUnjitterNeighbourhood);
-				Checkbox("unjitter current sample", &mUnjitterCurrentSample);
-				InputFloat("unjitter factor", &mUnjitterFactor);
-				static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
-				Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues));
-				SliderFloat("alpha", &mAlpha, 0.0f, 1.0f);
-				SliderFloat("a_min", &mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
-				SliderFloat("a_max", &mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
-				SliderFloat("rejection alpha", &mRejectionAlpha, 0.0f, 1.0f);
-				Combo("use velocity", &mUseVelocityVectors, "none\0movers\0all\0");
-				Combo("interpol", &mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
-				if (Button("reset")) mResetHistory = true;
-				static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "debug" /* always last */ };
-				Checkbox("debug##show debug", &mShowDebug);
-				SameLine();
-				Combo("##debug mode", &mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
-				PushItemWidth(100);
-				SliderFloat("scale##debug scale", &mDebugScale, 0.f, 100.f, "%.0f");
-				PopItemWidth();
-				SameLine();
-				Checkbox("center##debug center", &mDebugCenter);
+				const float checkbox_height = 23.f;
+				const float combo_height    = 23.f;
+				const float button_height   = 23.f;
 
-				if (CollapsingHeader("Jitter debug")) {
-					SliderInt("lock", &mFixedJitterIndex, -1, 16);
-					InputFloat("scale", &mJitterExtraScale, 0.f, 0.f, "%.2f");
-					InputInt("slowdown", &mJitterSlowMotion);
-					InputFloat("rotate", &mJitterRotateDegrees);
-				}
+				static bool copyParamsTo0 = false;
+				static bool copyParamsTo1 = false;
+				static bool switchParams  = false;
+				for (int iPass = 0; iPass < 2; ++iPass) {
+					bool isPrimary = (0 == iPass);
+					if (!isPrimary && !mSplitScreen) break;
+
+					Parameters &param = mParameters[iPass];
+
+					Begin(iPass == 0 ? "Anti-Aliasing Settings" : "Anti-Aliasing Settings #2");
+					SetWindowPos (ImVec2(270.0f + iPass * 400.f, 555.0f), ImGuiCond_FirstUseEver);
+					SetWindowSize(ImVec2(220.0f, 130.0f),                 ImGuiCond_FirstUseEver);
+					if (isPrimary) {
+						Checkbox("enabled", &mTaaEnabled);
+						SameLine(); if (Button("En&cap")) { mTaaEnabled = true; mTriggerCapture = true; }
+					} else {
+						SetCursorPosY(GetCursorPosY() + checkbox_height);
+					}
+					CheckboxB32("pass through", &param.mPassThrough); HelpMarker("Effectively disables TAA, but runs shader");
+					static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
+					Combo("color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+					CheckboxB32("variance clipping", &param.mVarianceClipping);
+					SliderFloat("gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
+					CheckboxB32("use YCoCg", &param.mUseYCoCg);
+					CheckboxB32("luma weighting", &param.mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
+					CheckboxB32("depth culling", &param.mDepthCulling);
+					CheckboxB32("reject out-of-screen", &param.mRejectOutside);
+					//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
+					CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
+					CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
+					InputFloat("unjitter factor", &param.mUnjitterFactor);
+					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
+					if (isPrimary) Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
+					
+					SliderFloat("alpha", &param.mJitterAndAlpha.w, 0.0f, 1.0f);
+					SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
+					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
+					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
+					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
+					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
+					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
+					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "result", "debug" /* always last */ };
+					if (isPrimary) Checkbox("debug##show debug", &mShowDebug); else Text("debug");
+					SameLine();
+					Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
+					PushItemWidth(100);
+					SliderFloat("scale##debug scale", &param.mDebugScale, 0.f, 100.f, "%.0f");
+					PopItemWidth();
+					SameLine();
+					CheckboxB32("center##debug center", &param.mDebugCenter);
+
+					if (isPrimary) {
+						if (CollapsingHeader("Split screen")) {
+							Checkbox("split", &mSplitScreen); SameLine();
+							PushItemWidth(60);
+							InputInt("##split x", &mSplitX, 0);
+							PopItemWidth();
+							Text("params:"); SameLine();
+							copyParamsTo1 = Button("1->2"); SameLine();
+							copyParamsTo0 = Button("1<-2"); SameLine();
+							switchParams = Button("flip");
+						}
+
+						if (CollapsingHeader("Jitter debug")) {
+							SliderInt("lock", &mFixedJitterIndex, -1, 16);
+							InputFloat("scale", &mJitterExtraScale, 0.f, 0.f, "%.2f");
+							InputInt("slowdown", &mJitterSlowMotion);
+							InputFloat("rotate", &mJitterRotateDegrees);
+						}
 
 #if TAA_USE_POSTPROCESS_STEP
-				if (CollapsingHeader("Postprocess")) {
-					auto &pp = mPostProcessPushConstants;
-					static bool pp_zoom = pp.zoom;					// ugly workaround for bool <-> VkBool32 conversion
-					static bool pp_showZoomBox = pp.showZoomBox;
+						if (CollapsingHeader("Postprocess")) {
+							auto &pp = mPostProcessPushConstants;
 
-					static glm::ivec4 orig_zoomsrc = pp.zoomSrcLTWH;
-					static glm::ivec4 orig_zoomdst = pp.zoomDstLTWH;
+							static glm::ivec4 orig_zoomsrc = pp.zoomSrcLTWH;
+							static glm::ivec4 orig_zoomdst = pp.zoomDstLTWH;
 
-					Checkbox("enable", &mPostProcessEnabled);
-					Checkbox("zoom", &pp_zoom);	
-					SameLine(); Checkbox("show box", &pp_showZoomBox);
-					SameLine(); if (Button("rst")) { pp.zoomSrcLTWH = orig_zoomsrc; pp.zoomDstLTWH = orig_zoomdst; }
-					InputInt4("src", &pp.zoomSrcLTWH.x); HelpMarker("Left/Top/Width/Height");
-					InputInt4("dst", &pp.zoomDstLTWH.x);
+							Checkbox("enable", &mPostProcessEnabled);
+							CheckboxB32("zoom", &pp.zoom);	
+							SameLine(); CheckboxB32("show box", &pp.showZoomBox);
+							SameLine(); if (Button("rst")) { pp.zoomSrcLTWH = orig_zoomsrc; pp.zoomDstLTWH = orig_zoomdst; }
+							InputInt4("src", &pp.zoomSrcLTWH.x); HelpMarker("Left/Top/Width/Height");
+							InputInt4("dst", &pp.zoomDstLTWH.x);
 
-					pp.zoom = pp_zoom;
-					pp.showZoomBox = pp_showZoomBox;
-				}
+						}
 #endif
+					}
 
-				End();
+					End();
+				}
+
+				if (copyParamsTo0) mParameters[0] = mParameters[1];
+				if (copyParamsTo1) mParameters[1] = mParameters[0];
+				if (switchParams ) std::swap(mParameters[0], mParameters[1]);
+				copyParamsTo0 = copyParamsTo1 = switchParams = false;
+
 				});
 		} else {
 			LOG_WARNING("No component of type cgb::imgui_manager found => could not install ImGui callback.");
@@ -484,16 +529,14 @@ public:
 		ImGuiIO &io = ImGui::GetIO();
 		if (io.WantCaptureMouse) return;
 
-		if (!mPostProcessPushConstants.zoom) return;
+		if (!mPostProcessPushConstants.zoom && !mSplitScreen) return;
 
 		static glm::ivec2 prev_pos = {0,0};
 		static bool prev_lmb = false;
 		static boxHitTestResult prev_ht = boxHitTestResult::outside;
-		static int prev_box = -1;
+		static int prev_box = -1; // -1 = none, -2 = splitter
 
 		static std::vector<glm::ivec4 *> boxes = { &mPostProcessPushConstants.zoomSrcLTWH, &mPostProcessPushConstants.zoomDstLTWH };
-
-		static glm::ivec2 drag_start_pos = {0,0};
 
 		glm::ivec2 pos = glm::ivec2(input().cursor_position());
 		bool lmb = (input().mouse_button_down(GLFW_MOUSE_BUTTON_LEFT));
@@ -506,10 +549,17 @@ public:
 		if (!drag) {
 
 			ht = boxHitTestResult::outside; box = -1;
-			for (auto i = 0; i < boxes.size(); ++i) {
-				auto ht_i = boxHitTest(pos, *(boxes[i]), true);
-				if (ht_i != boxHitTestResult::outside) {
-					ht = ht_i; box = i; break;
+			if (mPostProcessPushConstants.zoom) {
+				for (auto i = 0; i < boxes.size(); ++i) {
+					auto ht_i = boxHitTest(pos, *(boxes[i]), true);
+					if (ht_i != boxHitTestResult::outside) {
+						ht = ht_i; box = i; break;
+					}
+				}
+			}
+			if (mSplitScreen && ht == boxHitTestResult::outside) {
+				if (pos.x >= mSplitX-2 && pos.x <= mSplitX+2) {
+					ht = boxHitTestResult::left; box = -2;
 				}
 			}
 
@@ -534,7 +584,6 @@ public:
 			glm::ivec4 newLTWH = *(boxes[box]);
 			glm::ivec4 oldLTWH = newLTWH;
 			if (click) {
-				drag_start_pos = pos;
 				if (ht == boxHitTestResult::outside) {
 					newLTWH.x = pos.x - newLTWH.z / 2;
 					newLTWH.y = pos.y - newLTWH.w / 2;
@@ -569,6 +618,8 @@ public:
 
 			if (newLTWH.z <= 0 || newLTWH.w <= 0) newLTWH = oldLTWH;
 			*(boxes[box]) = newLTWH;
+		} else if (lmb && box == -2) {
+			mSplitX = pos.x;
 		}
 
 		prev_pos = pos;
@@ -597,41 +648,27 @@ public:
 		assert(nullptr != quakeCamera);
 
 		// jitter-slow motion -> bypass history update on unchanged frames
+		bool bypassHistUpdate = false;
 		if (mJitterSlowMotion > 1) {
 			static gvk::window::frame_id_t lastJitterIndex = 0;
 			auto thisJitterIndex = gvk::context().main_window()->current_frame() / mJitterSlowMotion;
-			mBypassHistoryUpdate = (thisJitterIndex == lastJitterIndex);
+			bypassHistUpdate = (thisJitterIndex == lastJitterIndex);
 			lastJitterIndex = thisJitterIndex;
-		} else {
-			mBypassHistoryUpdate = false;
 		}
-
-		float effectiveAlpha = mResetHistory ? 1.f : mAlpha;
-		mResetHistory = false;
 
 		mHistoryViewMatrices[inFlightIndex] = quakeCamera->view_matrix();
 		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
-		mTaaPushConstants.mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, effectiveAlpha);
-		mTaaPushConstants.mColorClampingOrClipping = mColorClampingOrClipping;
-		mTaaPushConstants.mDepthCulling = mDepthCulling;
-		//mTaaPushConstants.mTextureLookupUnjitter = mTextureLookupUnjitter;
-		mTaaPushConstants.mUnjitterNeighbourhood = mUnjitterNeighbourhood;
-		mTaaPushConstants.mUnjitterCurrentSample = mUnjitterCurrentSample;
-		mTaaPushConstants.mUnjitterFactor        = mUnjitterFactor;
-		mTaaPushConstants.mBypassHistoryUpdate = mBypassHistoryUpdate;
-		mTaaPushConstants.mUseYCoCg = mUseYCoCg;
-		mTaaPushConstants.mDebugMode = mDebugMode;
-		mTaaPushConstants.mDebugCenter = mDebugCenter;
-		mTaaPushConstants.mDebugScale = mDebugScale;
-		mTaaPushConstants.mVarianceClipping = mVarianceClipping;
-		mTaaPushConstants.mLumaWeighting = mLumaWeighting;
-		mTaaPushConstants.mVarClipGamma = mVarClipGamma;
-		mTaaPushConstants.mMinAlpha = mMinAlpha;
-		mTaaPushConstants.mMaxAlpha = mMaxAlpha;
-		mTaaPushConstants.mRejectionAlpha = mRejectionAlpha;
-		mTaaPushConstants.mRejectOutside = mRejectOutside;
-		mTaaPushConstants.mUseVelocityVectors = mUseVelocityVectors;
-		mTaaPushConstants.mInterpolationMode = mInterpolationMode;
+		for (int i = 0; i < 2; ++i) {
+			mTaaPushConstants.param[i] = mParameters[i];
+			mTaaPushConstants.param[i].mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mResetHistory ? 1.f : mTaaPushConstants.param[i].mJitterAndAlpha.w);
+			mTaaPushConstants.param[i].mBypassHistoryUpdate = bypassHistUpdate;
+		}
+		mTaaPushConstants.splitScreen = mSplitScreen;
+		mTaaPushConstants.splitX      = mSplitX;
+
+		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
+
+		mResetHistory = false;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -777,14 +814,7 @@ private:
 	// Settings, which can be modified via ImGui:
 	bool mTaaEnabled = true;
 	bool mPostProcessEnabled = static_cast<bool>(TAA_USE_POSTPROCESS_STEP);
-	int mColorClampingOrClipping = 1;
-	bool mDepthCulling = false;
-	//bool mTextureLookupUnjitter = false;
-	bool mUnjitterNeighbourhood;
-	bool mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
-	float mUnjitterFactor = 1.f;		// -1 or +1
 	int mSampleDistribution = 1;
-	float mAlpha = 0.05f; // 0.1f;
 	bool mResetHistory = false;
 
 	// Source color images per frame in flight:
@@ -816,27 +846,17 @@ private:
 	avk::compute_pipeline mPostProcessPipeline;
 	push_constants_for_postprocess mPostProcessPushConstants;
 
+	Parameters mParameters[2];
 
 	// jitter debugging
 	int mFixedJitterIndex = -1;
 	float mJitterExtraScale = 1.0f;
 	int mJitterSlowMotion = 1;
 	float mJitterRotateDegrees = 0.f;
-	bool mBypassHistoryUpdate = false; // used by slow motion
 
-	int mDebugMode = 0; // 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection
-	bool mDebugCenter = false; // center result to vec4(0.5) - for showing vectors
 	bool mShowDebug = false;
-	float mDebugScale = 1.f;
-	bool mUseYCoCg = false;
-	bool mVarianceClipping = false;
-	float mVarClipGamma = 1.0f;
-	bool mLumaWeighting = false;
-	float mMinAlpha = 1.0f - 0.97f;
-	float mMaxAlpha = 1.0f - 0.88f;
-	float mRejectionAlpha = 1.0f;
 	bool mTriggerCapture = false;
-	bool mRejectOutside = false;
-	int mUseVelocityVectors = 1;	// 0=off 1=for movers only 2=for everything
-	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
+
+	bool mSplitScreen = false;
+	int  mSplitX = 1000;
 };

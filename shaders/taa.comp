@@ -16,22 +16,23 @@ layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
 // ###### PUSH CONSTANTS AND UBOs ########################
-layout(push_constant) uniform PushConstants {
+struct Parameters {
 	vec4 mJitterAndAlpha;
 	int  mColorClampingOrClipping;
 	bool mDepthCulling;
 	//bool mTextureLookupUnjitter;
 	bool mUnjitterNeighbourhood;
-	bool mUnjitterCurrentSample;		// TODO: anything for depth/history depth??
-	float mUnjitterFactor;				// -1 or +1
+	bool mUnjitterCurrentSample;	// TODO: anything for depth/history depth??
+	float mUnjitterFactor;			// -1 or +1
 
 	bool mBypassHistoryUpdate;
+	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
 	bool mUseYCoCg;
 	bool mVarianceClipping;
 	bool mLumaWeighting;
 	float mVarClipGamma;
-	float mMinAlpha;			// used for luminance-based weighting
-	float mMaxAlpha;			// used for luminance-based weighting
+	float mMinAlpha;				// used for luminance-based weighting
+	float mMaxAlpha;				// used for luminance-based weighting
 	float mRejectionAlpha;
 	bool mRejectOutside;
 	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
@@ -40,7 +41,14 @@ layout(push_constant) uniform PushConstants {
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
+};
+layout(push_constant) uniform PushConstants {
+	Parameters	param[2];
+	bool		splitScreen;
+	int			splitX;
 } pushConstants;
+
+Parameters params;
 
 layout(set = 1, binding = 0) uniform Matrices {
 	mat4 mHistoryViewProjMatrix;
@@ -91,17 +99,17 @@ vec3 ycocg_to_rgb(vec3 c) {
 }
 
 
-vec3 maybe_rgb_to_ycocg(vec3 c) { return pushConstants.mUseYCoCg ? rgb_to_ycocg(c) : c; }
-vec3 maybe_ycocg_to_rgb(vec3 c) { return pushConstants.mUseYCoCg ? ycocg_to_rgb(c) : c; }
-float luminance(vec3 c) { return pushConstants.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
+vec3 maybe_rgb_to_ycocg(vec3 c) { return params.mUseYCoCg ? rgb_to_ycocg(c) : c; }
+vec3 maybe_ycocg_to_rgb(vec3 c) { return params.mUseYCoCg ? ycocg_to_rgb(c) : c; }
+float luminance(vec3 c) { return params.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
 
 void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
 //	vec2 offset = vec2(0.0, 0.0);
-//	if (pushConstants.mTextureLookupUnjitter) {
-//		offset = pushConstants.mJitterAndAlpha.xy;
+//	if (params.mTextureLookupUnjitter) {
+//		offset = params.mJitterAndAlpha.xy;
 //	}
 	
-	vec2 offset = pushConstants.mUnjitterNeighbourhood ? pushConstants.mJitterAndAlpha.xy * pushConstants.mUnjitterFactor : vec2(0);
+	vec2 offset = params.mUnjitterNeighbourhood ? params.mJitterAndAlpha.xy * params.mUnjitterFactor : vec2(0);
 
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 
@@ -118,7 +126,7 @@ void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out v
 
 // may have different unjitter settings than getNeighbourhood
 vec3 getCurrentColor(in ivec2 iuv) {
-	vec2 offset = pushConstants.mUnjitterCurrentSample ? pushConstants.mJitterAndAlpha.xy * pushConstants.mUnjitterFactor : vec2(0);
+	vec2 offset = params.mUnjitterCurrentSample ? params.mJitterAndAlpha.xy * params.mUnjitterFactor : vec2(0);
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 	return maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + 0.5) * invsize).rgb);
 }
@@ -130,13 +138,13 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 	getNeighbourhood(iuv, centerCol,c1,c2,c3,c4,c5,c6,c7,c8);
 
 	// variance clipping?
-	if (pushConstants.mVarianceClipping) {
+	if (params.mVarianceClipping) {
 		vec3 m1 = centerCol + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
 		vec3 m2 = centerCol*centerCol + c1*c1 + c2*c2 + c3*c3 + c4*c4 + c5*c5 + c6*c6 + c7*c7 + c8*c8;
 		vec3 mean = m1 / N;
 		vec3 sigma = sqrt(max(vec3(0), m2 / N - mean * mean));	// !! Here be dragons! (due to precision? - without the max(), some sigma components can get NaN!)
-		minCol = mean - pushConstants.mVarClipGamma * sigma;
-		maxCol = mean + pushConstants.mVarClipGamma * sigma;
+		minCol = mean - params.mVarClipGamma * sigma;
+		maxCol = mean + params.mVarClipGamma * sigma;
 
 		// NOTE: it is NOT guaranteed that centerCol is inside the AABB !
 		// so clip towards the mean
@@ -232,7 +240,7 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 	vec4 velocitySample = texture(sampler2D(uCurrentVelocity, uSampler), currentUv);
 
 	bool canUseVelocity = true;
-	if (pushConstants.mUseVelocityVectors == 0 || (pushConstants.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
+	if (params.mUseVelocityVectors == 0 || (params.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
 
 	if (canUseVelocity) {
 		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
@@ -358,8 +366,8 @@ vec4 sample_history_bicubic_b_spline(vec2 uv) {
 }
 
 vec4 sample_history_rgb(vec2 uv) {
-	if      (pushConstants.mInterpolationMode == 0)	return texture(sampler2D(uHistoryFrame, uSampler), uv);
-	else if (pushConstants.mInterpolationMode == 1) return sample_history_bicubic_b_spline(uv);
+	if      (params.mInterpolationMode == 0)	return texture(sampler2D(uHistoryFrame, uSampler), uv);
+	else if (params.mInterpolationMode == 1) return sample_history_bicubic_b_spline(uv);
 	else                                            return sample_history_bicubic_catmullrom(uv);
 }
 
@@ -372,9 +380,17 @@ void main()
 	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
 	if (any(greaterThanEqual(iuv, textureSize(uCurrentFrame, 0)))) return;
 
+	int paramsIdx = (pushConstants.splitScreen && iuv.x > pushConstants.splitX) ? 1 : 0;
+	params = pushConstants.param[paramsIdx];
+
 	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uCurrentFrame, 0);
 
-	if (pushConstants.mBypassHistoryUpdate) {
+	if (params.mPassThrough) {
+		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uCurrentFrame, iuv, 0).rgb), 1));
+		imageStore(uDebug,  iuv, vec4(0));
+		return;
+	}
+	if (params.mBypassHistoryUpdate) {
 		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
@@ -404,26 +420,26 @@ void main()
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
 
-	vec2 jitter = pushConstants.mJitterAndAlpha.xy;
-	float alpha = pushConstants.mJitterAndAlpha.a;
+	vec2 jitter = params.mJitterAndAlpha.xy;
+	float alpha = params.mJitterAndAlpha.a;
 
 	// ---- history rejection ----
 	// reject out-of-texture history samples
-	if (pushConstants.mRejectOutside) {
+	if (params.mRejectOutside) {
 		if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
-			alpha = pushConstants.mRejectionAlpha;
+			alpha = params.mRejectionAlpha;
 			rejected = true;
 		}
 	}
 
 	// cull by depth
-	if (pushConstants.mDepthCulling) {
+	if (params.mDepthCulling) {
 		// FIXME - shouldn't we better compare LINEAR depth?
 
 		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
-			alpha = pushConstants.mRejectionAlpha;
+			alpha = params.mRejectionAlpha;
 			rejected = true;
 		}
 	}
@@ -432,7 +448,7 @@ void main()
 	vec3 origHistorColor = historyColor;
 
 	// clip/clamp color
-	switch (pushConstants.mColorClampingOrClipping) {
+	switch (params.mColorClampingOrClipping) {
 		case 1:
 			historyColor = clamp(historyColor, colMin, colMax);
 			break;
@@ -457,14 +473,14 @@ void main()
 
 	if (!rejected) {
 		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
-		if (pushConstants.mLumaWeighting) {
+		if (params.mLumaWeighting) {
 			float lumaCurrent = luminance(currentColor);
 			float lumaHistory = luminance(historyColor);
 			float diff = abs(lumaCurrent - lumaHistory) / max(max(lumaCurrent, lumaHistory), 0.2);
 			float w = 1.0 - diff;
 			float ww = w * w;
 			// ww=0: bad history, use max alpha ; ww=1: good history, use min alpha
-			alpha = mix(pushConstants.mMaxAlpha, pushConstants.mMinAlpha, ww);
+			alpha = mix(params.mMaxAlpha, params.mMinAlpha, ww);
 		}
 	}
 
@@ -480,26 +496,28 @@ void main()
 
 	// --- debug ---
 
-	if (pushConstants.mDebugMode == 0) {
+	if (params.mDebugMode == 0) {
 		// colour bounding box, individual
 		vec3 tmp = colMax - colMin;
 		gDebugValue = vec4(tmp, 0);
-	} else if (pushConstants.mDebugMode == 1) {
+	} else if (params.mDebugMode == 1) {
 		// colour bounding box, size
 		vec3 tmp = colMax - colMin;
 		gDebugValue = vec4(vec3(tmp.x * tmp.y * tmp.z), 0);
-	} else if (pushConstants.mDebugMode == 2) {
+	} else if (params.mDebugMode == 2) {
 		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
 		gDebugValue = vec4(rejected ? 1 : 0, length(rectified_diff), 0, 0);
-	} else if (pushConstants.mDebugMode == 3) {
+	} else if (params.mDebugMode == 3) {
 		gDebugValue = vec4(vec3(alpha), 0);
-	} else if (pushConstants.mDebugMode == 4) {
+	} else if (params.mDebugMode == 4) {
 		gDebugValue = texelFetch(uCurrentVelocity, iuv, 0);
+	} else if (params.mDebugMode == 5) {
+		gDebugValue = vec4(antiAliased, 0);
 	}
 	// else keep current gDebugValue
 
-	gDebugValue *= pushConstants.mDebugScale;
-	if (pushConstants.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
+	gDebugValue *= params.mDebugScale;
+	if (params.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
 	imageStore(uDebug,  iuv, gDebugValue);
 
 }

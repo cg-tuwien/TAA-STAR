@@ -18,4 +18,13 @@ namespace imgui_helper {
 			ImGui::EndTooltip();
 		}
 	}
+
+	// checkbox for VkBool32
+	static bool CheckboxB32(const char* label, uint32_t* v) {
+		bool b = (0u != *v);
+		bool ret = ImGui::Checkbox(label, &b);
+		*v = b ? 1u : 0u;
+		return ret;
+	}
+
 }
