@@ -216,6 +216,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mFlipUvWithAssimp		= false;
 	bool mFlipManually			= true;
 
+	bool mHideWindowOnLoad = false;
+
 	wookiee(avk::queue& aQueue)
 		: mQueue{ &aQueue }
 		, mAntiAliasing{ &aQueue }
@@ -1305,11 +1307,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				Begin("Info & Settings");
 				SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
 				SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
-				Text("%.3f ms/frame", 1000.0f / GetIO().Framerate);
+
+				Text("%.3f ms/frame (%.1f FPS)", 1000.0f / GetIO().Framerate, GetIO().Framerate);
 				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
 				Text("%.3f ms/mModelsCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mModelsCommandBuffer{} time", inFlightIndex)));
 				Text("%.3f ms/Anti Aliasing", mAntiAliasing.duration());
-				Text("%.1f FPS", GetIO().Framerate);
 
 				// ac: print camera position
 				glm::vec3 p = mQuakeCam.translation();
@@ -1328,9 +1330,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				PlotLines("FPS", values.data(), static_cast<int>(values.size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(0.0f, 50.0f));
 
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F1]: Toggle input-mode");
-				TextColored(ImVec4(0.f, .6f, .8f, 1.f), " (UI vs. scene navigation)");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[LShift+LCtrl]: Slow-motion");
 				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F2]: Toggle slow-motion");
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "[F3]: Toggle GUI");
 
 				if (CollapsingHeader("Lights")) {
 					SliderInt("max point lights", &mMaxPointLightCount, 0, 98);
@@ -1437,8 +1439,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
 				}
-				if (CollapsingHeader("Debug")) {
-					if (rdoc::active()) {
+
+				if (rdoc::active()) {
+					if (CollapsingHeader("RenderDoc")) {
 						Separator();
 						if (Button("capture") && !mCaptureFramesLeft && mCaptureNumFrames > 0) mStartCapture = true;
 						SameLine();
@@ -1478,7 +1481,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// hide the window, so we can see the scene loading progress
 		GLFWwindow *glfwWin = wnd->handle()->mHandle;
-		glfwHideWindow(glfwWin);
+		if (mHideWindowOnLoad) glfwHideWindow(glfwWin);
 
 		// init Renderdoc debug markers
 		rdoc::init_debugmarkers(context().device());
@@ -1530,7 +1533,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
 
-		glfwShowWindow(glfwWin);
+		if (mHideWindowOnLoad) glfwShowWindow(glfwWin);
 	}
 
 	void init_updater_only_once() {
@@ -1869,6 +1872,9 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
+		int window_width  = 1920;
+		int window_height = 1080;
+		bool hide_window = false;
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strcmp("--", argv[i])) {
@@ -1894,11 +1900,23 @@ int main(int argc, char **argv) // <== Starting point ==
 					if (i >= argc) { badCmd = true; break; }
 					capture_n_frames = atoi(argv[i]);
 					if (capture_n_frames < 1) { badCmd = true; break; }
+				} else if (0 == _stricmp(argv[i], "-hidewindow")) {
+					hide_window = true;
 				} else if (0 == _stricmp(argv[i], "-sponza")) {
 					skip_scene_filename = true;
 				} else if (0 == _stricmp(argv[i], "-test")) {
 					skip_scene_filename = true;
 					sceneFileName = "../../extras/TestScene/TestScene.fscene";
+				} else if (0 == _stricmp(argv[i], "-w")) {
+					i++;
+					if (i >= argc) { badCmd = true; break; }
+					window_width = atoi(argv[i]);
+					if (window_width < 1) { badCmd = true; break; }
+				} else if (0 == _stricmp(argv[i], "-h")) {
+					i++;
+					if (i >= argc) { badCmd = true; break; }
+					window_height = atoi(argv[i]);
+					if (window_height < 1) { badCmd = true; break; }
 				} else {
 					badCmd = true;
 					break;
@@ -1912,14 +1930,14 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-w <width>] [-h <height>] [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-hidewindow] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
 
 		// Create a window and open it
 		auto mainWnd = gvk::context().create_window("TAA-STAR");
-		mainWnd->set_resolution({ 1920, 1080 });
+		mainWnd->set_resolution({ window_width, window_height });
 		mainWnd->set_additional_back_buffer_attachments({ 
 			avk::attachment::declare(vk::Format::eD32Sfloat, avk::on_load::clear, avk::depth_stencil(), avk::on_store::dont_care)
 		});
@@ -1943,6 +1961,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		chewbacca.mDisableMip = disableMip;
 		if (enableAlphaBlending)  chewbacca.mUseAlphaBlending = true;
 		if (disableAlphaBlending) chewbacca.mUseAlphaBlending = false;
+		chewbacca.mHideWindowOnLoad = hide_window;
 
 		// setup capturing if RenderDoc is active
 		if (capture_n_frames > 0 && rdoc::active()) {

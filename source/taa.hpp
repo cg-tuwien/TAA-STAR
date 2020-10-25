@@ -37,6 +37,7 @@ class taa : public gvk::invokee
 		VkBool32 mPassThrough				= VK_FALSE;		// effectively disables TAA: result <- input,
 		VkBool32 mUseYCoCg					= VK_FALSE;
 		VkBool32 mVarianceClipping			= VK_FALSE;
+		VkBool32 mShapedNeighbourhood		= VK_FALSE;
 		VkBool32 mLumaWeighting				= VK_FALSE;;
 		float mVarClipGamma					= 1.0f;
 		float mMinAlpha						= 1.0f - 0.97f;	// used for luminance-based weighting
@@ -49,6 +50,8 @@ class taa : public gvk::invokee
 		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
+
+		float pad1, pad2, pad3;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -267,6 +270,16 @@ public:
 		std::transform(std::begin(layoutTransitions), std::end(layoutTransitions), std::back_inserter(commandBufferReferences), [](avk::command_buffer& cb) { return std::ref(*cb); });
 		auto fen = mQueue->submit_with_fence(commandBufferReferences);
 		fen->wait_until_signalled();
+
+		// also initialize some gui elements based on image dimensions
+		auto w = mSrcColor[0]->get_image().width();
+		auto h = mSrcColor[0]->get_image().height();
+		mSplitX = w / 2;
+		int dZoomSrc = int(round(w / 96.f));
+		int dZoomDst = int(round(w / 9.6f));
+		int dZoomBrd = int(round(w / (96.f * 2.f)));
+		mPostProcessPushConstants.zoomSrcLTWH = { (w - dZoomSrc) / 2, (h - dZoomSrc) / 2, dZoomSrc, dZoomSrc };
+		mPostProcessPushConstants.zoomDstLTWH = { w - dZoomDst - dZoomBrd, dZoomBrd, dZoomDst, dZoomDst };
 	}
 
 	//// Return a reference to all the result images:
@@ -332,7 +345,9 @@ public:
 					CheckboxB32("pass through", &param.mPassThrough); HelpMarker("Effectively disables TAA, but runs shader");
 					static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
 					Combo("color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
-					CheckboxB32("variance clipping", &param.mVarianceClipping);
+					if (CheckboxB32("shaped neighbourhood", &param.mShapedNeighbourhood)) if (param.mShapedNeighbourhood) param.mVarianceClipping = VK_FALSE;
+					HelpMarker("[Karis14] average the min/max of 3x3 and 5-tap clipboxes");
+					if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
 					SliderFloat("gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
 					CheckboxB32("use YCoCg", &param.mUseYCoCg);
 					CheckboxB32("luma weighting", &param.mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
@@ -858,5 +873,5 @@ private:
 	bool mTriggerCapture = false;
 
 	bool mSplitScreen = false;
-	int  mSplitX = 1000;
+	int  mSplitX = 0;
 };

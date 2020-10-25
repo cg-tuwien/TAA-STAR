@@ -29,6 +29,7 @@ struct Parameters {
 	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
 	bool mUseYCoCg;
 	bool mVarianceClipping;
+	bool mShapedNeighbourhood;
 	bool mLumaWeighting;
 	float mVarClipGamma;
 	float mMinAlpha;				// used for luminance-based weighting
@@ -41,6 +42,8 @@ struct Parameters {
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
+
+	float pad1, pad2, pad3;
 };
 layout(push_constant) uniform PushConstants {
 	Parameters	param[2];
@@ -151,6 +154,15 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 		cliptowardsCol = mean;
 
 		// TODO: we can even clip the other AABB against this one
+	} else if (params.mShapedNeighbourhood) {
+		vec3 minCol_3x3  = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+		vec3 maxCol_3x3  = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
+		vec3 minCol_5tap = min(min(min(min(centerCol, c2), c4), c5), c7);
+		vec3 maxCol_5tap = max(max(max(max(centerCol, c2), c4), c5), c7);
+		minCol = (minCol_3x3 + minCol_5tap) * 0.5;
+		maxCol = (maxCol_3x3 + maxCol_5tap) * 0.5;
+		cliptowardsCol = centerCol;
+
 	} else {
 		minCol = min(min(min(min(min(min(min(min(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
 		maxCol = max(max(max(max(max(max(max(max(centerCol, c1), c2), c3), c4), c5), c6), c7), c8);
