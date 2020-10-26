@@ -20,6 +20,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\IniUtil.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\cg_stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Publish_Vulkan|x64'">Create</PrecompiledHeader>
@@ -31,9 +32,9 @@
   <ItemGroup>
     <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="shaders\shader_cpu_common.h" />
-    <ClInclude Include="source\debug_helper.hpp" />
+    <ClInclude Include="source\IniUtil.h" />
+    <ClInclude Include="source\rdoc_helper.hpp" />
     <ClInclude Include="source\imgui_helper.hpp" />
-    <ClInclude Include="source\renderdoc_app.h" />
     <ClInclude Include="source\splines.hpp" />
     <ClInclude Include="source\taa.hpp" />
     <ClInclude Include="source\cg_stdafx.hpp" />
@@ -160,7 +161,7 @@
       <ForcedIncludeFiles>cg_stdafx.hpp</ForcedIncludeFiles>
       <TreatSpecificWarningsAsErrors>4715</TreatSpecificWarningsAsErrors>
       <PrecompiledHeaderFile>cg_stdafx.hpp</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>shaders;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>shaders;external\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -188,7 +189,7 @@
       <ForcedIncludeFiles>cg_stdafx.hpp</ForcedIncludeFiles>
       <TreatSpecificWarningsAsErrors>4715</TreatSpecificWarningsAsErrors>
       <PrecompiledHeaderFile>cg_stdafx.hpp</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>shaders;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>shaders;external\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -214,7 +215,7 @@
       <ForcedIncludeFiles>cg_stdafx.hpp</ForcedIncludeFiles>
       <TreatSpecificWarningsAsErrors>4715</TreatSpecificWarningsAsErrors>
       <PrecompiledHeaderFile>cg_stdafx.hpp</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>shaders;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>shaders;external\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>

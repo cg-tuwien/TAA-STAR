@@ -7,7 +7,7 @@
 #include "imgui_helper.hpp"
 #include "helper_functions.hpp"
 
-#include "debug_helper.hpp"
+#include "rdoc_helper.hpp"
 #include "shader_cpu_common.h"
 
 #define TAA_USE_POSTPROCESS_STEP 1

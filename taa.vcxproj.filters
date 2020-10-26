@@ -21,6 +21,7 @@
     </ClCompile>
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\splines.cpp" />
+    <ClCompile Include="source\IniUtil.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\cg_stdafx.hpp">
@@ -31,14 +32,14 @@
     </ClInclude>
     <ClInclude Include="source\helper_functions.hpp" />
     <ClInclude Include="source\taa.hpp" />
-    <ClInclude Include="source\renderdoc_app.h" />
-    <ClInclude Include="source\debug_helper.hpp" />
     <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="shaders\shader_cpu_common.h">
       <Filter>shaders</Filter>
     </ClInclude>
     <ClInclude Include="source\imgui_helper.hpp" />
     <ClInclude Include="source\splines.hpp" />
+    <ClInclude Include="source\rdoc_helper.hpp" />
+    <ClInclude Include="source\IniUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">

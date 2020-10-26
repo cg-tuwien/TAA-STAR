@@ -1,15 +1,14 @@
-#include "debug_helper.hpp"
-
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
-
-#include "helper_functions.hpp"
-
-#include "taa.hpp"
-
-#include "splines.hpp"
-
+#include <portable-file-dialogs.h>
 #include <string>
+
+#include "rdoc_helper.hpp"
+#include "helper_functions.hpp"
+#include "taa.hpp"
+#include "splines.hpp"
+#include "IniUtil.h"
+
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -1271,7 +1270,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				static bool firstTimeInit = true;
 
-				static bool showCamPathDefWindow = true;
+				static bool showCamPathDefWindow = false;
 
 				static CameraState savedCamState = {};
 				if (firstTimeInit) {
@@ -1382,6 +1381,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (Button("save cam")) { savedCamState.t = mQuakeCam.translation(); savedCamState.r = mQuakeCam.rotation(); };
 					SameLine();
 					if (Button("restore cam")) { mQuakeCam.set_translation(savedCamState.t); mQuakeCam.set_rotation(savedCamState.r); }
+					SameLine();
+					if (Button("print cam")) {
+						glm::vec3 t = mQuakeCam.translation();
+						glm::quat r = mQuakeCam.rotation();
+						//printf("{ \"name\", {%gf, %gf, %gf}, {%gf, %gf, %gf, %gf} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
+						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
+					}
 
 					struct FuncHolder {
 						static bool CamPresetGetter(void* data, int idx, const char** out_str) {
@@ -1395,13 +1401,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						mQuakeCam.set_rotation   (mCameraPresets[selectedCamPreset].r);
 					}
 
-					if (Button("print cam")) {
-						glm::vec3 t = mQuakeCam.translation();
-						glm::quat r = mQuakeCam.rotation();
-						//printf("{ \"name\", {%gf, %gf, %gf}, {%gf, %gf, %gf, %gf} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
-						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
-					}
-
 					Checkbox("follow path", &mCameraSpline.enable);
 					if (mCameraSpline.enable && mCameraSpline.spline.camP.size() < 4) mCameraSpline.enable = false; // need min. 4 pts
 					if (mCameraSpline.enable && mCameraSpline.tStart == 0.f) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
@@ -1409,6 +1408,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (Button("reset")) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
 					SameLine();
 					if (Button("edit")) showCamPathDefWindow = true;
+					Checkbox("cycle", &mCameraSpline.cyclic); SameLine();
+					Checkbox("rotate", &mCameraSpline.use_rotation);
 
 					PopID();
 				}
@@ -1490,12 +1491,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SetWindowSize(ImVec2(250.0f, 400.0f), ImGuiCond_FirstUseEver);
 
 					auto &pos = mCameraSpline.spline.camP;
+					auto &rot = mCameraSpline.spline.camR;
 					if (Button("clear")) { pos.clear(); pos.push_back(glm::vec3(0)); }
 					PushItemWidth(60);
-					InputFloat("max t", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
+					InputFloat("duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
 					PopItemWidth();
-					SameLine(); Checkbox("use arclen", &mCameraSpline.spline.use_arclen);
-					SameLine(); if (Button("recalc")) mCameraSpline.spline.calced_arclen = false;
+					SameLine(); Checkbox("const.speed", &mCameraSpline.spline.use_arclen);
+					Checkbox("do rotation", &mCameraSpline.use_rotation);
 					int delPos = -1;
 					int addPos = -1;
 					int moveUp = -1;
@@ -1503,21 +1505,50 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					bool changed = false;
 					for (int i = 0; i < static_cast<int>(pos.size()); ++i) {
 						PushID(i);
-						PushItemWidth(120);
+						PushItemWidth(140);
 						if (InputFloat3("##pos", &(pos[i].x), "%.2f")) changed = true;
+						SameLine();
+						if (InputFloat4("##rot", &(rot[i].x), "%.2f")) changed = true;
 						PopItemWidth();
+						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); rot[i] = mQuakeCam.rotation(); changed = true; }
 						SameLine(); if (Button("-")) delPos = i;
 						SameLine(); if (Button("+")) addPos = i;
 						SameLine(); if (Button("^")) moveUp = i;
 						SameLine(); if (Button("v")) moveDn = i;
-						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); changed = true; }
+						SameLine(); if (Button("go")) { mQuakeCam.set_translation(pos[i]); mQuakeCam.set_rotation(rot[i]); }
 						PopID();
 					}
-					if (addPos >= 0) { pos.insert(pos.begin() + addPos + 1, glm::vec3(0));	changed = true; }
-					if (delPos >= 0) { pos.erase (pos.begin() + delPos);					changed = true; }
-					if (moveUp >  0) { std::swap(pos[moveUp - 1], pos[moveUp]);				changed = true; }
-					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]); changed = true; }
-					if (changed) mCameraSpline.spline.calced_arclen = false;
+					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, glm::vec3(0));	rot.insert(rot.begin() + addPos + 1, glm::quat());	changed = true; }
+					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						rot.erase (rot.begin() + delPos);					changed = true; }
+					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				std::swap(rot[moveUp - 1], rot[moveUp]);			changed = true; }
+					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]);				std::swap(rot[moveDn + 1], rot[moveDn]);			changed = true; }
+					if (changed) mCameraSpline.spline.modified();
+
+					Separator();
+					auto t = mQuakeCam.translation();
+					auto r = mQuakeCam.rotation();
+					Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f", t.x, t.y, t.z, r.x, r.y, r.z, r.w);
+					Separator();
+
+					static std::string lastFn = "";
+
+					if (Button("Load...")) {
+						//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						if (fns.size()) {
+							loadCamPath(fns[0]);
+						}
+					}
+					SameLine();
+					if (Button("Save...")) {
+						//if (lastParamsFn == "") lastParamsFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+						auto fn = pfd::save_file("Save camera path as", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						if (fn != "") {
+							saveCamPath(fn, true);
+							lastFn = fn;
+						}
+					}
+
 
 					End();
 				}
@@ -1657,9 +1688,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		static float tAccumulated = 0.f;
 		tAccumulated += dt; // don't use t directly in animation, problems with "slo-mo" !
 
+		// camera path
 		if (mCameraSpline.enable) {
 			// FIXME for slow-mo! also need to fix reset
-			mQuakeCam.set_translation(mCameraSpline.spline.getPos(t - mCameraSpline.tStart));
+			float t_spline = (t - mCameraSpline.tStart) / mCameraSpline.spline.cam_t_max;
+			if (t_spline > 1.f) {
+				if (mCameraSpline.cyclic) t_spline = glm::fract(t_spline); else { mCameraSpline.enable = false; mCameraSpline.tStart = 0.f; }
+			}
+			glm::vec3 pos;
+			glm::quat rot;
+			mCameraSpline.spline.interpolate(t_spline, pos, rot);
+			mQuakeCam.set_translation(pos);
+			if (mCameraSpline.use_rotation) mQuakeCam.set_rotation(rot);
 		}
 
 		float dtCam = dt;
@@ -1796,6 +1836,52 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		gvk::current_composition()->remove_element(mQuakeCam);
 	}
 
+	bool saveCamPath(std::string fullFilename, bool overwrite) {
+		if (!overwrite) {
+			struct stat buffer;
+			if (stat(fullFilename.c_str(), &buffer) == 0) return false;
+		}
+
+		mINI::INIFile file(fullFilename);
+		mINI::INIStructure ini;
+		std::string sec;
+
+		sec = "CamPath";
+		iniWriteFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
+		iniWriteBool	(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
+		iniWriteInt		(ini, sec, "num_pos",	(int)mCameraSpline.spline.camP.size());
+		for (int i = 0; i < (int)mCameraSpline.spline.camP.size(); ++i) {
+			iniWriteVec3(ini, sec, "pos_" + std::to_string(i), mCameraSpline.spline.camP[i]);
+			iniWriteQuat(ini, sec, "rot_" + std::to_string(i), mCameraSpline.spline.camR[i]);
+		}
+
+		return file.generate(ini);
+	}
+
+	bool loadCamPath(std::string fullFilename) {
+		mINI::INIFile file(fullFilename);
+		mINI::INIStructure ini;
+
+		if (!file.read(ini)) return false;
+
+		std::string sec;
+
+		sec = "CamPath";
+		iniReadFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
+		iniReadBool		(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
+		int num_pos = 0;
+		iniReadInt		(ini, sec, "num_pos",	num_pos);
+		mCameraSpline.spline.camP.resize(num_pos);
+		mCameraSpline.spline.camR.resize(num_pos);
+		for (int i = 0; i < num_pos; ++i) {
+			iniReadVec3 (ini, sec, "pos_" + std::to_string(i), mCameraSpline.spline.camP[i]);
+			iniReadQuat (ini, sec, "rot_" + std::to_string(i), mCameraSpline.spline.camR[i]);
+		}
+
+		return true;
+	}
+
+
 private: // v== Member variables ==v
 
 	avk::queue* mQueue;
@@ -1925,7 +2011,8 @@ private: // v== Member variables ==v
 	struct {
 		bool   enable;
 		float  tStart;
-		//Spline spline = Spline({glm::vec3(0,0,0),glm::vec3(1,0,0),glm::vec3(2,0,0),glm::vec3(3,0,0)});
+		bool   use_rotation = true;
+		bool   cyclic = true;
 		Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
 	} mCameraSpline;
 };
