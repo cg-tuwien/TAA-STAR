@@ -15,6 +15,9 @@ layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restric
 layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
+// texelFetch is undefined when sampling outside the texture, so always clamp
+#define CLAMP_TO_TEX(v) clamp((v), ivec2(0), textureSize(uCurrentFrame,0))
+
 // ###### PUSH CONSTANTS AND UBOs ########################
 struct Parameters {
 	vec4 mJitterAndAlpha;
@@ -37,13 +40,14 @@ struct Parameters {
 	float mRejectionAlpha;
 	bool mRejectOutside;
 	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
+	bool mUseLongestVelocityVector;
 	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
 
-	float pad1, pad2, pad3;
+	float pad1, pad2;
 };
 layout(push_constant) uniform PushConstants {
 	Parameters	param[2];
@@ -248,13 +252,28 @@ vec3 rgb2srgb(vec3 rgb)
 #define TO_OUTPUT_FORMAT(x) (x)
 #endif
 
-void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
-	vec4 velocitySample = texture(sampler2D(uCurrentVelocity, uSampler), currentUv);
+void getHistoryPosition(in ivec2 currentTc, in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
+	vec4 velocitySample = texelFetch(uCurrentVelocity, currentTc, 0);
 
 	bool canUseVelocity = true;
 	if (params.mUseVelocityVectors == 0 || (params.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
 
 	if (canUseVelocity) {
+		if (params.mUseLongestVelocityVector) {
+			// sample 3x3 neighbourhood, take longest vector ; note: we don't deal with depth here, should we?
+			vec2 maxVel = velocitySample.xy;
+			vec2 sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 0, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1,  0)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1,  0)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 0,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			velocitySample.xy = sam;
+		}
+
 		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
 		historyUv    = currentUv    - velocitySample.xy;
 		historyDepth = currentDepth - velocitySample.z;
@@ -427,7 +446,7 @@ void main()
 //	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
 	vec2 historyUv;
 	float expectedHistoryDepth;
-	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
+	getHistoryPosition(iuv, uv, depth, historyUv, expectedHistoryDepth);
 	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentFrame, 0));
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);

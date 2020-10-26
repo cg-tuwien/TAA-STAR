@@ -45,13 +45,14 @@ class taa : public gvk::invokee
 		float mRejectionAlpha				= 1.0f;
 		VkBool32 mRejectOutside				= VK_FALSE;
 		int mUseVelocityVectors				= 1;			// 0=off 1=for movers only 2=for everything
+		VkBool32 mUseLongestVelocityVector	= VK_FALSE;
 		int mInterpolationMode				= 0;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 
 		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		float pad1, pad2, pad3;
+		float pad1, pad2;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -365,6 +366,7 @@ public:
 					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
 					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
+					CheckboxB32("use longest vel.vector", &param.mUseLongestVelocityVector);
 					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
 					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
 					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "result", "debug" /* always last */ };

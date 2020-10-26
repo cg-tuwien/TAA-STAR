@@ -7,6 +7,8 @@
 
 #include "taa.hpp"
 
+#include "splines.hpp"
+
 #include <string>
 
 // use forward rendering? (if 0: use deferred shading)
@@ -183,11 +185,12 @@ class wookiee : public gvk::invokee
 
 	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
 		{ "Start" },	// t,r filled in from code
-		{ "ES street flicker",   {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
-		{ "ES window flicker",   {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
-		{ "ES fence \"hole\"",   {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
-		{ "ES strafe problem",   {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
-		{ "ES catmull showcase", {-30.011652f, 0.829173f, 27.225056f}, {-0.224099f, 0.012706f, -0.972886f, -0.055162f} },	// enable camera bobbing to see difference
+		{ "ES street flicker",       {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
+		{ "ES window flicker",       {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
+		{ "ES fence \"hole\"",       {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
+		{ "ES strafe problem",       {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
+		{ "ES catmull showcase",     {-30.011652f, 0.829173f, 27.225056f}, {-0.224099f, 0.012706f, -0.972886f, -0.055162f} },	// enable camera bobbing to see difference
+		{ "ES flicker bg. building", {-51.779095f, 3.302949f, 42.258675f}, {-0.922331f, -0.035066f, 0.384432f, -0.014615f} },
 	};
 
 	struct MovingObjectDef {
@@ -1268,6 +1271,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				static bool firstTimeInit = true;
 
+				static bool showCamPathDefWindow = true;
+
 				static CameraState savedCamState = {};
 				if (firstTimeInit) {
 					savedCamState = { "saved", mQuakeCam.translation(), mQuakeCam.rotation() };
@@ -1360,6 +1365,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
 
 				if (CollapsingHeader("Camera")) {
+					PushID("CameraStuff");
 					Checkbox("move", &mAutoMovement);
 					SameLine();
 					PushItemWidth(60);
@@ -1395,6 +1401,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//printf("{ \"name\", {%gf, %gf, %gf}, {%gf, %gf, %gf, %gf} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
 						printf("{ \"name\", {%ff, %ff, %ff}, {%ff, %ff, %ff, %ff} },\n", t.x, t.y, t.z, r.w, r.x, r.y, r.z);
 					}
+
+					Checkbox("follow path", &mCameraSpline.enable);
+					if (mCameraSpline.enable && mCameraSpline.spline.camP.size() < 4) mCameraSpline.enable = false; // need min. 4 pts
+					if (mCameraSpline.enable && mCameraSpline.tStart == 0.f) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
+					SameLine();
+					if (Button("reset")) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
+					SameLine();
+					if (Button("edit")) showCamPathDefWindow = true;
+
+					PopID();
 				}
 				if (CollapsingHeader("Moving object")) {
 					bool old_enabled = mMovingObject.enabled;
@@ -1463,7 +1479,48 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 				}
 
-				End();
+				End();	// main window
+
+
+
+				// camera path def window
+				if (showCamPathDefWindow) {
+					Begin("Camera path", &showCamPathDefWindow);
+					SetWindowPos(ImVec2(500.0f, 10.0f), ImGuiCond_FirstUseEver);		// TODO: fix pos
+					SetWindowSize(ImVec2(250.0f, 400.0f), ImGuiCond_FirstUseEver);
+
+					auto &pos = mCameraSpline.spline.camP;
+					if (Button("clear")) { pos.clear(); pos.push_back(glm::vec3(0)); }
+					PushItemWidth(60);
+					InputFloat("max t", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
+					PopItemWidth();
+					SameLine(); Checkbox("use arclen", &mCameraSpline.spline.use_arclen);
+					SameLine(); if (Button("recalc")) mCameraSpline.spline.calced_arclen = false;
+					int delPos = -1;
+					int addPos = -1;
+					int moveUp = -1;
+					int moveDn = -1;
+					bool changed = false;
+					for (int i = 0; i < static_cast<int>(pos.size()); ++i) {
+						PushID(i);
+						PushItemWidth(120);
+						if (InputFloat3("##pos", &(pos[i].x), "%.2f")) changed = true;
+						PopItemWidth();
+						SameLine(); if (Button("-")) delPos = i;
+						SameLine(); if (Button("+")) addPos = i;
+						SameLine(); if (Button("^")) moveUp = i;
+						SameLine(); if (Button("v")) moveDn = i;
+						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); changed = true; }
+						PopID();
+					}
+					if (addPos >= 0) { pos.insert(pos.begin() + addPos + 1, glm::vec3(0));	changed = true; }
+					if (delPos >= 0) { pos.erase (pos.begin() + delPos);					changed = true; }
+					if (moveUp >  0) { std::swap(pos[moveUp - 1], pos[moveUp]);				changed = true; }
+					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]); changed = true; }
+					if (changed) mCameraSpline.spline.calced_arclen = false;
+
+					End();
+				}
 
 				firstTimeInit = false;
 			});
@@ -1600,6 +1657,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		static float tAccumulated = 0.f;
 		tAccumulated += dt; // don't use t directly in animation, problems with "slo-mo" !
 
+		if (mCameraSpline.enable) {
+			// FIXME for slow-mo! also need to fix reset
+			mQuakeCam.set_translation(mCameraSpline.spline.getPos(t - mCameraSpline.tStart));
+		}
+
 		float dtCam = dt;
 		static float tCamBob = 0.f;
 		if (mAutoMovementUnits == 1) dtCam = 1.f;
@@ -1659,7 +1721,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mQuakeCam.set_projection_matrix(modifiedProjMat);
 		
-		if (gvk::input().key_pressed(gvk::key_code::escape)) {
+		if (gvk::input().key_pressed(gvk::key_code::escape) || glfwWindowShouldClose(gvk::context().main_window()->handle()->mHandle)) {
 			// Stop the current composition:
 			gvk::current_composition()->stop();
 		}
@@ -1859,6 +1921,13 @@ private: // v== Member variables ==v
 		uint32_t mNumOpaqueMeshgroups;
 		uint32_t mNumTransparentMeshgroups;
 	} mSceneData;
+
+	struct {
+		bool   enable;
+		float  tStart;
+		//Spline spline = Spline({glm::vec3(0,0,0),glm::vec3(1,0,0),glm::vec3(2,0,0),glm::vec3(3,0,0)});
+		Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
+	} mCameraSpline;
 };
 
 int main(int argc, char **argv) // <== Starting point ==

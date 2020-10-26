@@ -20,6 +20,7 @@
       <Filter>precompiled_headers</Filter>
     </ClCompile>
     <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\splines.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\cg_stdafx.hpp">
@@ -37,6 +38,7 @@
       <Filter>shaders</Filter>
     </ClInclude>
     <ClInclude Include="source\imgui_helper.hpp" />
+    <ClInclude Include="source\splines.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">
