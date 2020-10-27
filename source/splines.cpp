@@ -1,13 +1,12 @@
 #include "splines.hpp"
 
+#include <glm/gtx/norm.hpp>
 
 // ---- Catmull Rom splines ( info source: https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline )
 template <typename T>
 float CatmullRom<T>::catmullRom_getTime(float t, T &p0, T &p1) {
-	const float alpha = 0.5f; // 0.5 = centripetal catmull rom (0 = uniform, 1 = chordal)
-
 	// calc time for next control point
-	return t + std::pow(glm::length(p1 - p0), alpha);
+	return t + std::pow(glm::length(p1 - p0), mAlpha);
 }
 
 template <typename T>
@@ -143,13 +142,31 @@ float Spline::map_arclen_t(float arc_t) {
 }
 
 void Spline::interpolate(float t, glm::vec3 &pos, glm::quat &rot) {
-	t = std::max(0.f, std::min(1.f, t ));
+	glm::vec3 posOld = pos;
+
+	t = glm::clamp(t, 0.f, 1.f);
 	if (use_arclen) t = map_arclen_t(t);
 	int seg;
 	float tseg;
 	pos = cmr_pos.catmullRom_chain(camP, t, &seg, &tseg);
 
-	// just lerp rot
-	rot = glm::mix(camR[seg], camR[seg + 1], tseg);
+	if (rotation_mode == 1) {
+		// just lerp rot
+		rot = glm::mix(camR[seg], camR[seg + 1], tseg);
+	} else if (rotation_mode == 2) {
+		glm::vec3 v = pos - posOld;
+		if (glm::length2(v) > 0.f) rot = glm::quatLookAt(glm::normalize(v), glm::vec3(0, 1, 0));
+
+		//const float dt = 0.00001f;
+		//float t2 = glm::clamp(t + dt, 0.f, 1.f);
+		//if (t2 > t) {
+		//	glm::vec3 v = cmr_pos.catmullRom_chain(camP, t2) - pos;
+		//	if (glm::length2(v) > 0.f) {
+		//		rot = glm::quatLookAt(glm::normalize(v), glm::vec3(0, 1, 0));
+		//		//v = glm::normalize(v);
+		//		//printf("t=%.3f v=%.2f %.2f %.2f  p=%.2f %.2f %.2f  q=%.2f %.2f %.2f %.2f\n", t, v.x, v.y, v.z, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w);
+		//	}
+		//}
+	}
 }
 

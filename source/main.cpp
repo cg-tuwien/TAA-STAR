@@ -1409,7 +1409,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Button("edit")) showCamPathDefWindow = true;
 					Checkbox("cycle", &mCameraSpline.cyclic); SameLine();
-					Checkbox("rotate", &mCameraSpline.use_rotation);
+					Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
 
 					PopID();
 				}
@@ -1497,7 +1497,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					InputFloat("duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
 					PopItemWidth();
 					SameLine(); Checkbox("const.speed", &mCameraSpline.spline.use_arclen);
-					Checkbox("do rotation", &mCameraSpline.use_rotation);
+					Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
 					int delPos = -1;
 					int addPos = -1;
 					int moveUp = -1;
@@ -1505,6 +1505,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					bool changed = false;
 					for (int i = 0; i < static_cast<int>(pos.size()); ++i) {
 						PushID(i);
+						if (i == 1 || i == static_cast<int>(pos.size()) - 1) Separator();
 						PushItemWidth(140);
 						if (InputFloat3("##pos", &(pos[i].x), "%.2f")) changed = true;
 						SameLine();
@@ -1522,13 +1523,30 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						rot.erase (rot.begin() + delPos);					changed = true; }
 					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				std::swap(rot[moveUp - 1], rot[moveUp]);			changed = true; }
 					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]);				std::swap(rot[moveDn + 1], rot[moveDn]);			changed = true; }
-					if (changed) mCameraSpline.spline.modified();
 
 					Separator();
 					auto t = mQuakeCam.translation();
 					auto r = mQuakeCam.rotation();
 					Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f", t.x, t.y, t.z, r.x, r.y, r.z, r.w);
 					Separator();
+
+					if (Button("auto-set cycle lead in/out")) {
+						// affects last regular point and in/out points
+						auto sz = pos.size();
+						if (sz > 3) {
+							pos[sz-2] = pos[1];		rot[sz-2] = rot[1];
+							pos[sz-1] = pos[2];		rot[sz-1] = rot[2];
+							pos[0]    = pos[sz-3];	rot[0]    = rot[sz-3];
+							changed = true;
+						}
+					}
+					HelpMarker("Update points for cyclic path:\nLast regular point is set to first regular point.\nLead-in and lead-out are set to match cycle.");
+
+					PushItemWidth(80);
+					float alpha = mCameraSpline.spline.get_catmullrom_alpha();
+					if (InputFloat("Catmull-Rom alpha", &alpha)) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
+					PopItemWidth();
+					HelpMarker("0.5: centripetal\n0.0: uniform\n1.0: chordal");
 
 					static std::string lastFn = "";
 
@@ -1537,6 +1555,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
 						if (fns.size()) {
 							loadCamPath(fns[0]);
+							changed = true;
 						}
 					}
 					SameLine();
@@ -1549,6 +1568,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						}
 					}
 
+					if (changed) mCameraSpline.spline.modified();
 
 					End();
 				}
@@ -1695,11 +1715,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (t_spline > 1.f) {
 				if (mCameraSpline.cyclic) t_spline = glm::fract(t_spline); else { mCameraSpline.enable = false; mCameraSpline.tStart = 0.f; }
 			}
-			glm::vec3 pos;
-			glm::quat rot;
+			glm::vec3 pos = mQuakeCam.translation();
+			glm::quat rot = mQuakeCam.rotation();
 			mCameraSpline.spline.interpolate(t_spline, pos, rot);
 			mQuakeCam.set_translation(pos);
-			if (mCameraSpline.use_rotation) mQuakeCam.set_rotation(rot);
+			mQuakeCam.set_rotation(rot);
 		}
 
 		float dtCam = dt;
@@ -1849,6 +1869,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		sec = "CamPath";
 		iniWriteFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
 		iniWriteBool	(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
+		iniWriteInt		(ini, sec, "rotmode",	mCameraSpline.spline.rotation_mode);
+		iniWriteFloat	(ini, sec, "cmr_alpha",	mCameraSpline.spline.get_catmullrom_alpha());
 		iniWriteInt		(ini, sec, "num_pos",	(int)mCameraSpline.spline.camP.size());
 		for (int i = 0; i < (int)mCameraSpline.spline.camP.size(); ++i) {
 			iniWriteVec3(ini, sec, "pos_" + std::to_string(i), mCameraSpline.spline.camP[i]);
@@ -1866,9 +1888,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		std::string sec;
 
+		float alpha = 0.5f;
+
 		sec = "CamPath";
 		iniReadFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
 		iniReadBool		(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
+		iniReadInt		(ini, sec, "rotmode",	mCameraSpline.spline.rotation_mode);
+		iniReadFloat	(ini, sec, "cmr_alpha",	alpha); mCameraSpline.spline.set_catmullrom_alpha(alpha);
 		int num_pos = 0;
 		iniReadInt		(ini, sec, "num_pos",	num_pos);
 		mCameraSpline.spline.camP.resize(num_pos);
@@ -2011,7 +2037,6 @@ private: // v== Member variables ==v
 	struct {
 		bool   enable;
 		float  tStart;
-		bool   use_rotation = true;
 		bool   cyclic = true;
 		Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
 	} mCameraSpline;
