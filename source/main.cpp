@@ -326,6 +326,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mLightsourcesBuffer[inFlightIndex]->fill(&updatedData, 0, avk::sync::not_required());
 	}
 
+	void update_camera_path_draw_buffer() {
+		if (!mCameraSpline.draw) return;
+		if (mDrawCamPathPositions_valid) return;
+		if (mCameraSpline.drawNpoints < 2) return;
+
+		// sample points from spline
+		std::vector<glm::vec3> samples(mMaxCamPathPositions); // workaround, cannot fill buffer partially(?) //  (mCameraSpline.drawNpoints);
+		glm::vec3 pos = glm::vec3(0);
+		glm::quat rot = glm::quat(1,0,0,0);
+		for (int i = 0; i < mCameraSpline.drawNpoints; ++i) {
+			float t = static_cast<float>(i) / static_cast<float>(mCameraSpline.drawNpoints - 1);
+			mCameraSpline.spline.interpolate(t, pos, rot);
+			samples[i] = pos;
+		}
+
+		mNumCamPathPositions = mCameraSpline.drawNpoints;
+		mDrawCamPathPositionsBuffer->fill(samples.data(), 0, avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
+
+		mDrawCamPathPositions_valid = true;
+		mReRecordCommandBuffers = true;
+	}
+
 	void prepare_framebuffers_and_post_process_images()
 	{
 		using namespace avk;
@@ -1128,6 +1150,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	}
 
+	void prepare_common_pipelines() {
+		using namespace avk;
+		using namespace gvk;
+
+		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
+			"shaders/drawpath.vert", "shaders/drawpath.frag",
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
+			cfg::primitive_topology::points,
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
+		);
+	}
+
 	// stuff that will eventually go into avk::command_buffer_t::draw_indexed_indirect later
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
 		cmd->draw_indexed_indirect(
@@ -1250,6 +1286,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 
 		helpers::record_timing_interval_end(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
+
+		// draw camera path
+		if (mCameraSpline.draw && mDrawCamPathPositions_valid) {
+			commandBuffer->bind_pipeline(mPipelineDrawCamPath);
+			commandBuffer->bind_descriptors(mPipelineDrawCamPath->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+				}));
+			//commandBuffer->draw_vertices(mDrawCamPathPositionsBuffer); // this uses buffer meta -> num elements, cannot modify that :/
+			commandBuffer->handle().bindVertexBuffers(0u, mDrawCamPathPositionsBuffer->handle(), vk::DeviceSize{ 0 });
+			commandBuffer->handle().draw(static_cast<uint32_t>(mNumCamPathPositions), 1u, 0u, 0u);
+		}
+
 		commandBuffer->end_render_pass();
 		rdoc::endSection(commandBuffer->handle());
 		commandBuffer->end_recording();
@@ -1271,6 +1319,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				static bool firstTimeInit = true;
 
 				static bool showCamPathDefWindow = false;
+				static bool showImguiDemoWindow  = false;
 
 				static CameraState savedCamState = {};
 				if (firstTimeInit) {
@@ -1480,8 +1529,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 				}
 
+				if (Button("ImGui?")) showImguiDemoWindow = true;
 				End();	// main window
-
 
 
 				// camera path def window
@@ -1496,7 +1545,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					PushItemWidth(60);
 					InputFloat("duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
 					PopItemWidth();
-					SameLine(); Checkbox("const.speed", &mCameraSpline.spline.use_arclen);
+					SameLine();
+					if (Checkbox("const.speed", &mCameraSpline.spline.use_arclen)) mDrawCamPathPositions_valid = false;
 					Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
 					int delPos = -1;
 					int addPos = -1;
@@ -1542,6 +1592,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 					HelpMarker("Update points for cyclic path:\nLast regular point is set to first regular point.\nLead-in and lead-out are set to match cycle.");
 
+					static int numpts = 100;
+					Checkbox("show path", &mCameraSpline.draw); SameLine();
+					PushItemWidth(80);
+					if (InputInt("points", &mCameraSpline.drawNpoints, 0)) mDrawCamPathPositions_valid = false;
+					PopItemWidth();
+					if (mCameraSpline.drawNpoints > mMaxCamPathPositions) mCameraSpline.drawNpoints = mMaxCamPathPositions;
+
 					PushItemWidth(80);
 					float alpha = mCameraSpline.spline.get_catmullrom_alpha();
 					if (InputFloat("Catmull-Rom alpha", &alpha)) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
@@ -1568,10 +1625,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						}
 					}
 
-					if (changed) mCameraSpline.spline.modified();
+					if (changed) { mCameraSpline.spline.modified(); mDrawCamPathPositions_valid = false; }
 
 					End();
 				}
+
+				if (showImguiDemoWindow) ShowDemoWindow(&showImguiDemoWindow);
 
 				firstTimeInit = false;
 			});
@@ -1603,12 +1662,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_lightsources_ubo();
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
+
+		// create a buffer for drawing camera path
+		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec3), mMaxCamPathPositions).describe_only_member(glm::vec3(0), avk::content_description::position));
+
 		load_and_prepare_scene();
 #if FORWARD_RENDERING
 		prepare_forward_rendering_pipelines();
 #else
 		prepare_deferred_shading_pipelines();
 #endif
+		prepare_common_pipelines();
 
 #if !RECORD_CMDBUFFER_IN_RENDER
 		record_command_buffer_for_models();
@@ -1833,6 +1897,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto mainWnd = gvk::context().main_window();
 		update_matrices_and_user_input();
 		update_lightsources();
+		update_camera_path_draw_buffer();
 
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
@@ -1958,6 +2023,13 @@ private: // v== Member variables ==v
 	avk::graphics_pipeline mPipelineFwdTransparent;
 	avk::graphics_pipeline mPipelineFwdTransparentNoBlend;
 
+	// Common pipelines:
+	avk::graphics_pipeline mPipelineDrawCamPath;
+	const int mMaxCamPathPositions = 10'000;
+	int mNumCamPathPositions = 0;
+	bool mDrawCamPathPositions_valid = false;
+	avk::buffer mDrawCamPathPositionsBuffer;
+
 	// The elements to handle the post processing effects:
 	taa<cConcurrentFrames> mAntiAliasing;
 
@@ -2039,6 +2111,8 @@ private: // v== Member variables ==v
 		float  tStart;
 		bool   cyclic = true;
 		Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
+		bool   draw = false;
+		int    drawNpoints = 1000;
 	} mCameraSpline;
 };
 

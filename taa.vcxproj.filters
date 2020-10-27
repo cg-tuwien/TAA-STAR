@@ -81,6 +81,12 @@
     <None Include="assets\models\sphere_smooth.obj">
       <Filter>assets</Filter>
     </None>
+    <None Include="shaders\drawpath.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\drawpath.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
