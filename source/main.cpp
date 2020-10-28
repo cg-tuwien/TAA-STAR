@@ -1680,6 +1680,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mOriginalProjMat = mQuakeCam.projection_matrix();
 		current_composition()->add_element(mQuakeCam);
 
+		// load default camera path
+		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
+
 		setup_ui_callback();
 
 		upload_materials_and_vertex_data_to_gpu();
@@ -1964,6 +1967,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			iniReadQuat (ini, sec, "rot_" + std::to_string(i), mCameraSpline.spline.camR[i]);
 		}
 
+		mCameraSpline.spline.modified();
 		return true;
 	}
 

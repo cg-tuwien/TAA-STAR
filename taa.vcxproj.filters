@@ -14,6 +14,9 @@
     <Filter Include="assets\terrain">
       <UniqueIdentifier>{f36a9860-d83a-4a9f-a747-a02ecec28e0e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="assets\defaults">
+      <UniqueIdentifier>{6cf208bf-8e3c-4cb9-a6fc-05b01d638acd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\cg_stdafx.cpp">
@@ -86,6 +89,9 @@
     </None>
     <None Include="shaders\drawpath.vert">
       <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\defaults\camera_path.cam">
+      <Filter>assets\defaults</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
