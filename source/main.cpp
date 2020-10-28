@@ -209,6 +209,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
 	bool mDisableMip = false;
 	bool mUseAlphaBlending = false;
+	bool mUpsampling;
+	float mUpsamplingFactor = 1.f;
 
 	bool mStartCapture;
 	int mCaptureNumFrames = 1;
@@ -356,17 +358,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto* wnd = gvk::context().main_window();
 
 		// Before compiling the actual framebuffer, create its image-attachments:
-		const auto wndRes = wnd->resolution();
+		const auto loRes = mLoResolution;
 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			auto colorAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_COLOR,    1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto colorAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_COLOR,    1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto depthAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
+			auto depthAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto matIdAttachment    = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto matIdAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto velocityAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_VELOCITY, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto velocityAttachment = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_VELOCITY, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			velocityAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 
 			// label them for Renderdoc
@@ -376,7 +378,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::labelImage(velocityAttachment->handle(), "velocityAttachment", i);
 
 #if (!FORWARD_RENDERING)
-			auto uvNrmAttachment = context().create_image(wndRes.x, wndRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto uvNrmAttachment = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
 
 			rdoc::labelImage(uvNrmAttachment->handle(), "uvNrmAttachment", i);
@@ -1355,6 +1357,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
 				SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
 
+				if (mUpsampling) {
+					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "Upsampling %dx%d -> %dx%d", mLoResolution.x, mLoResolution.y, mHiResolution.x, mHiResolution.y);
+				}
+
 				Text("%.3f ms/frame (%.1f FPS)", 1000.0f / GetIO().Framerate, GetIO().Framerate);
 				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
 				Text("%.3f ms/mModelsCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mModelsCommandBuffer{} time", inFlightIndex)));
@@ -1652,6 +1658,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto* wnd = context().main_window();
 
+		mHiResolution = wnd->resolution();
+		mLoResolution = mUpsampling ? glm::uvec2(glm::vec2(mHiResolution) / mUpsamplingFactor) : mHiResolution;
+
 		// hide the window, so we can see the scene loading progress
 		GLFWwindow *glfwWin = wnd->handle()->mHandle;
 		if (mHideWindowOnLoad) glfwHideWindow(glfwWin);
@@ -1711,7 +1720,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4);
 		}
 
-		mAntiAliasing.set_source_image_views(srcColorImages, srcDepthImages, srcVelocityImages);
+		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
 
 		if (mHideWindowOnLoad) glfwShowWindow(glfwWin);
@@ -2123,6 +2132,8 @@ private: // v== Member variables ==v
 		bool   draw = false;
 		int    drawNpoints = 1000;
 	} mCameraSpline;
+
+	glm::uvec2 mHiResolution, mLoResolution;
 };
 
 int main(int argc, char **argv) // <== Starting point ==
@@ -2145,6 +2156,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		int window_width  = 1920;
 		int window_height = 1080;
 		bool hide_window = false;
+		float upsample_factor = 1.f;
+
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
 			if (0 == strcmp("--", argv[i])) {
@@ -2187,6 +2200,10 @@ int main(int argc, char **argv) // <== Starting point ==
 					if (i >= argc) { badCmd = true; break; }
 					window_height = atoi(argv[i]);
 					if (window_height < 1) { badCmd = true; break; }
+				} else if (0 == _stricmp(argv[i], "-upsample")) {
+					i++;
+					if (i >= argc) { badCmd = true; break; }
+					upsample_factor = (float)atof(argv[i]);
 				} else {
 					badCmd = true;
 					break;
@@ -2200,10 +2217,11 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-w <width>] [-h <height>] [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-hidewindow] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [-w <width>] [-h <height>] [-upsample <factor>] [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-hidewindow] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 
+		if (upsample_factor < 1.f) { printf("Upsampling factor must be > 1\n"); return EXIT_FAILURE; }
 
 		// Create a window and open it
 		auto mainWnd = gvk::context().create_window("TAA-STAR");
@@ -2232,6 +2250,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		if (enableAlphaBlending)  chewbacca.mUseAlphaBlending = true;
 		if (disableAlphaBlending) chewbacca.mUseAlphaBlending = false;
 		chewbacca.mHideWindowOnLoad = hide_window;
+		chewbacca.mUpsamplingFactor = upsample_factor;
+		chewbacca.mUpsampling = upsample_factor > 1.f;
 
 		// setup capturing if RenderDoc is active
 		if (capture_n_frames > 0 && rdoc::active()) {

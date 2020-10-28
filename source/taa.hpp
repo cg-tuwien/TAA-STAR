@@ -60,6 +60,7 @@ class taa : public gvk::invokee
 		Parameters	param[2];
 		VkBool32	splitScreen;
 		int			splitX;
+		VkBool32    mUpsampling;
 	};
 
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
@@ -207,7 +208,7 @@ public:
 	// Store pointers to some resources passed from class wookiee::initialize(), 
 	// and also create mHistoryImages, and mResultImages:
 	template <typename SRCCOLOR, typename SRCD, typename SRCVELOCITY>
-	void set_source_image_views(SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews, SRCVELOCITY& aSourceVelocityImageViews)
+	void set_source_image_views(glm::uvec2 targetResolution, SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews, SRCVELOCITY& aSourceVelocityImageViews)
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
 
@@ -234,8 +235,12 @@ public:
 			}
 
 
-			auto w = mSrcColor[i]->get_image().width();
-			auto h = mSrcColor[i]->get_image().height();
+			//auto w = mSrcColor[i]->get_image().width();
+			//auto h = mSrcColor[i]->get_image().height();
+			auto w = targetResolution.x;
+			auto h = targetResolution.y;
+
+			mUpsampling = (w != mSrcColor[i]->get_image().width() || h != mSrcColor[i]->get_image().height());
 
 			mResultImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
@@ -680,6 +685,7 @@ public:
 			mTaaPushConstants.param[i].mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mResetHistory ? 1.f : mTaaPushConstants.param[i].mJitterAndAlpha.w);
 			mTaaPushConstants.param[i].mBypassHistoryUpdate = bypassHistUpdate;
 		}
+		mTaaPushConstants.mUpsampling = mUpsampling;
 		mTaaPushConstants.splitScreen = mSplitScreen;
 		mTaaPushConstants.splitX      = mSplitX;
 
@@ -727,17 +733,17 @@ public:
 			cmdbfr->bind_pipeline(mTaaPipeline);
 			cmdbfr->bind_descriptors(mTaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mSampler),
-				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),
-				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),
+				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),							// -> shader: uCurrentFrame
+				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),							// -> shader: uCurrentDepth
 #if TAA_OUTPUT_IS_SRGB
-				descriptor_binding(0, 3, *mResultImagesSrgb[inFlightLastIndex]),
+				descriptor_binding(0, 3, *mResultImagesSrgb[inFlightLastIndex]),				// -> shader: uHistoryFrame
 #else
-				descriptor_binding(0, 3, *mResultImages[inFlightLastIndex]),
+				descriptor_binding(0, 3, *mResultImages[inFlightLastIndex]),					// -> shader: uHistoryFrame
 #endif
-				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),
-				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),
-				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),
-				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),
+				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),						// -> shader: uHistoryDepth
+				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResult
+				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),		// -> shader: uDebug
+				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),							// -> shader: uCurrentVelocity
 				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
 				}));
 			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
@@ -876,4 +882,6 @@ private:
 
 	bool mSplitScreen = false;
 	int  mSplitX = 0;
+
+	bool mUpsampling = false;
 };

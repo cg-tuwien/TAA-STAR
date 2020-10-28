@@ -4,6 +4,14 @@
 
 #include "shader_cpu_common.h"
 
+// ATTENTION:
+// with upsampling enabled, the texture sizes are different now:
+// lo-res: uCurrentFrame, uCurrentDepth, uCurrentVelocity, *uHistoryDepth*
+// hi-res: uHistoryFrame, uResult, uDebug
+//
+// FIXME: decide res for uHistoryDepth (?)
+// FIXME: hist depth sampling, need to downsample histUV again!
+
 // ###### SRC/DST IMAGES #################################
 layout(set = 0, binding = 0) uniform sampler uSampler;
 layout(set = 0, binding = 1) uniform texture2D uCurrentFrame;
@@ -17,6 +25,9 @@ layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 
 // texelFetch is undefined when sampling outside the texture, so always clamp
 #define CLAMP_TO_TEX(v) clamp((v), ivec2(0), textureSize(uCurrentFrame,0))
+
+// shortcut to texture(sampler2D(texture, uSampler), uv)
+#define SAMPLE_TEX(tex_,uv_) texture(sampler2D((tex_),uSampler), uv_)
 
 // ###### PUSH CONSTANTS AND UBOs ########################
 struct Parameters {
@@ -53,6 +64,7 @@ layout(push_constant) uniform PushConstants {
 	Parameters	param[2];
 	bool		splitScreen;
 	int			splitX;
+	bool        mUpsampling;
 } pushConstants;
 
 Parameters params;
@@ -62,6 +74,10 @@ layout(set = 1, binding = 0) uniform Matrices {
 	mat4 mInverseViewProjMatrix;
 } uboMat;
 // -------------------------------------------------------
+
+// Globals
+ivec2 textureSize_loRes;
+ivec2 textureSize_hiRes;
 
 // Just for debugging:
 vec4 gDebugValue = vec4(0);
@@ -252,8 +268,8 @@ vec3 rgb2srgb(vec3 rgb)
 #define TO_OUTPUT_FORMAT(x) (x)
 #endif
 
-void getHistoryPosition(in ivec2 currentTc, in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
-	vec4 velocitySample = texelFetch(uCurrentVelocity, currentTc, 0);
+void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
+	vec4 velocitySample = SAMPLE_TEX(uCurrentVelocity, currentUv);
 
 	bool canUseVelocity = true;
 	if (params.mUseVelocityVectors == 0 || (params.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
@@ -261,16 +277,17 @@ void getHistoryPosition(in ivec2 currentTc, in vec2 currentUv, in float currentD
 	if (canUseVelocity) {
 		if (params.mUseLongestVelocityVector) {
 			// sample 3x3 neighbourhood, take longest vector ; note: we don't deal with depth here, should we?
+			vec2 toUv = vec2(1,1) / textureSize(uCurrentVelocity, 0);
 			vec2 maxVel = velocitySample.xy;
 			vec2 sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 0, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1, -1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1,  0)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1,  0)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2(-1,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 0,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
-			sam = texelFetch(uCurrentVelocity, CLAMP_TO_TEX(currentTc + ivec2( 1,  1)), 0).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 1, -1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2(-1,  0)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2(-1, -1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 0, -1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2(-1,  1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 0,  1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 1,  0)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
+			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 1,  1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
 			velocitySample.xy = sam;
 		}
 
@@ -355,15 +372,15 @@ vec4 sample_history_bicubic_catmullrom(vec2 uv) {
 		vec2 tcC = (tc + w2/wC) * invTexSize;
 		vec2 tc3 = (tc + 2    ) * invTexSize;
 		return
-		  texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tc0.y)) * w0.x * w0.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tc0.y)) * wC.x * w0.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tc0.y)) * w3.x * w0.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tcC.y)) * w0.x * wC.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tcC.y)) * wC.x * wC.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tcC.y)) * w3.x * wC.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc0.x, tc3.y)) * w0.x * w3.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tcC.x, tc3.y)) * wC.x * w3.y
-		+ texture(sampler2D(uHistoryFrame, uSampler), vec2(tc3.x, tc3.y)) * w3.x * w3.y;
+		  SAMPLE_TEX(uHistoryFrame, vec2(tc0.x, tc0.y)) * w0.x * w0.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tcC.x, tc0.y)) * wC.x * w0.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tc3.x, tc0.y)) * w3.x * w0.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tc0.x, tcC.y)) * w0.x * wC.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tcC.x, tcC.y)) * wC.x * wC.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tc3.x, tcC.y)) * w3.x * wC.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tc0.x, tc3.y)) * w0.x * w3.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tcC.x, tc3.y)) * wC.x * w3.y
+		+ SAMPLE_TEX(uHistoryFrame, vec2(tc3.x, tc3.y)) * w3.x * w3.y;
 	#endif
 }
 
@@ -390,16 +407,24 @@ vec4 sample_history_bicubic_b_spline(vec2 uv) {
 	vec2 t0 = (tc - 1 + f0) * invTexSize;
 	vec2 t1 = (tc + 1 + f1) * invTexSize;
 
-	return (texture(sampler2D(uHistoryFrame, uSampler), vec2(t0.x, t0.y)) * s0.x
-	     +  texture(sampler2D(uHistoryFrame, uSampler), vec2(t1.x, t0.y)) * s1.x) * s0.y
-	     + (texture(sampler2D(uHistoryFrame, uSampler), vec2(t0.x, t1.y)) * s0.x
-	     +  texture(sampler2D(uHistoryFrame, uSampler), vec2(t1.x, t1.y)) * s1.x) * s1.y;
+	return (SAMPLE_TEX(uHistoryFrame, vec2(t0.x, t0.y)) * s0.x
+	     +  SAMPLE_TEX(uHistoryFrame, vec2(t1.x, t0.y)) * s1.x) * s0.y
+	     + (SAMPLE_TEX(uHistoryFrame, vec2(t0.x, t1.y)) * s0.x
+	     +  SAMPLE_TEX(uHistoryFrame, vec2(t1.x, t1.y)) * s1.x) * s1.y;
 }
 
 vec4 sample_history_rgb(vec2 uv) {
-	if      (params.mInterpolationMode == 0)	return texture(sampler2D(uHistoryFrame, uSampler), uv);
-	else if (params.mInterpolationMode == 1) return sample_history_bicubic_b_spline(uv);
-	else                                            return sample_history_bicubic_catmullrom(uv);
+	if      (params.mInterpolationMode == 0)	return SAMPLE_TEX(uHistoryFrame, uv);
+	else if (params.mInterpolationMode == 1)	return sample_history_bicubic_b_spline(uv);
+	else										return sample_history_bicubic_catmullrom(uv);
+}
+
+// texel coords <-> uv conversion
+vec2  tc_to_uv(ivec2 tc, ivec2 texSize) { return (vec2(tc) + 0.5) / texSize; }
+ivec2 uv_to_tc(vec2 uv,  ivec2 texSize) { return ivec2(uv * texSize); }
+
+ivec2 hiRes_to_loRes_Tc(ivec2 hires_tc) {
+	return uv_to_tc(tc_to_uv(hires_tc, textureSize_hiRes), textureSize_loRes);
 }
 
 // -------------------------------------------------------
@@ -408,16 +433,21 @@ vec4 sample_history_rgb(vec2 uv) {
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 void main()
 {
+	textureSize_hiRes = textureSize(uHistoryFrame, 0);
+	textureSize_loRes = textureSize(uCurrentFrame, 0);
+
 	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(iuv, textureSize(uCurrentFrame, 0)))) return;
+	vec2 uv = tc_to_uv(iuv, textureSize_hiRes);
+	if (any(greaterThanEqual(iuv, textureSize_hiRes))) return;
 
 	int paramsIdx = (pushConstants.splitScreen && iuv.x > pushConstants.splitX) ? 1 : 0;
 	params = pushConstants.param[paramsIdx];
 
-	vec2 uv = (vec2(iuv) + 0.5) / textureSize(uCurrentFrame, 0);
+
+	ivec2 iuv_lores = uv_to_tc(uv, textureSize_loRes);
 
 	if (params.mPassThrough) {
-		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uCurrentFrame, iuv, 0).rgb), 1));
+		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uCurrentFrame, iuv_lores, 0).rgb), 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
@@ -435,9 +465,9 @@ void main()
 	vec3 colMin;
 	vec3 colMax;
 	vec3 colClipTowards;
-	getColorAndAabb(iuv, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
-	currentColor = getCurrentColor(iuv); // may have different unjitter settings than neighbourhood
-	float depth = texelFetch(uCurrentDepth, iuv, 0).r;
+	getColorAndAabb(iuv_lores, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
+	currentColor = getCurrentColor(iuv_lores); // may have different unjitter settings than neighbourhood, so get it separately
+	float depth = texelFetch(uCurrentDepth, iuv_lores, 0).r;
 	
 //	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
 //	vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
@@ -446,8 +476,7 @@ void main()
 //	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
 	vec2 historyUv;
 	float expectedHistoryDepth;
-	getHistoryPosition(iuv, uv, depth, historyUv, expectedHistoryDepth);
-	ivec2 iHistoryUv = ivec2(historyUv * textureSize(uCurrentFrame, 0));
+	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
 
@@ -467,7 +496,8 @@ void main()
 	if (params.mDepthCulling) {
 		// FIXME - shouldn't we better compare LINEAR depth?
 
-		float historyDepth = texelFetch(uHistoryDepth, iHistoryUv, 0).r;
+		// problem with upsampling: cannot use texture() (can't lerp depth buffer), but historyUv is probably not a texel center; so: WHERE to sample uHistoryDepth (lores) ?
+		float historyDepth = texelFetch(uHistoryDepth, uv_to_tc(historyUv, textureSize_loRes), 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
 			alpha = params.mRejectionAlpha;
