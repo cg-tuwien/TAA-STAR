@@ -410,16 +410,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//   3rd parameter: How are we going to use this attachment in the subpasses?
 						//   4th parameter: What shall be done when the last subpass has finished? => Store the image contents?
 #if FORWARD_RENDERING
-						attachment::declare_for(colorAttachmentView,    on_load::load,         color(0),						on_store::store),
-						attachment::declare_for(depthAttachmentView,    on_load::clear, depth_stencil(),						on_store::store),
-						attachment::declare_for(matIdAttachmentView,    on_load::clear,        color(1),						on_store::store),
-						attachment::declare_for(velocityAttachmentView, on_load::clear,        color(2),						on_store::store),
+						attachment::declare_for(colorAttachmentView,    on_load::load,         color(0),	on_store::store),
+						attachment::declare_for(depthAttachmentView,    on_load::clear, depth_stencil(),	on_store::store),
+						attachment::declare_for(matIdAttachmentView,    on_load::clear,        color(1),	on_store::store),
+						attachment::declare_for(velocityAttachmentView, on_load::clear,        color(2),	on_store::store),
 #else
-						attachment::declare_for(colorAttachmentView,	on_load::load,         unused() -> color(0),			on_store::store),
-						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> input(0),			on_store::store),
-						attachment::declare_for(uvNrmAttachmentView,	on_load::clear,        color(0) -> input(1),			on_store::store),
-						attachment::declare_for(matIdAttachmentView,	on_load::clear,        color(1) -> input(2),			on_store::store),
-						attachment::declare_for(velocityAttachmentView,	on_load::clear,        color(2) -> unused(),			on_store::store),
+						attachment::declare_for(colorAttachmentView,	on_load::load,         unused() -> color(0) -> color(0),			on_store::store),
+						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> input(0) -> depth_stencil(),		on_store::store),
+						attachment::declare_for(uvNrmAttachmentView,	on_load::clear,        color(0) -> input(1) -> unused(),			on_store::store),
+						attachment::declare_for(matIdAttachmentView,	on_load::clear,        color(1) -> input(2) -> unused(),			on_store::store),
+						attachment::declare_for(velocityAttachmentView,	on_load::clear,        color(2) -> unused() -> unused(),			on_store::store),
 #endif
 					},
 					[](avk::renderpass_sync& aRpSync){
@@ -1143,7 +1143,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-		uint32_t subpass = (FORWARD_RENDERING) ? 0u : 1u;
+		uint32_t subpass = (FORWARD_RENDERING) ? 0u : 2u;
 
 		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
 			"shaders/drawpath.vert", "shaders/drawpath.frag",
@@ -1276,17 +1276,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
 		commandBuffer->draw_indexed(quadIndices, quadVertices);
+
+		commandBuffer->next_subpass();
 #endif
 
 		helpers::record_timing_interval_end(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
 
 		// draw camera path
 		if (mCameraSpline.draw && mDrawCamPathPositions_valid) {
+			rdoc::beginSection(commandBuffer->handle(), "Draw camera path");
 			commandBuffer->bind_pipeline(mPipelineDrawCamPath);
 			commandBuffer->bind_descriptors(mPipelineDrawCamPath->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
 			commandBuffer->draw_vertices(static_cast<uint32_t>(mNumCamPathPositions), 1u, 0u, 0u, mDrawCamPathPositionsBuffer);
+			rdoc::endSection(commandBuffer->handle());
 		}
 
 		commandBuffer->end_render_pass();
