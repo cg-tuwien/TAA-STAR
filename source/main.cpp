@@ -332,7 +332,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if (mCameraSpline.drawNpoints < 2) return;
 
 		// sample points from spline
-		std::vector<glm::vec3> samples(mMaxCamPathPositions); // workaround, cannot fill buffer partially(?) //  (mCameraSpline.drawNpoints);
+		std::vector<glm::vec3> samples(mCameraSpline.drawNpoints);
 		glm::vec3 pos = glm::vec3(0);
 		glm::quat rot = glm::quat(1,0,0,0);
 		for (int i = 0; i < mCameraSpline.drawNpoints; ++i) {
@@ -342,7 +342,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		mNumCamPathPositions = mCameraSpline.drawNpoints;
-		mDrawCamPathPositionsBuffer->fill(samples.data(), 0, avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
+		mDrawCamPathPositionsBuffer->fill_partially(samples.data(), samples.size() * sizeof(samples[0]) , avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
 
 		mDrawCamPathPositions_valid = true;
 		mReRecordCommandBuffers = true;
@@ -410,10 +410,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//   3rd parameter: How are we going to use this attachment in the subpasses?
 						//   4th parameter: What shall be done when the last subpass has finished? => Store the image contents?
 #if FORWARD_RENDERING
-						attachment::declare_for(colorAttachmentView,	on_load::load,         color(0) -> color(0),			on_store::store),
-						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> depth_stencil(),		on_store::store),
-						attachment::declare_for(matIdAttachmentView,	on_load::clear,        color(1) -> color(1),			on_store::store),
-						attachment::declare_for(velocityAttachmentView,	on_load::clear,        color(2) -> color(2),			on_store::store),
+						attachment::declare_for(colorAttachmentView,    on_load::load,         color(0),						on_store::store),
+						attachment::declare_for(depthAttachmentView,    on_load::clear, depth_stencil(),						on_store::store),
+						attachment::declare_for(matIdAttachmentView,    on_load::clear,        color(1),						on_store::store),
+						attachment::declare_for(velocityAttachmentView, on_load::clear,        color(2),						on_store::store),
 #else
 						attachment::declare_for(colorAttachmentView,	on_load::load,         unused() -> color(0),			on_store::store),
 						attachment::declare_for(depthAttachmentView,	on_load::clear, depth_stencil() -> input(0),			on_store::store),
@@ -1054,7 +1054,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		const char * frag_shader_name = "shaders/fwd_geometry.frag";
 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
-			// Specify which shaders the pipeline consists of (type is inferred from the extension):
 			vert_shader_name,
 			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
 																																  // The next lines define the format and location of the vertex shader inputs:
@@ -1067,10 +1066,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// Some further settings:
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // Use this pipeline for subpass #0 of the specified renderpass
-			//
-			// The following define additional data which we'll pass to the pipeline:
-			//   We'll pass two matrices to our vertex shader via push constants:
+			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
@@ -1094,8 +1090,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
 			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
 
-			// The next lines define the format and location of the vertex shader inputs:
-			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
 			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
 			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
@@ -1104,8 +1098,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// Some further settings:
 			cfg::front_face::define_front_faces_to_be_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
-			//
+			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
@@ -1125,8 +1118,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
 			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
 
-			// The next lines define the format and location of the vertex shader inputs:
-			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
 			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
 			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
@@ -1135,9 +1126,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 																							// Some further settings:
 			cfg::front_face::define_front_faces_to_be_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
-							 //
-			// TODO-DII: do we still need push constants at all? - maybe for movers, later
+			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
@@ -1154,12 +1143,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
+		uint32_t subpass = (FORWARD_RENDERING) ? 0u : 1u;
+
 		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
 			"shaders/drawpath.vert", "shaders/drawpath.frag",
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
 			cfg::primitive_topology::points,
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 1u, // <-- Use this pipeline for subpass #1 of the specified renderpass
+			mRenderpass, subpass,
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
 		);
 	}
@@ -1180,10 +1171,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 	}
 
-#if !RECORD_CMDBUFFER_IN_RENDER
 	// Record actual draw calls for all the drawcall-data that we have
 	// gathered in load_and_prepare_scene() into a command buffer
 	void record_command_buffer_for_models() {
+#if !RECORD_CMDBUFFER_IN_RENDER
 		using namespace avk;
 		using namespace gvk;
 
@@ -1196,8 +1187,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (!(mModelsCommandBuffer[i].has_value())) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
 			record_single_command_buffer_for_models(mModelsCommandBuffer[i], i);
 		}
-	}
+#else
+		assert(false && "Don't call record_command_buffer_for_models() when RECORD_CMDBUFFER_IN_RENDER is true!");
 #endif
+	}
 
 	void record_single_command_buffer_for_models(avk::command_buffer &commandBuffer, gvk::window::frame_id_t fif)
 	{
@@ -1256,16 +1249,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			);
 		}
 
-		// Move on to next subpass, synchronizing all data to be written to memory,
-		// and to be made visible to the next subpass, which uses it as input.
-		commandBuffer->next_subpass();
-
 #if FORWARD_RENDERING
 		commandBuffer->bind_pipeline(secondPipe);
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
 		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
 #else
+		// Move on to next subpass, synchronizing all data to be written to memory,
+		// and to be made visible to the next subpass, which uses it as input.
+		commandBuffer->next_subpass();
+
 		// TODO - is it necessary to rebind descriptors (pipes are compatible) ??
 		commandBuffer->bind_pipeline(secondPipe);
 		commandBuffer->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
@@ -1293,9 +1286,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			commandBuffer->bind_descriptors(mPipelineDrawCamPath->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
-			//commandBuffer->draw_vertices(mDrawCamPathPositionsBuffer); // this uses buffer meta -> num elements, cannot modify that :/
-			commandBuffer->handle().bindVertexBuffers(0u, mDrawCamPathPositionsBuffer->handle(), vk::DeviceSize{ 0 });
-			commandBuffer->handle().draw(static_cast<uint32_t>(mNumCamPathPositions), 1u, 0u, 0u);
+			commandBuffer->draw_vertices(static_cast<uint32_t>(mNumCamPathPositions), 1u, 0u, 0u, mDrawCamPathPositionsBuffer);
 		}
 
 		commandBuffer->end_render_pass();
