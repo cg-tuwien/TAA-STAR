@@ -1452,7 +1452,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Button("edit")) showCamPathDefWindow = true;
 					Checkbox("cycle", &mCameraSpline.cyclic); SameLine();
-					Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
+					//Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
 
 					PopID();
 				}
@@ -1533,28 +1533,60 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SetWindowPos(ImVec2(500.0f, 10.0f), ImGuiCond_FirstUseEver);		// TODO: fix pos
 					SetWindowSize(ImVec2(250.0f, 400.0f), ImGuiCond_FirstUseEver);
 
+					bool changed = false;
+					static std::string lastFn = "";
+
 					auto &pos = mCameraSpline.spline.camP;
 					auto &rot = mCameraSpline.spline.camR;
-					if (Button("clear")) { pos.clear(); pos.push_back(glm::vec3(0)); }
-					PushItemWidth(60);
-					InputFloat("duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
-					PopItemWidth();
+					if (Button("Clear")) { pos.clear(); pos.push_back(glm::vec3(0)); }
+
+					SameLine();
+					if (Button("Load...")) {
+						//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						if (fns.size()) {
+							loadCamPath(fns[0]);
+							changed = true;
+						}
+					}
+					SameLine();
+					if (Button("Save...")) {
+						//if (lastParamsFn == "") lastParamsFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+						auto fn = pfd::save_file("Save camera path as", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						if (fn != "") {
+							saveCamPath(fn, true);
+							lastFn = fn;
+						}
+					}
+
+					InputFloatW(60, "duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
 					SameLine();
 					if (Checkbox("const.speed", &mCameraSpline.spline.use_arclen)) mDrawCamPathPositions_valid = false;
-					Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
+					SameLine();
+					float alpha = mCameraSpline.spline.get_catmullrom_alpha();
+					if (InputFloatW(40, "a##Catmull-Rom alpha", &alpha, 0.f, 0.f, "%.1f")) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
+					HelpMarker("Catmull-Rom alpha (affects path interpolation):\n0.5: centripetal\n0.0: uniform\n1.0: chordal");
+
+					ComboW(120, "rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
+					SameLine();
+					static bool show_rot = true;
+					Checkbox("show rotation input", &show_rot);
 					int delPos = -1;
 					int addPos = -1;
 					int moveUp = -1;
 					int moveDn = -1;
-					bool changed = false;
-					for (int i = 0; i < static_cast<int>(pos.size()); ++i) {
+					int numP = static_cast<int>(pos.size());
+
+					Separator();
+					BeginChild("scrollbox", ImVec2(0, 200));
+					for (int i = 0; i < numP; ++i) {
 						PushID(i);
-						if (i == 1 || i == static_cast<int>(pos.size()) - 1) Separator();
-						PushItemWidth(140);
-						if (InputFloat3("##pos", &(pos[i].x), "%.2f")) changed = true;
-						SameLine();
-						if (InputFloat4("##rot", &(rot[i].x), "%.2f")) changed = true;
-						PopItemWidth();
+						if (i == 1 || i == numP - 1) Separator();
+						if (InputFloat3W(120, "##pos", &(pos[i].x), "%.2f")) changed = true;
+						if (show_rot) {
+							SameLine();
+							if (InputFloat4W(160, "##rot", &(rot[i].x), "%.2f")) changed = true;
+						}
 						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); rot[i] = mQuakeCam.rotation(); changed = true; }
 						SameLine(); if (Button("-")) delPos = i;
 						SameLine(); if (Button("+")) addPos = i;
@@ -1563,6 +1595,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						SameLine(); if (Button("go")) { mQuakeCam.set_translation(pos[i]); mQuakeCam.set_rotation(rot[i]); }
 						PopID();
 					}
+					EndChild();
+
 					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, glm::vec3(0));	rot.insert(rot.begin() + addPos + 1, glm::quat());	changed = true; }
 					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						rot.erase (rot.begin() + delPos);					changed = true; }
 					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				std::swap(rot[moveUp - 1], rot[moveUp]);			changed = true; }
@@ -1571,7 +1605,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Separator();
 					auto t = mQuakeCam.translation();
 					auto r = mQuakeCam.rotation();
-					Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f", t.x, t.y, t.z, r.x, r.y, r.z, r.w);
+					if (show_rot)	Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f",	t.x, t.y, t.z, r.x, r.y, r.z, r.w);
+					else			Text("cam pos %.2f %.2f %.2f",							t.x, t.y, t.z);
 					Separator();
 
 					if (Button("auto-set cycle lead in/out")) {
@@ -1593,31 +1628,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					PopItemWidth();
 					if (mCameraSpline.drawNpoints > mMaxCamPathPositions) mCameraSpline.drawNpoints = mMaxCamPathPositions;
 
-					PushItemWidth(80);
-					float alpha = mCameraSpline.spline.get_catmullrom_alpha();
-					if (InputFloat("Catmull-Rom alpha", &alpha)) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
-					PopItemWidth();
-					HelpMarker("0.5: centripetal\n0.0: uniform\n1.0: chordal");
 
-					static std::string lastFn = "";
-
-					if (Button("Load...")) {
-						//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
-						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
-						if (fns.size()) {
-							loadCamPath(fns[0]);
-							changed = true;
-						}
-					}
-					SameLine();
-					if (Button("Save...")) {
-						//if (lastParamsFn == "") lastParamsFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
-						auto fn = pfd::save_file("Save camera path as", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
-						if (fn != "") {
-							saveCamPath(fn, true);
-							lastFn = fn;
-						}
-					}
 
 					if (changed) { mCameraSpline.spline.modified(); mDrawCamPathPositions_valid = false; }
 
