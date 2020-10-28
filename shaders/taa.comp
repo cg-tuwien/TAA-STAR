@@ -4,13 +4,18 @@
 
 #include "shader_cpu_common.h"
 
+// TODO: recheck unjittering - jitter offsets are NDC! fixed now, test!
+
 // ATTENTION:
 // with upsampling enabled, the texture sizes are different now:
 // lo-res: uCurrentFrame, uCurrentDepth, uCurrentVelocity, *uHistoryDepth*
 // hi-res: uHistoryFrame, uResult, uDebug
 //
 // FIXME: decide res for uHistoryDepth (?)
-// FIXME: hist depth sampling, need to downsample histUV again!
+// FIXME: hist depth sampling is problematic
+
+// TODO upsampling:
+// unjittering ?
 
 // ###### SRC/DST IMAGES #################################
 layout(set = 0, binding = 0) uniform sampler uSampler;
@@ -29,15 +34,17 @@ layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // shortcut to texture(sampler2D(texture, uSampler), uv)
 #define SAMPLE_TEX(tex_,uv_) texture(sampler2D((tex_),uSampler), uv_)
 
+#define JITTER_UV (params.mJitterNdcAndAlpha.xy * 0.5 * params.mUnjitterFactor)
+
 // ###### PUSH CONSTANTS AND UBOs ########################
 struct Parameters {
-	vec4 mJitterAndAlpha;
+	vec4 mJitterNdcAndAlpha;		// jitter is in NDC units, NOT UV units!
 	int  mColorClampingOrClipping;
 	bool mDepthCulling;
 	//bool mTextureLookupUnjitter;
 	bool mUnjitterNeighbourhood;
 	bool mUnjitterCurrentSample;	// TODO: anything for depth/history depth??
-	float mUnjitterFactor;			// -1 or +1
+	float mUnjitterFactor;			// -1 or +1, for debugging
 
 	bool mBypassHistoryUpdate;
 	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
@@ -84,6 +91,15 @@ vec4 gDebugValue = vec4(0);
 
 // ###### HELPER FUNCTIONS ###############################
 
+// texel coords <-> uv conversion
+vec2  tc_to_uv(ivec2 tc, ivec2 texSize) { return (vec2(tc) + 0.5) / texSize; }
+ivec2 uv_to_tc(vec2 uv,  ivec2 texSize) { return ivec2(uv * texSize); }
+
+ivec2 hiRes_to_loRes_Tc(ivec2 hires_tc) {
+	return uv_to_tc(tc_to_uv(hires_tc, textureSize_hiRes), textureSize_loRes);
+}
+
+
 //// convert from RGB to YCoCg-R ; see https://en.wikipedia.org/wiki/YCoCg
 //vec3 rgb_to_ycocg(vec3 c) {
 //	float co  = c.r - c.b;
@@ -127,12 +143,7 @@ vec3 maybe_ycocg_to_rgb(vec3 c) { return params.mUseYCoCg ? ycocg_to_rgb(c) : c;
 float luminance(vec3 c) { return params.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
 
 void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
-//	vec2 offset = vec2(0.0, 0.0);
-//	if (params.mTextureLookupUnjitter) {
-//		offset = params.mJitterAndAlpha.xy;
-//	}
-	
-	vec2 offset = params.mUnjitterNeighbourhood ? params.mJitterAndAlpha.xy * params.mUnjitterFactor : vec2(0);
+	vec2 offset = params.mUnjitterNeighbourhood ? JITTER_UV : vec2(0);
 
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 
@@ -149,9 +160,46 @@ void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out v
 
 // may have different unjitter settings than getNeighbourhood
 vec3 getCurrentColor(in ivec2 iuv) {
-	vec2 offset = params.mUnjitterCurrentSample ? params.mJitterAndAlpha.xy * params.mUnjitterFactor : vec2(0);
+	vec2 offset = params.mUnjitterCurrentSample ? JITTER_UV : vec2(0);
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 	return maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + 0.5) * invsize).rgb);
+}
+
+vec3 getCurrentUpsampledColor(in ivec2 currentTc, in vec2 currentUv, out float beta) {
+	// non-upsampling behaviour was:
+	//beta = 1.0; return getCurrentColor(hiRes_to_loRes_Tc(currentTc));
+
+	// only consider input samples that fall into the current texel after upscaling
+
+	// example: hi-res = 2 x lores, consider input at center of texels 100, 101 -> = tc 100.5 (with non-normalized texture-coords tc); jitter is in texel units
+	// jitter 0   : input 100.50 -> output 201.0 (203.0)
+	// jitter -.25: input 100.25 -> output 200.5 (202.5)
+	// jitter +.25: input 100.75 -> output 201.5 (203.5)
+	// jitter -.40: input 100.10 -> output 200.2 (202.2), so update output tc [200-201) and [202-203), but not [201-202)
+	// jitter J   : input I+J    -> output scale * (I + J)
+	// O = s * (I + J) -> O/s - J = I
+
+	vec2 scale = vec2(textureSize_hiRes) / vec2(textureSize_loRes);
+
+	vec2 texelJitter = JITTER_UV * textureSize_loRes * -1;	// * -1 works... but WHY subtract jitter instead of adding?
+	vec2 inTcSample;
+	vec2 foundTc = vec2(-1,-1);
+	const float almostOne = 0.999999;
+	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(0,        0        )) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
+	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(almostOne,0        )) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
+	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(0,        almostOne)) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
+	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(almostOne,almostOne)) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
+
+	gDebugValue = foundTc.x >= 0.0 ? vec4(1, foundTc, 0) : vec4(0);	
+
+	if (foundTc.x >= 0.0) {
+		beta = 1.0;
+		vec2 texUv = (floor(foundTc) + 0.5) / textureSize_loRes;
+		return maybe_rgb_to_ycocg(SAMPLE_TEX(uCurrentFrame, texUv).rgb);
+	} else {
+		beta = 0.0;
+		return vec3(0);
+	}
 }
 
 void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3 maxCol, out vec3 cliptowardsCol)
@@ -419,14 +467,6 @@ vec4 sample_history_rgb(vec2 uv) {
 	else										return sample_history_bicubic_catmullrom(uv);
 }
 
-// texel coords <-> uv conversion
-vec2  tc_to_uv(ivec2 tc, ivec2 texSize) { return (vec2(tc) + 0.5) / texSize; }
-ivec2 uv_to_tc(vec2 uv,  ivec2 texSize) { return ivec2(uv * texSize); }
-
-ivec2 hiRes_to_loRes_Tc(ivec2 hires_tc) {
-	return uv_to_tc(tc_to_uv(hires_tc, textureSize_hiRes), textureSize_loRes);
-}
-
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -465,8 +505,15 @@ void main()
 	vec3 colMin;
 	vec3 colMax;
 	vec3 colClipTowards;
+	float beta;
 	getColorAndAabb(iuv_lores, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
-	currentColor = getCurrentColor(iuv_lores); // may have different unjitter settings than neighbourhood, so get it separately
+	// may have different unjitter settings than neighbourhood, so get current color separately
+	if (pushConstants.mUpsampling) {
+		currentColor = getCurrentUpsampledColor(iuv, uv, beta); 
+	} else {
+		currentColor = getCurrentColor(iuv_lores); 
+		beta = 1.0;
+	}
 	float depth = texelFetch(uCurrentDepth, iuv_lores, 0).r;
 	
 //	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
@@ -480,8 +527,7 @@ void main()
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
 
-	vec2 jitter = params.mJitterAndAlpha.xy;
-	float alpha = params.mJitterAndAlpha.a;
+	float alpha = params.mJitterNdcAndAlpha.a;
 
 	// ---- history rejection ----
 	// reject out-of-texture history samples
@@ -545,7 +591,7 @@ void main()
 		}
 	}
 
-	vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha);	// current * a + history * (1-a)
+	vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
 
 	// if TAA_OUTPUT_IS_SRGB:
 	// write rgb into uResult

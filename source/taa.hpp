@@ -26,7 +26,7 @@ class taa : public gvk::invokee
 {
 	// TODO: fix "non-shader parameters"
 	struct Parameters {		// Note to self: be careful about alignment, esp. with vec#!
-		glm::vec4 mJitterAndAlpha			= glm::vec4(0.f, 0.f, 0.f, 0.05f);
+		glm::vec4 mJitterNdcAndAlpha		= glm::vec4(0.f, 0.f, 0.f, 0.05f);
 		int mColorClampingOrClipping		= 1;
 		VkBool32 mDepthCulling				= VK_FALSE;
 		//VkBool32 mTextureLookupUnjitter;
@@ -116,7 +116,9 @@ public:
 	// Compute an offset for the projection matrix based on the given frame-id
 	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId) const
 	{
-		const static auto sResolution = gvk::context().main_window()->resolution();
+		//const static auto sResolution = gvk::context().main_window()->resolution();
+		assert(mInputResolution.x);
+		const static auto sResolution = mInputResolution;
 		const static auto sPxSizeNDC = glm::vec2(2.0f / static_cast<float>(sResolution.x), 2.0f / static_cast<float>(sResolution.y));
 
 		// Prepare some different distributions:
@@ -270,6 +272,9 @@ public:
 			rdoc::labelImage(mPostProcessImages[i]->get_image().handle(), "taa.mPostProcessImages", i);
 			layoutTransitions.emplace_back(std::move(mPostProcessImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 #endif
+
+			mInputResolution = glm::uvec2(mSrcColor[0]->get_image().width(), mSrcColor[0]->get_image().height());
+			mOutputResolution = targetResolution;
 		}
 
 		std::vector<std::reference_wrapper<avk::command_buffer_t>> commandBufferReferences;
@@ -366,7 +371,7 @@ public:
 					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
 					if (isPrimary) Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
 					
-					SliderFloat("alpha", &param.mJitterAndAlpha.w, 0.0f, 1.0f);
+					SliderFloat("alpha", &param.mJitterNdcAndAlpha.w, 0.0f, 1.0f);
 					SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
 					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
@@ -680,9 +685,10 @@ public:
 
 		mHistoryViewMatrices[inFlightIndex] = quakeCamera->view_matrix();
 		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
+		//printf("jitter %f %f\n", jitter.x, jitter.y);
 		for (int i = 0; i < 2; ++i) {
 			mTaaPushConstants.param[i] = mParameters[i];
-			mTaaPushConstants.param[i].mJitterAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mResetHistory ? 1.f : mTaaPushConstants.param[i].mJitterAndAlpha.w);
+			mTaaPushConstants.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mResetHistory ? 1.f : mTaaPushConstants.param[i].mJitterNdcAndAlpha.w);
 			mTaaPushConstants.param[i].mBypassHistoryUpdate = bypassHistUpdate;
 		}
 		mTaaPushConstants.mUpsampling = mUpsampling;
@@ -884,4 +890,6 @@ private:
 	int  mSplitX = 0;
 
 	bool mUpsampling = false;
+	glm::uvec2 mInputResolution  = {};	// lo res
+	glm::uvec2 mOutputResolution = {};	// hi res
 };

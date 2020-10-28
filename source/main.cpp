@@ -22,8 +22,11 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
-	- strange "seam" in smooth sphere and soccer ball -> check if that is the model or some other problem!
-	  => it's the model (soccerball, has holes too), and for the sphere normal mapping was the problem (no uv, no tangents)
+	- TAAU: WHY subtract jitter instead of add
+	- TAAU: with 4x upsampling and 4 samples -> why are there no "holes" in history? (because hist is cleared to full image?)
+	- TAAU: still some bugs? examine sponza lionhead border with 4xup
+
+	- soccerball model is badly reduced, has some holes
 
 	- moving objs with more than one mesh/material
 
@@ -1681,6 +1684,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec3), mMaxCamPathPositions).describe_only_member(glm::vec3(0), avk::content_description::position));
 
 		load_and_prepare_scene();
+
 #if FORWARD_RENDERING
 		prepare_forward_rendering_pipelines();
 #else
@@ -2153,8 +2157,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
-		int window_width  = 1920;
-		int window_height = 1080;
+		int window_width  = 1280;	//1920;
+		int window_height =  960;	//1080;
 		bool hide_window = false;
 		float upsample_factor = 1.f;
 
@@ -2200,7 +2204,7 @@ int main(int argc, char **argv) // <== Starting point ==
 					if (i >= argc) { badCmd = true; break; }
 					window_height = atoi(argv[i]);
 					if (window_height < 1) { badCmd = true; break; }
-				} else if (0 == _stricmp(argv[i], "-upsample")) {
+				} else if (0 == _stricmp(argv[i], "-upsample") || 0 == _stricmp(argv[i], "-upsampling")) {
 					i++;
 					if (i >= argc) { badCmd = true; break; }
 					upsample_factor = (float)atof(argv[i]);
@@ -2221,7 +2225,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			return EXIT_FAILURE;
 		}
 
-		if (upsample_factor < 1.f) { printf("Upsampling factor must be > 1\n"); return EXIT_FAILURE; }
+		if (upsample_factor < 1.f) { printf("Upsampling factor must be >= 1\n"); return EXIT_FAILURE; }
 
 		// Create a window and open it
 		auto mainWnd = gvk::context().create_window("TAA-STAR");
