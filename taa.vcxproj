@@ -54,6 +54,8 @@
     <None Include="shaders\sky_gradient.frag" />
     <None Include="shaders\sky_gradient.vert" />
     <None Include="shaders\taa.comp" />
+    <None Include="shaders\testimage.frag" />
+    <None Include="shaders\testimage.vert" />
     <None Include="shaders\transform_and_pass_on.vert" />
   </ItemGroup>
   <ItemGroup>
@@ -62,6 +64,9 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <Image Include="assets\images\Barcelona_Spain_Background-1421.jpg" />
+    <Image Include="assets\images\Chinese_HDTV_test_card.png" />
+    <Image Include="assets\images\Forest_Sunlight_Background-954.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg" />

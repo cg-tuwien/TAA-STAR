@@ -137,6 +137,15 @@ public:
 		const static auto sHalton23x8SampleOffsets = halton_2_3<8>(sPxSizeNDC);
 		const static auto sHalton23x16SampleOffsets = halton_2_3<16>(sPxSizeNDC);
 
+		const float eighth = 1.f / 8.f;
+		const static auto sRegular16SampleOffsets = avk::make_array<glm::vec2>(	// just for testing
+			sPxSizeNDC * glm::vec2(-3.f*eighth, -3.f*eighth), sPxSizeNDC * glm::vec2(-1.f*eighth, -3.f*eighth), sPxSizeNDC * glm::vec2( 1.f*eighth, -3.f*eighth), sPxSizeNDC * glm::vec2( 3.f*eighth, -3.f*eighth),
+			sPxSizeNDC * glm::vec2(-3.f*eighth, -1.f*eighth), sPxSizeNDC * glm::vec2(-1.f*eighth, -1.f*eighth), sPxSizeNDC * glm::vec2( 1.f*eighth, -1.f*eighth), sPxSizeNDC * glm::vec2( 3.f*eighth, -1.f*eighth),
+			sPxSizeNDC * glm::vec2(-3.f*eighth,  1.f*eighth), sPxSizeNDC * glm::vec2(-1.f*eighth,  1.f*eighth), sPxSizeNDC * glm::vec2( 1.f*eighth,  1.f*eighth), sPxSizeNDC * glm::vec2( 3.f*eighth,  1.f*eighth),
+			sPxSizeNDC * glm::vec2(-3.f*eighth,  3.f*eighth), sPxSizeNDC * glm::vec2(-1.f*eighth,  3.f*eighth), sPxSizeNDC * glm::vec2( 1.f*eighth,  3.f*eighth), sPxSizeNDC * glm::vec2( 3.f*eighth,  3.f*eighth)
+			);
+
+
 		const static auto sDebugSampleOffsets = avk::make_array<glm::vec2>(sPxSizeNDC * glm::vec2(0, 0));
 
 		// Select a specific distribution:
@@ -160,6 +169,10 @@ public:
 			numSampleOffsets = sHalton23x16SampleOffsets.size();
 			break;
 		case 4:
+			sampleOffsetValues = sRegular16SampleOffsets.data();
+			numSampleOffsets = sRegular16SampleOffsets.size();
+			break;
+		case 5:
 			sampleOffsetValues = sDebugSampleOffsets.data();
 			numSampleOffsets = sDebugSampleOffsets.size();
 			break;
@@ -283,8 +296,8 @@ public:
 		fen->wait_until_signalled();
 
 		// also initialize some gui elements based on image dimensions
-		auto w = mSrcColor[0]->get_image().width();
-		auto h = mSrcColor[0]->get_image().height();
+		auto w = targetResolution.x;
+		auto h = targetResolution.y;
 		mSplitX = w / 2;
 		int dZoomSrc = int(round(w / 96.f));
 		int dZoomDst = int(round(w / 9.6f));
@@ -368,7 +381,7 @@ public:
 					CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
 					CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
 					InputFloat("unjitter factor", &param.mUnjitterFactor);
-					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug" };
+					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "regular 16", "debug" };
 					if (isPrimary) Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
 					
 					SliderFloat("alpha", &param.mJitterNdcAndAlpha.w, 0.0f, 1.0f);

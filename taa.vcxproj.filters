@@ -17,6 +17,9 @@
     <Filter Include="assets\defaults">
       <UniqueIdentifier>{6cf208bf-8e3c-4cb9-a6fc-05b01d638acd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="assets\images">
+      <UniqueIdentifier>{fb621773-172d-4a26-bff4-bf00185b2be7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\cg_stdafx.cpp">
@@ -93,6 +96,12 @@
     <None Include="assets\defaults\camera_path.cam">
       <Filter>assets\defaults</Filter>
     </None>
+    <None Include="shaders\testimage.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\testimage.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
@@ -103,6 +112,15 @@
     </Image>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg">
       <Filter>assets\terrain</Filter>
+    </Image>
+    <Image Include="assets\images\Forest_Sunlight_Background-954.jpg">
+      <Filter>assets\images</Filter>
+    </Image>
+    <Image Include="assets\images\Barcelona_Spain_Background-1421.jpg">
+      <Filter>assets\images</Filter>
+    </Image>
+    <Image Include="assets\images\Chinese_HDTV_test_card.png">
+      <Filter>assets\images</Filter>
     </Image>
   </ItemGroup>
 </Project>

@@ -205,6 +205,17 @@ class wookiee : public gvk::invokee
 		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj" },
 	};
 
+	struct ImageDef {
+		const char *name;
+		const char *filename;
+	};
+	std::vector<ImageDef> mImageDefs = {
+		{ "Forest sunlight",	"assets/images/Forest_Sunlight_Background-954.jpg" },
+		{ "Barcelona",			"assets/images/Barcelona_Spain_Background-1421.jpg" },
+		{ "Test card",			"assets/images/Chinese_HDTV_test_card.png" },
+	};
+
+
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
 	static const uint32_t cConcurrentFrames = 3u;
@@ -347,7 +358,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		mNumCamPathPositions = mCameraSpline.drawNpoints;
-		mDrawCamPathPositionsBuffer->fill_partially(samples.data(), samples.size() * sizeof(samples[0]) , avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
+		mDrawCamPathPositionsBuffer->fill(samples.data(), 0, 0,  samples.size() * sizeof(samples[0]), avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
 
 		mDrawCamPathPositions_valid = true;
 		mReRecordCommandBuffers = true;
@@ -871,7 +882,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 		// --end moving objects
 
+		// load test images
+		mTestImages.clear();
+		for (auto &imgDef : mImageDefs) {
+			mTestImages.push_back(gvk::context().create_image_view(gvk::create_image_from_file(imgDef.filename, true, true, false /* no flip */)));
+		}
+		mTestImageSampler_bilinear = gvk::context().create_sampler(avk::filter_mode::bilinear,         avk::border_handling_mode::clamp_to_edge);
+		mTestImageSampler_nearest  = gvk::context().create_sampler(avk::filter_mode::nearest_neighbor, avk::border_handling_mode::clamp_to_edge);
 
+
+		std::cout << "Loading textures... "; std::cout.flush();
 		// Convert the material configs (that were gathered above) into a GPU-compatible format:
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
 		//   1) Material data in a properly aligned format, suitable for being uploaded into a GPU buffer (but not uploaded into a buffer yet!)
@@ -884,6 +904,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			avk::border_handling_mode::repeat,
 			avk::sync::wait_idle(true)
 		);
+		std::cout << "done" << std::endl; 
 
 		// Create a GPU buffer that will get filled with the material data:
 		mMaterialBuffer = gvk::context().create_buffer(
@@ -1158,6 +1179,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mRenderpass, subpass,
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
 		);
+
+		mPipelineTestImage = context().create_graphics_pipeline_for(
+			"shaders/testimage.vert", "shaders/testimage.frag",
+			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mPosition)->to_location(0),
+			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mTextureCoordinate)->to_location(1),
+			cfg::front_face::define_front_faces_to_be_clockwise(),
+			cfg::culling_mode::disabled,
+			cfg::depth_test::disabled(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, subpass,
+			descriptor_binding(0, 0, mTestImageSampler_bilinear),
+			descriptor_binding(0, 1, mTestImages[0]),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
+		);
 	}
 
 	// stuff that will eventually go into avk::command_buffer_t::draw_indexed_indirect later
@@ -1285,8 +1320,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		helpers::record_timing_interval_end(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
 
-		// draw camera path
 		commandBuffer->next_subpass();
+
+		// draw test image
+		if (mTestImageSettings.enabled) {
+			rdoc::beginSection(commandBuffer->handle(), "Draw test image");
+			commandBuffer->bind_pipeline(mPipelineTestImage);
+			commandBuffer->bind_descriptors(mPipelineTestImage->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(0, 0, mTestImageSettings.bilinear ? mTestImageSampler_bilinear : mTestImageSampler_nearest),
+				descriptor_binding(0, 1, mTestImages[mTestImageSettings.imageId]),
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+			}));
+			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
+			commandBuffer->draw_indexed(quadIndices, quadVertices);
+			rdoc::endSection(commandBuffer->handle());
+		}
+
+		// draw camera path
 		if (mCameraSpline.draw && mDrawCamPathPositions_valid) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw camera path");
 			commandBuffer->bind_pipeline(mPipelineDrawCamPath);
@@ -1361,7 +1411,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
 
 				if (mUpsampling) {
-					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "Upsampling %dx%d -> %dx%d", mLoResolution.x, mLoResolution.y, mHiResolution.x, mHiResolution.y);
+					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "%g x upsampling %dx%d->%dx%d", mUpsamplingFactor, mLoResolution.x, mLoResolution.y, mHiResolution.x, mHiResolution.y);
+				} else {
+					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "resolution %dx%d", mLoResolution.x, mLoResolution.y);
 				}
 
 				Text("%.3f ms/frame (%.1f FPS)", 1000.0f / GetIO().Framerate, GetIO().Framerate);
@@ -1510,8 +1562,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
 				}
 
-				if (rdoc::active()) {
-					if (CollapsingHeader("RenderDoc")) {
+				if (CollapsingHeader("Debug")) {
+					if (Checkbox("image", &mTestImageSettings.enabled)) mReRecordCommandBuffers = true;	// requires permanent re-recording anyway due to push constants ... FIXME
+					SameLine();
+					struct FuncHolder {
+						static bool ImgGetter(void* data, int idx, const char** out_str) {
+							*out_str = reinterpret_cast<wookiee*>(data)->mImageDefs[idx].name;
+							return true;
+						}
+					};
+					if (Combo("##image id", &mTestImageSettings.imageId, &FuncHolder::ImgGetter, this, static_cast<int>(mImageDefs.size()))) mReRecordCommandBuffers = true;
+					if (Checkbox("bilinear sampling", &mTestImageSettings.bilinear)) mReRecordCommandBuffers = true;
+
+					if (rdoc::active()) {
 						Separator();
 						if (Button("capture") && !mCaptureFramesLeft && mCaptureNumFrames > 0) mStartCapture = true;
 						SameLine();
@@ -1521,7 +1584,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 				}
 
-				if (CollapsingHeader("Images")) {
+				if (CollapsingHeader("Result images")) {
 					for (auto& tpl : texIdsAndDescriptions) {
 						auto texId = std::get<std::optional<ImTextureID>>(tpl);
 						auto description = std::get<std::string>(tpl);
@@ -1681,7 +1744,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_skybox();
 
 		// create a buffer for drawing camera path
-		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec3), mMaxCamPathPositions).describe_only_member(glm::vec3(0), avk::content_description::position));
+		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec3), mMaxCamPathPositions).describe_only_member(glm::vec3(0), avk::content_description::position));
 
 		load_and_prepare_scene();
 
@@ -2047,6 +2110,8 @@ private: // v== Member variables ==v
 
 	// Common pipelines:
 	avk::graphics_pipeline mPipelineDrawCamPath;
+	avk::graphics_pipeline mPipelineTestImage;
+
 	const int mMaxCamPathPositions = 10'000;
 	int mNumCamPathPositions = 0;
 	bool mDrawCamPathPositions_valid = false;
@@ -2078,7 +2143,7 @@ private: // v== Member variables ==v
 	bool mReRecordCommandBuffers = false;
 
 	struct {
-		bool      enabled = 0;
+		bool      enabled = false;
 		int       moverId = 0;
 		glm::vec3 translation = {};
 		float     rotationAngle;	// radians
@@ -2091,6 +2156,16 @@ private: // v== Member variables ==v
 		int       repeat = 1; // 0 = no, 1 = cycle, 2 = ping-pong
 		bool      rotContinous = false;
 	} mMovingObject;
+
+	struct {
+		bool	enabled = false;
+		int		imageId = 0;
+		bool	bilinear = true;
+	} mTestImageSettings;
+	std::vector<avk::image_view> mTestImages;
+	avk::sampler mTestImageSampler_bilinear;
+	avk::sampler mTestImageSampler_nearest;
+
 
 	glm::vec2 mCurrentJitter   = {};
 
@@ -2157,10 +2232,16 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
-		int window_width  = 1280;	//1920;
-		int window_height =  960;	//1080;
+#if 0
+		int window_width  = 1280;
+		int window_height =  960;
+#else
+		int window_width  = 1920;
+		int window_height = 1080;
+#endif
 		bool hide_window = false;
 		float upsample_factor = 1.f;
+		bool fullscreen = false;
 
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
@@ -2204,6 +2285,8 @@ int main(int argc, char **argv) // <== Starting point ==
 					if (i >= argc) { badCmd = true; break; }
 					window_height = atoi(argv[i]);
 					if (window_height < 1) { badCmd = true; break; }
+				} else if (0 == _stricmp(argv[i], "-fullscreen") || 0 == _stricmp(argv[i], "-full")) {
+					fullscreen = true;
 				} else if (0 == _stricmp(argv[i], "-upsample") || 0 == _stricmp(argv[i], "-upsampling")) {
 					i++;
 					if (i >= argc) { badCmd = true; break; }
@@ -2221,7 +2304,22 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [-w <width>] [-h <height>] [-upsample <factor>] [-novalidation] [-validation] [-blend] [-noblend] [-nomip] [-hidewindow] [-capture <numFrames>] [-sponza] [-test] [--] [orca scene file path]\n", argv[0]);
+			printf("Usage: %s [optional parameters] [orca scene file path]\n", argv[0]);
+			printf("Parameters:\n");
+			printf("-w <width>\n"); 
+			printf("-h <height>\n"); 
+			printf("-fullscreen\n"); 
+			printf("-upsample <factor>\n"); 
+			printf("-sponza\n"); 
+			printf("-test\n"); 
+			printf("-novalidation\n");
+			printf("-validation\n");
+			printf("-blend\n");
+			printf("-noblend\n");
+			printf("-nomip\n");
+			printf("-hidewindow\n");
+			printf("-capture <numFrames>\n");
+			printf("--\n");
 			return EXIT_FAILURE;
 		}
 
@@ -2238,6 +2336,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		mainWnd->set_number_of_concurrent_frames(wookiee::cConcurrentFrames);
 		mainWnd->request_srgb_framebuffer(true);
 		mainWnd->open();
+
+		if (fullscreen) mainWnd->switch_to_fullscreen_mode();
 
 		auto& singleQueue = gvk::context().create_queue({}, avk::queue_selection_preference::versatile_queue, mainWnd);
 		mainWnd->add_queue_family_ownership(singleQueue);
