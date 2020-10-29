@@ -22,6 +22,8 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
+	- drop SRBG support in TAA
+
 	- TAAU: WHY subtract jitter instead of add
 	- TAAU: with 4x upsampling and 4 samples -> why are there no "holes" in history? (because hist is cleared to full image?)
 	- TAAU: still some bugs? examine sponza lionhead border with 4xup

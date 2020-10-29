@@ -272,6 +272,12 @@ public:
 			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 #endif
 
+			mTempImages[i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mTempImages[i]->get_image().handle(), "taa.mTempImages", i);
+			layoutTransitions.emplace_back(std::move(mTempImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
 			mDebugImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR16G16B16A16Sfloat, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
@@ -403,6 +409,8 @@ public:
 					CheckboxB32("center##debug center", &param.mDebugCenter);
 
 					if (isPrimary) {
+						Checkbox("use sharpener", &mUseSharpener);
+
 						if (CollapsingHeader("Split screen")) {
 							Checkbox("split", &mSplitScreen); SameLine();
 							PushItemWidth(60);
@@ -420,6 +428,7 @@ public:
 							InputInt("slowdown", &mJitterSlowMotion);
 							InputFloat("rotate", &mJitterRotateDegrees);
 						}
+
 
 #if TAA_USE_POSTPROCESS_STEP
 						if (CollapsingHeader("Postprocess")) {
@@ -456,7 +465,7 @@ public:
 	// called from main
 	void init_updater(gvk::updater &updater) {
 		LOG_DEBUG("TAA: initing updater");
-		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline };
+		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline };
 #if TAA_USE_POSTPROCESS_STEP
 		comp_pipes.push_back(&mPostProcessPipeline);
 #endif
@@ -495,6 +504,12 @@ public:
 			descriptor_binding(0, 7, *mSrcVelocity[0]),
 			descriptor_binding(1, 0, mMatricesBuffer[0]),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
+		);
+
+		mSharpenerPipeline = context().create_compute_pipeline_for(
+			"shaders/sharpen.comp",
+			descriptor_binding(0, 1, *mResultImages[0]),
+			descriptor_binding(0, 2, mTempImages[0]->as_storage_image())
 		);
 
 #if TAA_USE_POSTPROCESS_STEP
@@ -784,6 +799,26 @@ public:
 			);
 #endif
 
+			//auto lastProducedImage = *RESULT_IMAGES_MAYBESRGB[inFlightIndex];
+			auto pLastProducedImageView = &mResultImages[inFlightIndex];
+
+			// FIXME - drop SRGB support. Sharpener will most likely not work with it.
+			if (mUseSharpener) {
+				cmdbfr->establish_global_memory_barrier(
+					pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::compute_shader,
+					memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access
+				);
+
+				cmdbfr->bind_pipeline(mSharpenerPipeline);
+				cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(0, 1, *RESULT_IMAGES_MAYBESRGB[inFlightIndex]),
+					descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
+					}));
+				cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+
+				pLastProducedImageView = &mTempImages[inFlightIndex];
+			}
+
 #if TAA_USE_POSTPROCESS_STEP
 			if (mPostProcessEnabled) {
 				// post-processing
@@ -795,21 +830,25 @@ public:
 
 				cmdbfr->bind_pipeline(mPostProcessPipeline);
 				cmdbfr->bind_descriptors(mPostProcessPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(0, 1, *RESULT_IMAGES_MAYBESRGB[inFlightIndex]),
+					descriptor_binding(0, 1, **pLastProducedImageView),
 					descriptor_binding(0, 2, mPostProcessImages[inFlightIndex]->as_storage_image())
 					}));
 				cmdbfr->push_constants(mPostProcessPipeline->layout(), mPostProcessPushConstants);
 				cmdbfr->handle().dispatch((mPostProcessImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mPostProcessImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+
+				pLastProducedImageView = &mPostProcessImages[inFlightIndex];
 			}
 #endif
 
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			
-			auto *p_final_image = &RESULT_IMAGES_MAYBESRGB[inFlightIndex]->get_image();
-#if TAA_USE_POSTPROCESS_STEP
-			if (mPostProcessEnabled) p_final_image = &mPostProcessImages[inFlightIndex]->get_image();
-#endif
-			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : *p_final_image;
+//			auto *p_final_image = &RESULT_IMAGES_MAYBESRGB[inFlightIndex]->get_image();
+//#if TAA_USE_POSTPROCESS_STEP
+//			if (mPostProcessEnabled) p_final_image = &mPostProcessImages[inFlightIndex]->get_image();
+//#endif
+//			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : *p_final_image;
+
+			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : (*pLastProducedImageView)->get_image();
 
 			// TODO: is this barrier needed?
 			cmdbfr->establish_global_memory_barrier(
@@ -870,6 +909,7 @@ private:
 	// is a rather stupid workaround. It is also quite resource-intensive... Life's hard!
 	std::array<avk::image_view, CF> mResultImagesSrgb;
 #endif
+	std::array<avk::image_view, CF> mTempImages;
 	std::array<avk::image_view, CF> mDebugImages;
 	std::array<avk::image_view, CF> mPostProcessImages;
 	// For each history frame's image content, also store the associated projection matrix:
@@ -888,6 +928,8 @@ private:
 	avk::compute_pipeline mPostProcessPipeline;
 	push_constants_for_postprocess mPostProcessPushConstants;
 
+	avk::compute_pipeline mSharpenerPipeline;
+
 	Parameters mParameters[2];
 
 	// jitter debugging
@@ -905,4 +947,6 @@ private:
 	bool mUpsampling = false;
 	glm::uvec2 mInputResolution  = {};	// lo res
 	glm::uvec2 mOutputResolution = {};	// hi res
+
+	bool mUseSharpener = false;
 };

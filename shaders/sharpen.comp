@@ -1,0 +1,36 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// ###### SRC/DST IMAGES #################################
+layout(set = 0, binding = 1) uniform texture2D uInputFrame;
+layout(set = 0, binding = 2, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uOutput;
+// -------------------------------------------------------
+
+// ###### PUSH CONSTANTS AND UBOs ########################
+
+// -------------------------------------------------------
+
+// ################## COMPUTE SHADER MAIN ###################
+
+#define CLAMP_TO_TEX(v) clamp((v), ivec2(0), textureSize(uInputFrame,0))
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+void main()
+{
+	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(iuv, textureSize(uInputFrame, 0)))) return;
+
+	vec3 L = texelFetch(uInputFrame, CLAMP_TO_TEX(iuv + ivec2(-1, 0)), 0).rgb;
+	vec3 R = texelFetch(uInputFrame, CLAMP_TO_TEX(iuv + ivec2( 1, 0)), 0).rgb;
+	vec3 T = texelFetch(uInputFrame, CLAMP_TO_TEX(iuv + ivec2( 0,-1)), 0).rgb;
+	vec3 B = texelFetch(uInputFrame, CLAMP_TO_TEX(iuv + ivec2( 0, 1)), 0).rgb;
+	vec3 C = texelFetch(uInputFrame, iuv, 0).rgb;
+
+	vec3 val = 5 * C - L - R - T - B;	
+	val = clamp(val, vec3(0), vec3(1)); // TODO: clamp?
+	imageStore(uOutput, iuv, vec4(val,1));
+}
+
