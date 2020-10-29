@@ -591,7 +591,8 @@ void main()
 		}
 	}
 
-	vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
+	//vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
+	vec3 antiAliased = maybe_ycocg_to_rgb(mix(historyColor, currentColor, alpha * beta));	// current * ab + history * (1-ab)
 
 	// if TAA_OUTPUT_IS_SRGB:
 	// write rgb into uResult
