@@ -63,6 +63,10 @@ class taa : public gvk::invokee
 		VkBool32    mUpsampling;
 	};
 
+	struct push_constants_for_sharpener {
+		float sharpeningFactor	= 1.f;
+	};
+
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
 		glm::ivec4 zoomSrcLTWH	= { 960 - 10, 540 - 10, 20, 20 };
 		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
@@ -380,14 +384,14 @@ public:
 					if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
 					SliderFloat("gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
 					CheckboxB32("use YCoCg", &param.mUseYCoCg);
-					CheckboxB32("luma weighting", &param.mLumaWeighting); HelpMarker("Set min and max alpha to define feedback range.");
+					CheckboxB32("luma weight (Lottes)", &param.mLumaWeighting); HelpMarker("Not to be confused with luma weight (Karis)!\nSet min and max alpha to define feedback range.");
 					CheckboxB32("depth culling", &param.mDepthCulling);
 					CheckboxB32("reject out-of-screen", &param.mRejectOutside);
 					//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
 					CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
 					CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
 					InputFloat("unjitter factor", &param.mUnjitterFactor);
-					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "regular 16", "debug" };
+					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug x16", "debug x1" };
 					if (isPrimary) Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
 					
 					SliderFloat("alpha", &param.mJitterNdcAndAlpha.w, 0.0f, 1.0f);
@@ -397,6 +401,15 @@ public:
 					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
 					CheckboxB32("use longest vel.vector", &param.mUseLongestVelocityVector);
 					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
+
+					if (isPrimary) {
+						Checkbox("use sharpener", &mUseSharpener);
+						SameLine();
+						SliderFloatW(120, "##sharpening factor", &mSharpenerPushConstants.sharpeningFactor, 0.f, 1.f, "%.1f");
+					} else {
+						SetCursorPosY(GetCursorPosY() + checkbox_height);
+					}
+
 					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
 					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "result", "debug" /* always last */ };
 					if (isPrimary) Checkbox("debug##show debug", &mShowDebug); else Text("debug");
@@ -409,7 +422,6 @@ public:
 					CheckboxB32("center##debug center", &param.mDebugCenter);
 
 					if (isPrimary) {
-						Checkbox("use sharpener", &mUseSharpener);
 
 						if (CollapsingHeader("Split screen")) {
 							Checkbox("split", &mSplitScreen); SameLine();
@@ -509,7 +521,8 @@ public:
 		mSharpenerPipeline = context().create_compute_pipeline_for(
 			"shaders/sharpen.comp",
 			descriptor_binding(0, 1, *mResultImages[0]),
-			descriptor_binding(0, 2, mTempImages[0]->as_storage_image())
+			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
+			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_sharpener) }
 		);
 
 #if TAA_USE_POSTPROCESS_STEP
@@ -814,6 +827,7 @@ public:
 					descriptor_binding(0, 1, *RESULT_IMAGES_MAYBESRGB[inFlightIndex]),
 					descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
 					}));
+				cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
 				cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
 				pLastProducedImageView = &mTempImages[inFlightIndex];
@@ -929,6 +943,7 @@ private:
 	push_constants_for_postprocess mPostProcessPushConstants;
 
 	avk::compute_pipeline mSharpenerPipeline;
+	push_constants_for_sharpener mSharpenerPushConstants;
 
 	Parameters mParameters[2];
 
