@@ -193,6 +193,7 @@ class wookiee : public gvk::invokee
 		{ "ES window flicker",       {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
 		{ "ES fence \"hole\"",       {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
 		{ "ES strafe problem",       {-4.877779f, 3.371065f, 17.146101f}, {0.994378f, -0.020388f, -0.103789f, -0.002128f} },
+		{ "ES strafe problem 2",     {-43.659477f, 2.072995f, 26.158779f}, {0.985356f, 0.009361f, -0.170158f, 0.001617f} },
 		{ "ES catmull showcase",     {-30.011652f, 0.829173f, 27.225056f}, {-0.224099f, 0.012706f, -0.972886f, -0.055162f} },	// enable camera bobbing to see difference
 		{ "ES flicker bg. building", {-51.779095f, 3.302949f, 42.258675f}, {-0.922331f, -0.035066f, 0.384432f, -0.014615f} },
 	};
@@ -1483,6 +1484,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 					Checkbox("rotation", &mAutoRotate); SameLine(); InputFloat2("##autoRotDeg", &mAutoRotateDegrees.x, "%.1f");
 					Checkbox("bobbing", &mAutoBob);
+					Checkbox("strafing", &mAutoStrafe); SameLine(); InputFloatW(40,"spd##autoStrafeSpeed", &mAutoStrafeSpeed, 0.f, 0.f, "%.1f"); SameLine(); InputFloatW(40,"d##autoStrafeDist", &mAutoStrafeDist, 0.f, 0.f, "%.1f");
 					Separator();
 					if (Button("save cam")) { savedCamState.t = mQuakeCam.translation(); savedCamState.r = mQuakeCam.rotation(); };
 					SameLine();
@@ -1874,6 +1876,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		float dtCam = dt;
 		static float tCamBob = 0.f;
+		static float tCamStrafe = 0.f;
 		if (mAutoMovementUnits == 1) dtCam = 1.f;
 		if (!mAutoMovement || !mAutoBob) tCamBob = 0.f;
 		if (mAutoMovement && (mAutoRotate || mAutoBob)) {
@@ -1894,6 +1897,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				rotVert  = glm::quat_cast(glm::rotate(ry, glm::vec3(1.f, 0.f, 0.f)));
 			}
 			mQuakeCam.set_rotation(rotHoriz * mQuakeCam.rotation() * rotVert);
+		}
+		static glm::vec3 strafeStart = mQuakeCam.translation();
+		if (mAutoMovement && mAutoStrafe) {
+			tCamStrafe += dtCam;
+			float dx =  mAutoStrafeDist * sin(tCamStrafe * mAutoStrafeSpeed);
+			mQuakeCam.set_translation(strafeStart + glm::vec3(dx, 0, 0));
+		} else {
+			strafeStart = mQuakeCam.translation();
+			tCamStrafe = 0.f;
 		}
 
 		float dtObj = dt;
@@ -2137,6 +2149,9 @@ private: // v== Member variables ==v
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = false;
 	bool mAutoBob = false;
+	bool mAutoStrafe = false;
+	float mAutoStrafeSpeed = 3.f;
+	float mAutoStrafeDist = 0.5f;
 	bool mAutoMovement = true;
 	int mAutoMovementUnits = 0; // 0 = per sec, 1 = per frame
 
