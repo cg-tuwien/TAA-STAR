@@ -46,6 +46,8 @@
     <ClInclude Include="source\splines.hpp" />
     <ClInclude Include="source\rdoc_helper.hpp" />
     <ClInclude Include="source\IniUtil.h" />
+    <ClInclude Include="shaders\ffx_a.h" />
+    <ClInclude Include="shaders\ffx_cas.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">
@@ -103,6 +105,9 @@
       <Filter>shaders</Filter>
     </None>
     <None Include="shaders\sharpen.comp">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\sharpen_cas.comp">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

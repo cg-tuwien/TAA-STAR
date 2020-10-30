@@ -30,6 +30,8 @@
     <ClCompile Include="source\splines.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="shaders\ffx_a.h" />
+    <ClInclude Include="shaders\ffx_cas.h" />
     <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="shaders\shader_cpu_common.h" />
     <ClInclude Include="source\IniUtil.h" />
@@ -52,6 +54,7 @@
     <None Include="shaders\lighting_pass.vert" />
     <None Include="shaders\post_process.comp" />
     <None Include="shaders\sharpen.comp" />
+    <None Include="shaders\sharpen_cas.comp" />
     <None Include="shaders\sky_gradient.frag" />
     <None Include="shaders\sky_gradient.vert" />
     <None Include="shaders\taa.comp" />

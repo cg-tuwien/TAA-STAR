@@ -1,0 +1,54 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// ###### SRC/DST IMAGES #################################
+layout(set = 0, binding = 1, TAA_SHADER_OUTPUT_FORMAT) readonly  uniform restrict image2D imgSrc;
+layout(set = 0, binding = 2, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D imgDst;
+// -------------------------------------------------------
+
+// ###### PUSH CONSTANTS AND UBOs ########################
+layout(push_constant) uniform PushConstants {
+	uvec4 const0;
+	uvec4 const1;
+};
+
+// -------------------------------------------------------
+
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx_a.h"
+AF3 CasLoad(ASU2 p) { return imageLoad(imgSrc, p).rgb; }
+void CasInput(inout AF1 r, inout AF1 g, inout AF1 b) {}
+#include "ffx_cas.h"
+
+
+// ################## COMPUTE SHADER MAIN ###################
+
+layout(local_size_x = 64) in;
+void main()
+{
+	const bool sharpenOnly = true;
+
+    // Do remapping of local xy in workgroup for a more PS-like swizzle pattern.
+    AU2 gxy = ARmp8x8(gl_LocalInvocationID.x)+AU2(gl_WorkGroupID.x<<4u,gl_WorkGroupID.y<<4u);
+
+    AF4 c;
+    CasFilter(c.r, c.g, c.b, gxy, const0, const1, sharpenOnly);
+    imageStore(imgDst, ASU2(gxy), c);
+    gxy.x += 8u;
+
+    CasFilter(c.r, c.g, c.b, gxy, const0, const1, sharpenOnly);
+    imageStore(imgDst, ASU2(gxy), c);
+    gxy.y += 8u;
+
+    CasFilter(c.r, c.g, c.b, gxy, const0, const1, sharpenOnly);
+    imageStore(imgDst, ASU2(gxy), c);
+    gxy.x -= 8u;
+
+    CasFilter(c.r, c.g, c.b, gxy, const0, const1, sharpenOnly);
+    imageStore(imgDst, ASU2(gxy), c);
+}
+

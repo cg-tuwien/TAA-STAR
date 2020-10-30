@@ -10,6 +10,13 @@
 #include "rdoc_helper.hpp"
 #include "shader_cpu_common.h"
 
+// FidelityFX-CAS
+#include <stdint.h>
+#define A_CPU 1
+#include "ffx_a.h"
+#include "ffx_cas.h"
+
+
 #define TAA_USE_POSTPROCESS_STEP 1
 
 // This class handles the anti-aliasing post-processing effect(s).
@@ -60,6 +67,11 @@ class taa : public gvk::invokee
 
 	struct push_constants_for_sharpener {
 		float sharpeningFactor	= 1.f;
+	};
+
+	struct push_constants_for_cas {
+		varAU4(const0);
+		varAU4(const1);
 	};
 
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
@@ -398,9 +410,9 @@ public:
 					HelpMarker("Not to be confused with luma weight (Lottes)!");
 
 					if (isPrimary) {
-						Checkbox("use sharpener", &mUseSharpener);
+						ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
 						SameLine();
-						SliderFloatW(120, "##sharpening factor", &mSharpenerPushConstants.sharpeningFactor, 0.f, 1.f, "%.1f");
+						SliderFloatW(80, "##sharpening factor", &mSharpenFactor, 0.f, 1.f, "%.1f");
 					} else {
 						SetCursorPosY(GetCursorPosY() + checkbox_height);
 					}
@@ -472,7 +484,7 @@ public:
 	// called from main
 	void init_updater(gvk::updater &updater) {
 		LOG_DEBUG("TAA: initing updater");
-		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline };
+		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline };
 #if TAA_USE_POSTPROCESS_STEP
 		comp_pipes.push_back(&mPostProcessPipeline);
 #endif
@@ -519,6 +531,13 @@ public:
 			descriptor_binding(0, 1, *mResultImages[0]),
 			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_sharpener) }
+		);
+
+		mCasPipeline = context().create_compute_pipeline_for(
+			"shaders/sharpen_cas.comp",
+			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
+			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_cas) }
 		);
 
 #if TAA_USE_POSTPROCESS_STEP
@@ -739,6 +758,13 @@ public:
 
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
 
+		static float prevSharpenFactor = -1.f;
+		if (mSharpenFactor != prevSharpenFactor) {
+			prevSharpenFactor = mSharpenFactor;
+			mSharpenerPushConstants.sharpeningFactor = mSharpenFactor;
+			CasSetup(mCasPushConstants.const0, mCasPushConstants.const1, mSharpenFactor, AF1(mOutputResolution.x), AF1(mOutputResolution.y), AF1(mOutputResolution.x), AF1(mOutputResolution.y));
+		}
+
 		mResetHistory = false;
 	}
 
@@ -797,20 +823,31 @@ public:
 
 			auto pLastProducedImageView = &mResultImages[inFlightIndex];
 
-			// FIXME - drop SRGB support. Sharpener will most likely not work with it.
-			if (mUseSharpener) {
+			if (mSharpener) {
 				cmdbfr->establish_global_memory_barrier(
 					pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::compute_shader,
 					memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access
 				);
 
-				cmdbfr->bind_pipeline(mSharpenerPipeline);
-				cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(0, 1, *mResultImages[inFlightIndex]),
-					descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
-					}));
-				cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
-				cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+				if (mSharpener == 1) {
+					cmdbfr->bind_pipeline(mSharpenerPipeline);
+					cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+						descriptor_binding(0, 1, *mResultImages[inFlightIndex]),
+						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
+						}));
+
+					cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
+					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+				} else {
+					cmdbfr->bind_pipeline(mCasPipeline);
+					cmdbfr->bind_descriptors(mCasPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+						descriptor_binding(0, 1, mResultImages[inFlightIndex]->as_storage_image()),
+						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
+						}));
+
+					cmdbfr->push_constants(mCasPipeline->layout(), mCasPushConstants);
+					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+				}
 
 				pLastProducedImageView = &mTempImages[inFlightIndex];
 			}
@@ -915,6 +952,9 @@ private:
 	avk::compute_pipeline mSharpenerPipeline;
 	push_constants_for_sharpener mSharpenerPushConstants;
 
+	avk::compute_pipeline mCasPipeline;
+	push_constants_for_cas mCasPushConstants;
+
 	Parameters mParameters[2];
 
 	// jitter debugging
@@ -933,5 +973,6 @@ private:
 	glm::uvec2 mInputResolution  = {};	// lo res
 	glm::uvec2 mOutputResolution = {};	// hi res
 
-	bool mUseSharpener = false;
+	int mSharpener = 0; // 0=off 1=simple 2=FidelityFX-CAS
+	float mSharpenFactor = 0.5f;
 };
