@@ -292,30 +292,6 @@ vec4 clipAabbSlow(
 		return p + r;
 }
 
-#if TAA_OUTPUT_IS_SRGB
-float srgbGammaCorr(float color)
-{
-	if (color <= 0.0031308)
-		return 12.92 * color;
-
-	float a = 0.055;
-	return (1 + a) * pow(color, 1 / 2.4) - a;
-}
-
-vec3 rgb2srgb(vec3 rgb)
-{
-	vec3 srgb;
-	srgb.r = srgbGammaCorr(rgb.r);
-	srgb.g = srgbGammaCorr(rgb.g);
-	srgb.b = srgbGammaCorr(rgb.b);
-	return srgb;
-}
-
-#define TO_OUTPUT_FORMAT(x) rgb2srgb((x))
-#else
-#define TO_OUTPUT_FORMAT(x) (x)
-#endif
-
 void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
 	vec4 velocitySample = SAMPLE_TEX(uCurrentVelocity, currentUv);
 
@@ -487,12 +463,12 @@ void main()
 	ivec2 iuv_lores = uv_to_tc(uv, textureSize_loRes);
 
 	if (params.mPassThrough) {
-		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uCurrentFrame, iuv_lores, 0).rgb), 1));
+		imageStore(uResult, iuv, vec4(texelFetch(uCurrentFrame, iuv_lores, 0).rgb, 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
 	if (params.mBypassHistoryUpdate) {
-		imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(texelFetch(uHistoryFrame, iuv, 0).rgb), 1));
+		imageStore(uResult, iuv, vec4(texelFetch(uHistoryFrame, iuv, 0).rgb, 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
@@ -600,7 +576,7 @@ void main()
 	// - we write sRGB values into an RGB image and copy the image into an sRGB image later as a workaround
 	// => we have to manually convert linear RGB to sRGB
 
-	imageStore(uResult, iuv, vec4(TO_OUTPUT_FORMAT(antiAliased), 1.0));
+	imageStore(uResult, iuv, vec4(antiAliased, 1.0));
 
 	// --- debug ---
 

@@ -12,12 +12,6 @@
 
 #define TAA_USE_POSTPROCESS_STEP 1
 
-#if TAA_OUTPUT_IS_SRGB
-#define RESULT_IMAGES_MAYBESRGB mResultImagesSrgb
-#else
-#define RESULT_IMAGES_MAYBESRGB mResultImages
-#endif
-
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
 // are created CF-times, once for each concurrent frame.
@@ -267,15 +261,6 @@ public:
 			rdoc::labelImage(mResultImages[i]->get_image().handle(), "taa.mResultImages", i);
 			layoutTransitions.emplace_back(std::move(mResultImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
-#if TAA_OUTPUT_IS_SRGB
-			mResultImagesSrgb[i] = gvk::context().create_image_view(
-				//gvk::context().create_image(w, h, vk::Format::eR8G8B8A8Unorm, 1, avk::memory_usage::device, avk::image_usage::general_image)
-				gvk::context().create_image(w, h, TAA_OUTPUT_IS_SRGB ? TAA_IMAGE_FORMAT_SRGB : TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_image)
-			);
-			rdoc::labelImage(mResultImagesSrgb[i]->get_image().handle(), "taa.mResultImagesSrgb", i);
-			layoutTransitions.emplace_back(std::move(mResultImagesSrgb[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
-#endif
-
 			mTempImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
@@ -509,7 +494,7 @@ public:
 			descriptor_binding(0, 0, mSampler),
 			descriptor_binding(0, 1, *mSrcColor[0]),
 			descriptor_binding(0, 2, *mSrcDepth[0]),
-			descriptor_binding(0, 3, *RESULT_IMAGES_MAYBESRGB[0]),
+			descriptor_binding(0, 3, *mResultImages[0]),
 			descriptor_binding(0, 4, *mSrcDepth[0]),
 			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
 			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
@@ -782,11 +767,7 @@ public:
 				descriptor_binding(0, 0, mSampler),
 				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),							// -> shader: uCurrentFrame
 				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),							// -> shader: uCurrentDepth
-#if TAA_OUTPUT_IS_SRGB
-				descriptor_binding(0, 3, *mResultImagesSrgb[inFlightLastIndex]),				// -> shader: uHistoryFrame
-#else
 				descriptor_binding(0, 3, *mResultImages[inFlightLastIndex]),					// -> shader: uHistoryFrame
-#endif
 				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),						// -> shader: uHistoryDepth
 				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResult
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),		// -> shader: uDebug
@@ -797,22 +778,6 @@ public:
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
 
-#if TAA_OUTPUT_IS_SRGB
-			// Finally, copy into sRGB image:
-			cmdbfr->establish_global_memory_barrier(
-				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::transfer,
-				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::transfer_read_access
-			);
-
-			copy_image_to_another(mResultImages[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-
-			cmdbfr->establish_global_memory_barrier(
-				pipeline_stage::transfer,             /* -> */ pipeline_stage::transfer,
-				memory_access::transfer_write_access, /* -> */ memory_access::transfer_read_access
-			);
-#endif
-
-			//auto lastProducedImage = *RESULT_IMAGES_MAYBESRGB[inFlightIndex];
 			auto pLastProducedImageView = &mResultImages[inFlightIndex];
 
 			// FIXME - drop SRGB support. Sharpener will most likely not work with it.
@@ -824,7 +789,7 @@ public:
 
 				cmdbfr->bind_pipeline(mSharpenerPipeline);
 				cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(0, 1, *RESULT_IMAGES_MAYBESRGB[inFlightIndex]),
+					descriptor_binding(0, 1, *mResultImages[inFlightIndex]),
 					descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
 					}));
 				cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
@@ -856,12 +821,6 @@ public:
 
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			
-//			auto *p_final_image = &RESULT_IMAGES_MAYBESRGB[inFlightIndex]->get_image();
-//#if TAA_USE_POSTPROCESS_STEP
-//			if (mPostProcessEnabled) p_final_image = &mPostProcessImages[inFlightIndex]->get_image();
-//#endif
-//			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : *p_final_image;
-
 			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : (*pLastProducedImageView)->get_image();
 
 			// TODO: is this barrier needed?
@@ -878,9 +837,6 @@ public:
 		else {
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-#if TAA_OUTPUT_IS_SRGB
-			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImagesSrgb[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-#endif
 			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
 		}
 
@@ -918,11 +874,6 @@ private:
 	std::array<avk::image_view_t*, CF> mSrcVelocity;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
-#if TAA_OUTPUT_IS_SRGB
-	// Copying the result images into actually the same result images (but only sRGB format)
-	// is a rather stupid workaround. It is also quite resource-intensive... Life's hard!
-	std::array<avk::image_view, CF> mResultImagesSrgb;
-#endif
 	std::array<avk::image_view, CF> mTempImages;
 	std::array<avk::image_view, CF> mDebugImages;
 	std::array<avk::image_view, CF> mPostProcessImages;
