@@ -23,16 +23,16 @@ class taa : public gvk::invokee
 		glm::vec4 mJitterNdcAndAlpha		= glm::vec4(0.f, 0.f, 0.f, 0.05f);
 		int mColorClampingOrClipping		= 1;
 		VkBool32 mDepthCulling				= VK_FALSE;
-		//VkBool32 mTextureLookupUnjitter;
 		VkBool32 mUnjitterNeighbourhood		= VK_FALSE;
 		VkBool32 mUnjitterCurrentSample		= VK_FALSE;		// TODO: anything for depth/history depth??
 		float mUnjitterFactor				= 1.0f;			// -1 or +1
 		VkBool32 mBypassHistoryUpdate		= VK_FALSE;		// used by jitter debug slow motion
 		VkBool32 mPassThrough				= VK_FALSE;		// effectively disables TAA: result <- input,
+		VkBool32 mResetHistory				= VK_FALSE;
 		VkBool32 mUseYCoCg					= VK_FALSE;
 		VkBool32 mVarianceClipping			= VK_FALSE;
 		VkBool32 mShapedNeighbourhood		= VK_FALSE;
-		VkBool32 mLumaWeighting				= VK_FALSE;;
+		VkBool32 mLumaWeightingLottes		= VK_FALSE;;
 		float mVarClipGamma					= 1.0f;
 		float mMinAlpha						= 1.0f - 0.97f;	// used for luminance-based weighting
 		float mMaxAlpha						= 1.0f - 0.88f;	// used for luminance-based weighting
@@ -41,12 +41,13 @@ class taa : public gvk::invokee
 		int mUseVelocityVectors				= 1;			// 0=off 1=for movers only 2=for everything
 		VkBool32 mUseLongestVelocityVector	= VK_FALSE;
 		int mInterpolationMode				= 0;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
+		VkBool32 mToneMapLumaKaris			= VK_FALSE;		// "tone mapping" by luma weighting (Karis)
 
 		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		float pad1, pad2;
+		//float pad1;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -375,7 +376,7 @@ public:
 					if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
 					SliderFloat("gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
 					CheckboxB32("use YCoCg", &param.mUseYCoCg);
-					CheckboxB32("luma weight (Lottes)", &param.mLumaWeighting); HelpMarker("Not to be confused with luma weight (Karis)!\nSet min and max alpha to define feedback range.");
+					CheckboxB32("luma weight (Lottes)", &param.mLumaWeightingLottes); HelpMarker("Not to be confused with tonemap luma weight (Karis)!\nSet min and max alpha to define feedback range.");
 					CheckboxB32("depth culling", &param.mDepthCulling);
 					CheckboxB32("reject out-of-screen", &param.mRejectOutside);
 					//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
@@ -392,6 +393,9 @@ public:
 					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
 					CheckboxB32("use longest vel.vector", &param.mUseLongestVelocityVector);
 					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
+
+					CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
+					HelpMarker("Not to be confused with luma weight (Lottes)!");
 
 					if (isPrimary) {
 						Checkbox("use sharpener", &mUseSharpener);
@@ -583,10 +587,14 @@ public:
 	// handle user input
 	void handle_input() {
 		using namespace gvk;
+
+		ImGuiIO &io = ImGui::GetIO();
+
+		if (!io.WantTextInput && input().key_pressed(key_code::r)) mResetHistory = true;
+
 		const auto* quakeCamera = current_composition()->element_by_type<quake_camera>();
 		if (quakeCamera && quakeCamera->is_enabled()) return;
 
-		ImGuiIO &io = ImGui::GetIO();
 		if (io.WantCaptureMouse) return;
 
 		if (!mPostProcessPushConstants.zoom && !mSplitScreen) return;
@@ -721,8 +729,9 @@ public:
 		//printf("jitter %f %f\n", jitter.x, jitter.y);
 		for (int i = 0; i < 2; ++i) {
 			mTaaPushConstants.param[i] = mParameters[i];
-			mTaaPushConstants.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mResetHistory ? 1.f : mTaaPushConstants.param[i].mJitterNdcAndAlpha.w);
+			mTaaPushConstants.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mTaaPushConstants.param[i].mJitterNdcAndAlpha.w);
 			mTaaPushConstants.param[i].mBypassHistoryUpdate = bypassHistUpdate;
+			mTaaPushConstants.param[i].mResetHistory = mResetHistory;
 		}
 		mTaaPushConstants.mUpsampling = mUpsampling;
 		mTaaPushConstants.splitScreen = mSplitScreen;

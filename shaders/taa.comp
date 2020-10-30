@@ -4,10 +4,10 @@
 
 #include "shader_cpu_common.h"
 
-// TODO: recheck unjittering - jitter offsets are NDC! fixed now, test!
+// NOTE: This shader is totally NOT optimized for performance, but instead designed to experimant with different settings!
 
 // ATTENTION:
-// with upsampling enabled, the texture sizes are different now:
+// with upsampling enabled, the texture sizes are different:
 // lo-res: uCurrentFrame, uCurrentDepth, uCurrentVelocity, *uHistoryDepth*
 // hi-res: uHistoryFrame, uResult, uDebug
 //
@@ -16,6 +16,9 @@
 
 // TODO upsampling:
 // unjittering ?
+
+
+// NOTE: if tonemapping is used: history buffer always contains tonemapped samples
 
 // ###### SRC/DST IMAGES #################################
 layout(set = 0, binding = 0) uniform sampler uSampler;
@@ -42,31 +45,32 @@ struct Parameters {
 	vec4 mJitterNdcAndAlpha;		// jitter is in NDC units, NOT UV units!
 	int  mColorClampingOrClipping;
 	bool mDepthCulling;
-	//bool mTextureLookupUnjitter;
 	bool mUnjitterNeighbourhood;
 	bool mUnjitterCurrentSample;	// TODO: anything for depth/history depth??
 	float mUnjitterFactor;			// -1 or +1, for debugging
 
 	bool mBypassHistoryUpdate;
 	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
+	bool mResetHistory;
 	bool mUseYCoCg;
 	bool mVarianceClipping;
 	bool mShapedNeighbourhood;
-	bool mLumaWeighting;
+	bool mLumaWeightingLottes;
 	float mVarClipGamma;
-	float mMinAlpha;				// used for luminance-based weighting
-	float mMaxAlpha;				// used for luminance-based weighting
+	float mMinAlpha;				// used for luminance-based weighting (Lottes)
+	float mMaxAlpha;				// used for luminance-based weighting (Lottes)
 	float mRejectionAlpha;
 	bool mRejectOutside;
 	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
 	bool mUseLongestVelocityVector;
 	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
+	bool mToneMapLumaKaris;			// "tone mapping" by luma weighting (Karis)
 
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
 
-	float pad1, pad2;
+	//float pad1;
 };
 layout(push_constant) uniform PushConstants {
 	Parameters	param[2];
@@ -143,27 +147,45 @@ vec3 maybe_rgb_to_ycocg(vec3 c) { return params.mUseYCoCg ? rgb_to_ycocg(c) : c;
 vec3 maybe_ycocg_to_rgb(vec3 c) { return params.mUseYCoCg ? ycocg_to_rgb(c) : c; }
 float luminance(vec3 c) { return params.mUseYCoCg ? c.x : rgb_to_ycocg(c).x; }
 
+// luma-weighted "tone mapping" (Karis); see http://graphicrants.blogspot.com/2013/12/tone-mapping.html
+vec3 tonemap_rgb(vec3 hdr) {
+	if (params.mToneMapLumaKaris) {
+		float luma = max(max(hdr.r, hdr.g), hdr.b);
+		return hdr / (1.0 + luma);
+	} else {
+		return hdr;
+	}
+}
+vec3 un_tonemap_rgb(vec3 ldr) {
+	if (params.mToneMapLumaKaris) {
+		float luma = max(max(ldr.r, ldr.g), ldr.b);
+		return ldr / (1.0 - luma);
+	} else {
+		return ldr;
+	}
+}
+
 void getNeighbourhood(in ivec2 iuv, out vec3 cC, out vec3 c1, out vec3 c2, out vec3 c3, out vec3 c4, out vec3 c5, out vec3 c6, out vec3 c7, out vec3 c8) {
 	vec2 offset = params.mUnjitterNeighbourhood ? JITTER_UV : vec2(0);
 
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
 
-	cC = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv                 + 0.5) * invsize).rgb);
-	c1 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1, -1) + 0.5) * invsize).rgb);
-	c2 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0, -1) + 0.5) * invsize).rgb);
-	c3 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1, -1) + 0.5) * invsize).rgb);
-	c4 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  0) + 0.5) * invsize).rgb);
-	c5 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  0) + 0.5) * invsize).rgb);
-	c6 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  1) + 0.5) * invsize).rgb);
-	c7 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0,  1) + 0.5) * invsize).rgb);
-	c8 = maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb);
+	cC = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv                 + 0.5) * invsize).rgb));
+	c1 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1, -1) + 0.5) * invsize).rgb));
+	c2 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0, -1) + 0.5) * invsize).rgb));
+	c3 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1, -1) + 0.5) * invsize).rgb));
+	c4 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  0) + 0.5) * invsize).rgb));
+	c5 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  0) + 0.5) * invsize).rgb));
+	c6 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2(-1,  1) + 0.5) * invsize).rgb));
+	c7 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 0,  1) + 0.5) * invsize).rgb));
+	c8 = maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + ivec2( 1,  1) + 0.5) * invsize).rgb));
 }
 
 // may have different unjitter settings than getNeighbourhood
 vec3 getCurrentColor(in ivec2 iuv) {
 	vec2 offset = params.mUnjitterCurrentSample ? JITTER_UV : vec2(0);
 	vec2 invsize = vec2(1) / textureSize(uCurrentFrame, 0);
-	return maybe_rgb_to_ycocg(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + 0.5) * invsize).rgb);
+	return maybe_rgb_to_ycocg(tonemap_rgb(texture(sampler2D(uCurrentFrame, uSampler), offset + vec2(iuv + 0.5) * invsize).rgb));
 }
 
 vec3 getCurrentUpsampledColor(in ivec2 currentTc, in vec2 currentUv, out float beta) {
@@ -196,7 +218,7 @@ vec3 getCurrentUpsampledColor(in ivec2 currentTc, in vec2 currentUv, out float b
 	if (foundTc.x >= 0.0) {
 		beta = 1.0;
 		vec2 texUv = (floor(foundTc) + 0.5) / textureSize_loRes;
-		return maybe_rgb_to_ycocg(SAMPLE_TEX(uCurrentFrame, texUv).rgb);
+		return maybe_rgb_to_ycocg(tonemap_rgb(SAMPLE_TEX(uCurrentFrame, texUv).rgb));
 	} else {
 		beta = 0.0;
 		return vec3(0);
@@ -539,8 +561,6 @@ void main()
 			historyColor = clamp(historyColor, colMin, colMax);
 			break;
 		case 2:
-			//historyColor = clipAabb(colMin, colMax, vec4(currentColor, 1.0), vec4(historyColor, 1.0)).rgb;
-			// TODO: Implemented ^ this in a hurry => not properly tested and verified yet.
 			historyColor = clipAabb(colMin, colMax, vec4(0,0,0,1), vec4(historyColor, 1.0)).rgb;
 			break;
 		case 3:
@@ -559,7 +579,7 @@ void main()
 
 	if (!rejected) {
 		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
-		if (params.mLumaWeighting) {
+		if (params.mLumaWeightingLottes) {
 			float lumaCurrent = luminance(currentColor);
 			float lumaHistory = luminance(historyColor);
 			float diff = abs(lumaCurrent - lumaHistory) / max(max(lumaCurrent, lumaHistory), 0.2);
@@ -570,11 +590,13 @@ void main()
 		}
 	}
 
+	if (params.mResetHistory) { alpha = 1.0; beta = 1.0; }
+
 	//vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
 	vec3 antiAliased = maybe_ycocg_to_rgb(mix(historyColor, currentColor, alpha * beta));	// current * ab + history * (1-ab)
 
 	vec3 output_to_history = antiAliased;
-	vec3 output_to_screen  = antiAliased;
+	vec3 output_to_screen  = un_tonemap_rgb(antiAliased);
 
 	imageStore(uResultHistory, iuv, vec4(output_to_history, 1.0));
 	imageStore(uResultScreen,  iuv, vec4(output_to_screen,  1.0));
