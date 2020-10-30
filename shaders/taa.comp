@@ -24,7 +24,8 @@ layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding = 7) uniform texture2D uCurrentVelocity;
 layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
-layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResult;
+layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultScreen;
+layout(set = 0, binding = 8, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultHistory;
 layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
@@ -463,12 +464,14 @@ void main()
 	ivec2 iuv_lores = uv_to_tc(uv, textureSize_loRes);
 
 	if (params.mPassThrough) {
-		imageStore(uResult, iuv, vec4(texelFetch(uCurrentFrame, iuv_lores, 0).rgb, 1));
+		imageStore(uResultScreen,  iuv, vec4(texelFetch(uCurrentFrame, iuv_lores, 0).rgb, 1));
+		imageStore(uResultHistory, iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
 	if (params.mBypassHistoryUpdate) {
-		imageStore(uResult, iuv, vec4(texelFetch(uHistoryFrame, iuv, 0).rgb, 1));
+		imageStore(uResultScreen,  iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));	// FIXME - un-tonemap?; (low priority, only used for debugging)
+		imageStore(uResultHistory, iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
@@ -570,13 +573,11 @@ void main()
 	//vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
 	vec3 antiAliased = maybe_ycocg_to_rgb(mix(historyColor, currentColor, alpha * beta));	// current * ab + history * (1-ab)
 
-	// if TAA_OUTPUT_IS_SRGB:
-	// write rgb into uResult
-	// - imageStore() cannot handle sRGB images
-	// - we write sRGB values into an RGB image and copy the image into an sRGB image later as a workaround
-	// => we have to manually convert linear RGB to sRGB
+	vec3 output_to_history = antiAliased;
+	vec3 output_to_screen  = antiAliased;
 
-	imageStore(uResult, iuv, vec4(antiAliased, 1.0));
+	imageStore(uResultHistory, iuv, vec4(output_to_history, 1.0));
+	imageStore(uResultScreen,  iuv, vec4(output_to_screen,  1.0));
 
 	// --- debug ---
 
@@ -589,14 +590,15 @@ void main()
 		vec3 tmp = colMax - colMin;
 		gDebugValue = vec4(vec3(tmp.x * tmp.y * tmp.z), 0);
 	} else if (params.mDebugMode == 2) {
-		//imageStore(uDebug,  iuv, vec4(rejected ? 1 : 0, rectified ? 1 : 0, 0, 0));
 		gDebugValue = vec4(rejected ? 1 : 0, length(rectified_diff), 0, 0);
 	} else if (params.mDebugMode == 3) {
 		gDebugValue = vec4(vec3(alpha), 0);
 	} else if (params.mDebugMode == 4) {
 		gDebugValue = texelFetch(uCurrentVelocity, iuv, 0);
 	} else if (params.mDebugMode == 5) {
-		gDebugValue = vec4(antiAliased, 0);
+		gDebugValue = vec4(output_to_screen, 0);
+	} else if (params.mDebugMode == 6) {
+		gDebugValue = vec4(output_to_history, 0);
 	}
 	// else keep current gDebugValue
 

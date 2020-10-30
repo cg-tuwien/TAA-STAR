@@ -261,6 +261,12 @@ public:
 			rdoc::labelImage(mResultImages[i]->get_image().handle(), "taa.mResultImages", i);
 			layoutTransitions.emplace_back(std::move(mResultImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
+			mHistoryImages[i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mHistoryImages[i]->get_image().handle(), "taa.mHistoryImages", i);
+			layoutTransitions.emplace_back(std::move(mHistoryImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
 			mTempImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
@@ -396,7 +402,7 @@ public:
 					}
 
 					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
-					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "result", "debug" /* always last */ };
+					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "screen-result", "history-result", "debug" /* always last */ };
 					if (isPrimary) Checkbox("debug##show debug", &mShowDebug); else Text("debug");
 					SameLine();
 					Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
@@ -496,9 +502,10 @@ public:
 			descriptor_binding(0, 2, *mSrcDepth[0]),
 			descriptor_binding(0, 3, *mResultImages[0]),
 			descriptor_binding(0, 4, *mSrcDepth[0]),
-			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),		// output for screen
 			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
 			descriptor_binding(0, 7, *mSrcVelocity[0]),
+			descriptor_binding(0, 8, mHistoryImages[0]->as_storage_image()),	// output for history
 			descriptor_binding(1, 0, mMatricesBuffer[0]),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -767,11 +774,12 @@ public:
 				descriptor_binding(0, 0, mSampler),
 				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),							// -> shader: uCurrentFrame
 				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),							// -> shader: uCurrentDepth
-				descriptor_binding(0, 3, *mResultImages[inFlightLastIndex]),					// -> shader: uHistoryFrame
+				descriptor_binding(0, 3, *mHistoryImages[inFlightLastIndex]),					// -> shader: uHistoryFrame
 				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),						// -> shader: uHistoryDepth
-				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResult
+				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResultScreen
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),		// -> shader: uDebug
 				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),							// -> shader: uCurrentVelocity
+				descriptor_binding(0, 8, mHistoryImages[inFlightIndex]->as_storage_image()),	// -> shader: uResultHistory
 				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
 				}));
 			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
@@ -877,6 +885,8 @@ private:
 	std::array<avk::image_view, CF> mTempImages;
 	std::array<avk::image_view, CF> mDebugImages;
 	std::array<avk::image_view, CF> mPostProcessImages;
+	std::array<avk::image_view, CF> mHistoryImages;			// use a separate history buffer for now, makes life easier..
+
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;
 	std::array<glm::mat4, CF> mHistoryViewMatrices;
