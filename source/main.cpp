@@ -11,7 +11,7 @@
 
 
 // use forward rendering? (if 0: use deferred shading)
-#define FORWARD_RENDERING 0
+#define FORWARD_RENDERING 1
 
 // use the gvk updater for shader hot reloading and window resizing ?
 #define USE_GVK_UPDATER 1
@@ -21,6 +21,9 @@
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
+
+	- get bone indices -> more than max_bones!
+	- anim buffer overflow?
 
 	- drop SRBG support in TAA
 
@@ -135,10 +138,10 @@ class wookiee : public gvk::invokee
 	};
 
 	// Constant data to be pushed per draw call that renders one or multiple meshes (not used with the DrawIndexedIndirect variant)
-	struct push_constant_data_per_drawcall {
-		glm::mat4 mModelMatrix;
-		int mMaterialIndex;
-	};
+	//struct push_constant_data_per_drawcall {
+	//	glm::mat4 mModelMatrix;
+	//	int mMaterialIndex;
+	//};
 
 	// Accumulated drawcall data for rendering the different meshes.
 	// Includes an index which refers to an entry in the "list" of materials.
@@ -150,8 +153,8 @@ class wookiee : public gvk::invokee
 		avk::buffer mNormalsBuffer;
 		avk::buffer mTangentsBuffer;
 		avk::buffer mBitangentsBuffer;
-		//push_constant_data_per_drawcall mPushConstants;
-		std::vector<push_constant_data_per_drawcall> mPushConstantsVector;
+		avk::buffer mBoneWeightsBuffer;
+		avk::buffer mBoneIndicesBuffer;
 
 		std::vector<uint32_t> mIndices;
 		std::vector<glm::vec3> mPositions;
@@ -159,8 +162,15 @@ class wookiee : public gvk::invokee
 		std::vector<glm::vec3> mNormals;
 		std::vector<glm::vec3> mTangents;
 		std::vector<glm::vec3> mBitangents;
+		std::vector<glm::vec4> mBoneWeights;
+		std::vector<glm::uvec4> mBoneIndices;
 
-		bool hasTransparency; // ac
+		glm::mat4 mBaseTransform;	// we IGNORE the fact that there MAY be multiple instances of a mesh in the model here. With our mover models, that's not the case.
+		bool mIsAnimated = false;
+		int mActiveAnimation = 0;
+		std::vector<gvk::animation> mAnimations;
+		std::vector<gvk::animation_clip_data> mAnimClips;
+		std::vector<glm::mat4> mBoneMatrices;
 	};
 
 	// push constants for DrawIndexedIndirect
@@ -201,11 +211,14 @@ class wookiee : public gvk::invokee
 	struct MovingObjectDef {
 		const char *name;
 		const char *filename;
+		int        animId;
+		glm::mat4  modelMatrix;
 	};
 	std::vector<MovingObjectDef> mMovingObjectDefs = {	// name, filename
-		{ "Smooth sphere",	"assets/sphere_smooth.obj" },
-		{ "Sharp sphere",	"assets/sphere.obj" },
-		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj" },
+		{ "Smooth sphere",	"assets/sphere_smooth.obj",			-1,	glm::mat4(1) },
+		{ "Sharp sphere",	"assets/sphere.obj",				-1,	glm::mat4(1) },
+		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj",		-1,	glm::mat4(1) },
+		{ "Goblin",			"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-1,0)), glm::vec3(0.02f)) },
 	};
 
 	struct ImageDef {
@@ -280,7 +293,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// moving object info
 		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingObjectFirstMatIdx + mMovingObject.moverId : -1;
-		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::rotate( glm::translate(glm::mat4(1), mMovingObject.translation), mMovingObject.rotationAngle, glm::vec3(mMovingObject.rotAxisAngle));
+		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::rotate( glm::translate(glm::mat4(1), mMovingObject.translation), mMovingObject.rotationAngle, glm::vec3(mMovingObject.rotAxisAngle)) * mDrawCalls[mMovingObject.moverId].mBaseTransform;
 
 		// previous frame info
 		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
@@ -343,6 +356,32 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mLightsourcesBuffer[inFlightIndex]->fill(&updatedData, 0, avk::sync::not_required());
+	}
+
+	void prepare_bone_matrices_buffer()
+	{
+		auto* wnd = gvk::context().main_window();
+		auto fif = wnd->number_of_frames_in_flight();
+		for (decltype(fif) i=0; i < fif; ++i) {
+			mBoneMatricesBuffer[i] = gvk::context().create_buffer(
+				avk::memory_usage::host_coherent, {},
+				avk::storage_buffer_meta::create_from_size(MAX_BONES * sizeof(glm::mat4))
+			);
+			rdoc::labelBuffer(mLightsourcesBuffer[i]->handle(), "mBoneMatricesBuffer", i);
+		}
+	}
+
+	void update_bone_matrices()
+	{
+		if (!mMovingObject.enabled) return;
+		auto &dc = mDrawCalls[mMovingObject.moverId];
+		if (!dc.mIsAnimated) return;
+		auto anim = dc.mAnimations[dc.mActiveAnimation];
+
+		anim.animate(dc.mAnimClips[dc.mActiveAnimation], static_cast<double>(mMovingObject.animTime));	// fill bone matrix data (-> dc.mBoneMatrices)
+
+		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
+		mBoneMatricesBuffer[inFlightIndex]->fill(dc.mBoneMatrices.data(), 0, avk::sync::not_required());
 	}
 
 	void update_camera_path_draw_buffer() {
@@ -841,47 +880,89 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
 			auto &objdef = mMovingObjectDefs[iMover];
-			auto filename = objdef.filename;
-			if (!std::filesystem::exists(filename)) {
-				LOG_WARNING("Object file \"" + std::string(filename) + "\" does not exist - falling back to default sphere)");
-				filename = "assets/sphere.obj";
+			if (!std::filesystem::exists(objdef.filename)) {
+				LOG_WARNING("Object file \"" + std::string(objdef.filename) + "\" does not exist - falling back to default sphere)");
+				objdef = mMovingObjectDefs[0];
 			}
-			auto model = gvk::model_t::load_from_file(filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
+			auto model = gvk::model_t::load_from_file(objdef.filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
 
 			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
 			auto material = model->material_config_for_mesh(0);
 			if (material.mAmbientReflectivity == glm::vec4(0)) material.mAmbientReflectivity = glm::vec4(glm::vec3(0.1f), 0); // give it some ambient reflectivity if it has none
+
+			// fix goblin model - has no texture assigned, specular reflectivity is through the roof
+			if (objdef.name == "Goblin") {
+				material.mDiffuseTex = "assets/goblin.dds";
+				material.mSpecularReflectivity = glm::vec4(0);
+			}
+
 			material.mCustomData[0] = iMover + 1.f; // moving object id + 1
 			distinctMaterialConfigs.push_back(material);
+
+			auto& ref = mDrawCalls.emplace_back(drawcall_data{});
+			ref.mIsAnimated = objdef.animId >= 0;
 
 			auto selection = make_models_and_meshes_selection(model, 0);
 			auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
 			auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
 										   : gvk::get_2d_texture_coordinates        (selection, 0);
-			//std::vector<glm::vec2> texCoords(vertices.size(), glm::vec2(0, 0)); // was necessary instead of above line due to a bug in gvk::model.hpp
 
-			auto normals = gvk::get_normals(selection);
-			auto tangents = gvk::get_tangents(selection);
-			auto bitangents = gvk::get_bitangents(selection);
+			auto normals    = gvk::get_normals(selection);
+			std::vector<glm::vec3>  tangents;
+			std::vector<glm::vec3>  bitangents;
+			std::vector<glm::vec4>  boneWeights;
+			std::vector<glm::uvec4> boneIndices;
+			if (ref.mIsAnimated) {
+				boneWeights = gvk::get_bone_weights(selection);
+				boneIndices = gvk::get_bone_indices(selection);
+			} else {
+				tangents    = gvk::get_tangents(selection);
+				bitangents  = gvk::get_bitangents(selection);
+			}
 
-			std::vector<push_constant_data_per_drawcall> pcvec = { push_constant_data_per_drawcall{ glm::mat4(1), materialIndex } };
-			auto& ref = mDrawCalls.emplace_back(drawcall_data{
-				// Create all the GPU buffers, but don't fill yet:
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices)),
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position)),
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords)),
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals)),
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents)),
-				gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents)),
-				pcvec
-				});
+			// Create all the GPU buffers, but don't fill yet:
+			ref.mIndexBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices));
+			ref.mPositionsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position));
+			ref.mTexCoordsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords));
+			ref.mNormalsBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals));
+			if (ref.mIsAnimated) {
+				ref.mBoneWeightsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneWeights));
+				ref.mBoneIndicesBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneIndices));
+			} else {
+				ref.mTangentsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents));
+				ref.mBitangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents));
+			}
+
+
 			ref.mIndices = std::move(indices);
 			ref.mPositions = std::move(vertices);
 			ref.mTexCoords = std::move(texCoords);
 			ref.mNormals = std::move(normals);
 			ref.mTangents = std::move(tangents);
 			ref.mBitangents = std::move(bitangents);
-			ref.hasTransparency = false;
+			ref.mBoneWeights = std::move(boneWeights);
+			ref.mBoneIndices = std::move(boneIndices);
+			ref.mBaseTransform = objdef.modelMatrix * model->mesh_root_matrix(0);
+
+			// load animation
+			ref.mActiveAnimation = 0;
+			if (ref.mIsAnimated) {
+				static bool hadAnim = false;
+				if (hadAnim) { throw avk::runtime_error("Not more than 1 anim for now!"); }	// FIXME later! for now, only 1 animated object is supported
+				hadAnim = true;
+
+				if (model->num_bones(0) > MAX_BONES) {
+					throw avk::runtime_error("Model mesh #0 has more bones (" + std::to_string(model->num_bones(0)) + ") than MAX_BONES (" + std::to_string(MAX_BONES) + ") !");
+				}
+
+				auto anim_clip = model->load_animation_clip(objdef.animId, 0, 10'000'000);
+				printf("Loaded anim clip, start ticks=%f, end ticks=%f, tps=%f\n", anim_clip.mStartTicks, anim_clip.mEndTicks, anim_clip.mTicksPerSecond);
+				ref.mBoneMatrices.resize(MAX_BONES, glm::mat4(0));
+				ref.mAnimations.push_back(model->prepare_animation_for_meshes_into_tightly_packed_contiguous_memory(objdef.animId, { 0 }, ref.mBoneMatrices.data(), MAX_BONES));
+				ref.mAnimClips.push_back(anim_clip);
+
+				mMovingObject.maxAnimTime = static_cast<float>(anim_clip.mEndTicks * anim_clip.mTicksPerSecond);
+			}
 		}
 		// --end moving objects
 
@@ -987,12 +1068,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// upload data for other models
 		for (auto& dc : mDrawCalls) {
 			                                                       // Take care of the command buffer's lifetime, but do not establish a barrier before or after the command
-			dc.mIndexBuffer     ->fill(dc.mIndices.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mPositionsBuffer ->fill(dc.mPositions.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mTexCoordsBuffer ->fill(dc.mTexCoords.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mNormalsBuffer   ->fill(dc.mNormals.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mTangentsBuffer  ->fill(dc.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mBitangentsBuffer->fill(dc.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			dc.mIndexBuffer				->fill(dc.mIndices.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			dc.mPositionsBuffer			->fill(dc.mPositions.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			dc.mTexCoordsBuffer			->fill(dc.mTexCoords.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			dc.mNormalsBuffer			->fill(dc.mNormals.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			if (dc.mIsAnimated) {
+				dc.mBoneWeightsBuffer	->fill(dc.mBoneWeights.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				dc.mBoneIndicesBuffer	->fill(dc.mBoneIndices.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			} else {
+				dc.mTangentsBuffer		->fill(dc.mTangents.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				dc.mBitangentsBuffer	->fill(dc.mBitangents.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			}
 		}
 
 		// This is the last one of our TRANSFER commands. 
@@ -1097,8 +1183,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
@@ -1106,7 +1192,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
 
-		// TODO-DII: other pipes
+		mPipelineFwdAnimObject = context().create_graphics_pipeline_for(
+			"shaders/animatedObject.vert", "shaders/animatedObject.frag",
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
+			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec4>() -> to_location(3),		// aBoneWeights
+			from_buffer_binding(4) -> stream_per_vertex<glm::uvec4>()-> to_location(4),		// aBoneIndices
+			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, 0u, // subpass #0
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
+			descriptor_binding(3, 0, mBoneMatricesBuffer[0])
+		);
+
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
@@ -1129,8 +1235,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
@@ -1157,8 +1263,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 0u, // subpass #0
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
@@ -1279,17 +1385,41 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 		// draw moving object, if any
 		if (mMovingObject.enabled) {
-			pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
-			commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
-			auto &drawCall = mDrawCalls[mMovingObject.moverId];
-			commandBuffer->draw_indexed(
-				*drawCall.mIndexBuffer,
-				*drawCall.mPositionsBuffer,
-				*drawCall.mTexCoordsBuffer,
-				*drawCall.mNormalsBuffer,
-				*drawCall.mTangentsBuffer,
-				*drawCall.mBitangentsBuffer
-			);
+			if (mDrawCalls[mMovingObject.moverId].mIsAnimated) {
+				// animated
+#if FORWARD_RENDERING
+				commandBuffer->bind_pipeline(mPipelineFwdAnimObject);
+
+				commandBuffer->bind_descriptors(mPipelineFwdAnimObject->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(3, 0, mBoneMatricesBuffer[fif])
+				}));
+
+				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
+				commandBuffer->push_constants(mPipelineFwdAnimObject->layout(), pushc_dii);
+				auto &drawCall = mDrawCalls[mMovingObject.moverId];
+				commandBuffer->draw_indexed(
+					*drawCall.mIndexBuffer,
+					*drawCall.mPositionsBuffer,
+					*drawCall.mTexCoordsBuffer,
+					*drawCall.mNormalsBuffer,
+					*drawCall.mBoneWeightsBuffer,
+					*drawCall.mBoneIndicesBuffer
+				);
+#endif
+			} else {
+				// not animated
+				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
+				commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
+				auto &drawCall = mDrawCalls[mMovingObject.moverId];
+				commandBuffer->draw_indexed(
+					*drawCall.mIndexBuffer,
+					*drawCall.mPositionsBuffer,
+					*drawCall.mTexCoordsBuffer,
+					*drawCall.mNormalsBuffer,
+					*drawCall.mTangentsBuffer,
+					*drawCall.mBitangentsBuffer
+				);
+			}
 		}
 
 #if FORWARD_RENDERING
@@ -1561,6 +1691,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Checkbox("cont rot", &mMovingObject.rotContinous);
 					if (Button("reset")) mMovingObject.t = 0.f;
+					SliderFloatW(120, "anim", &mMovingObject.animTime, 0.f, mMovingObject.maxAnimTime);
+					SameLine(); Checkbox("auto##auto anim", &mMovingObject.autoAnimate);
 					PopID();
 
 					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
@@ -1744,6 +1876,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		
 		prepare_matrices_ubo();
 		prepare_lightsources_ubo();
+		prepare_bone_matrices_buffer();
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
 
@@ -1794,7 +1927,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages);
 		current_composition()->add_element(mAntiAliasing);
 
+		init_debug_stuff();
+
 		if (mHideWindowOnLoad) glfwShowWindow(glfwWin);
+	}
+
+	void init_debug_stuff() {
+		mMovingObject.moverId = 3;
+		mMovingObject.startPos = glm::vec3(0,2,-3);
+		mMovingObject.endPos   = glm::vec3(0,2,-3);
+		mMovingObject.rotAxisAngle.w = 0.f;
+		mMovingObject.enabled  = true;
 	}
 
 	void init_updater_only_once() {
@@ -1810,10 +1953,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if RECORD_CMDBUFFER_IN_RENDER
 
 #if FORWARD_RENDERING
-		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
+		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend, &mPipelineFwdAnimObject };
 #else
 		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFirstPass, &mPipelineLightingPass };
 #endif
+		gfx_pipes.push_back(&mPipelineTestImage);
+		gfx_pipes.push_back(&mPipelineDrawCamPath);
 
 		for (auto ppipe : gfx_pipes) {
 			ppipe->enable_shared_ownership();
@@ -1931,6 +2076,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
 			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), 2.f * glm::pi<float>());
+
+			if (mDrawCalls[mMovingObject.moverId].mIsAnimated && mMovingObject.autoAnimate) {
+				mMovingObject.animTime = fmod(tObjAccumulated, mMovingObject.maxAnimTime);
+			}
 		} else {
 			tObjAccumulated = 0.f;
 		}
@@ -1995,6 +2144,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto mainWnd = gvk::context().main_window();
 		update_matrices_and_user_input();
 		update_lightsources();
+		update_bone_matrices();
 		update_camera_path_draw_buffer();
 
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
@@ -2121,6 +2271,7 @@ private: // v== Member variables ==v
 	avk::graphics_pipeline mPipelineFwdOpaque;
 	avk::graphics_pipeline mPipelineFwdTransparent;
 	avk::graphics_pipeline mPipelineFwdTransparentNoBlend;
+	avk::graphics_pipeline mPipelineFwdAnimObject;
 
 	// Common pipelines:
 	avk::graphics_pipeline mPipelineDrawCamPath;
@@ -2172,6 +2323,9 @@ private: // v== Member variables ==v
 		int       units = 0; // 0 = per sec, 1 = per frame
 		int       repeat = 1; // 0 = no, 1 = cycle, 2 = ping-pong
 		bool      rotContinous = false;
+		float     animTime = 0.f;
+		float     maxAnimTime = 1.f;
+		bool      autoAnimate = true;
 	} mMovingObject;
 
 	struct {
@@ -2230,6 +2384,8 @@ private: // v== Member variables ==v
 	} mCameraSpline;
 
 	glm::uvec2 mHiResolution, mLoResolution;
+
+	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesBuffer;
 };
 
 int main(int argc, char **argv) // <== Starting point ==

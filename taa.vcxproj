@@ -45,7 +45,12 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\defaults\camera_path.cam" />
+    <None Include="assets\models\goblin.dae" />
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
+    <None Include="shaders\animatedObject.frag" />
+    <None Include="shaders\animatedObject.vert" />
+    <None Include="shaders\animatedObject_simple.frag" />
+    <None Include="shaders\animatedObject_simple.vert" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\drawpath.frag" />
     <None Include="shaders\drawpath.vert" />
@@ -71,6 +76,7 @@
     <Image Include="assets\images\Barcelona_Spain_Background-1421.jpg" />
     <Image Include="assets\images\Chinese_HDTV_test_card.png" />
     <Image Include="assets\images\Forest_Sunlight_Background-954.jpg" />
+    <Image Include="assets\models\goblin.dds" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg" />
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg" />

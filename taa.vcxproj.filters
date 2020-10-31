@@ -110,6 +110,21 @@
     <None Include="shaders\sharpen_cas.comp">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\models\goblin.dae">
+      <Filter>assets</Filter>
+    </None>
+    <None Include="shaders\animatedObject.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\animatedObject.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\animatedObject_simple.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\animatedObject_simple.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
@@ -129,6 +144,9 @@
     </Image>
     <Image Include="assets\images\Chinese_HDTV_test_card.png">
       <Filter>assets\images</Filter>
+    </Image>
+    <Image Include="assets\models\goblin.dds">
+      <Filter>assets</Filter>
     </Image>
   </ItemGroup>
 </Project>

@@ -3,6 +3,8 @@
 #define SPECCONST_VAL_OPAQUE			0u
 #define SPECCONST_VAL_TRANSPARENT		1u
 
+#define MAX_BONES	50
+
 // don't have transparent movers (yet)
 
 // 8-bit unorm - ugly! (interestingly: way worse than with explicit sRGB output)
