@@ -171,6 +171,7 @@ class wookiee : public gvk::invokee
 		std::vector<gvk::animation> mAnimations;
 		std::vector<gvk::animation_clip_data> mAnimClips;
 		std::vector<glm::mat4> mBoneMatrices;
+		std::vector<glm::mat4> mBoneMatricesPrev;
 	};
 
 	// push constants for DrawIndexedIndirect
@@ -218,7 +219,7 @@ class wookiee : public gvk::invokee
 		{ "Smooth sphere",	"assets/sphere_smooth.obj",			-1,	glm::mat4(1) },
 		{ "Sharp sphere",	"assets/sphere.obj",				-1,	glm::mat4(1) },
 		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj",		-1,	glm::mat4(1) },
-		{ "Goblin",			"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-1,0)), glm::vec3(0.02f)) },
+		{ "Goblin",			"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-.05,0)), glm::vec3(0.02f)) },
 	};
 
 	struct ImageDef {
@@ -367,7 +368,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				avk::memory_usage::host_coherent, {},
 				avk::storage_buffer_meta::create_from_size(MAX_BONES * sizeof(glm::mat4))
 			);
-			rdoc::labelBuffer(mLightsourcesBuffer[i]->handle(), "mBoneMatricesBuffer", i);
+			rdoc::labelBuffer(mBoneMatricesBuffer[i]->handle(), "mBoneMatricesBuffer", i);
+
+			mBoneMatricesPrevBuffer[i] = gvk::context().create_buffer(
+				avk::memory_usage::host_coherent, {},
+				avk::storage_buffer_meta::create_from_size(MAX_BONES * sizeof(glm::mat4))
+			);
+			rdoc::labelBuffer(mBoneMatricesPrevBuffer[i]->handle(), "mBoneMatricesPrevBuffer", i);
 		}
 	}
 
@@ -378,10 +385,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if (!dc.mIsAnimated) return;
 		auto anim = dc.mAnimations[dc.mActiveAnimation];
 
+		// keep matrices of previous frame
+		dc.mBoneMatricesPrev = dc.mBoneMatrices;
+
 		anim.animate(dc.mAnimClips[dc.mActiveAnimation], static_cast<double>(mMovingObject.animTime));	// fill bone matrix data (-> dc.mBoneMatrices)
 
+		static bool firstTime = true;
+		if (firstTime) {
+			// first time init
+			dc.mBoneMatricesPrev = dc.mBoneMatrices;
+			firstTime = false;
+		};
+
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
-		mBoneMatricesBuffer[inFlightIndex]->fill(dc.mBoneMatrices.data(), 0, avk::sync::not_required());
+		mBoneMatricesBuffer    [inFlightIndex]->fill(dc.mBoneMatrices.    data(), 0, avk::sync::not_required());
+		mBoneMatricesPrevBuffer[inFlightIndex]->fill(dc.mBoneMatricesPrev.data(), 0, avk::sync::not_required());
 	}
 
 	void update_camera_path_draw_buffer() {
@@ -1210,7 +1228,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
-			descriptor_binding(3, 0, mBoneMatricesBuffer[0])
+			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
+			descriptor_binding(3, 1, mBoneMatricesPrevBuffer[0])
 		);
 
 
@@ -1391,7 +1410,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				commandBuffer->bind_pipeline(mPipelineFwdAnimObject);
 
 				commandBuffer->bind_descriptors(mPipelineFwdAnimObject->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(3, 0, mBoneMatricesBuffer[fif])
+					descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
+					descriptor_binding(3, 1, mBoneMatricesPrevBuffer[fif])
 				}));
 
 				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
@@ -1693,6 +1713,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (Button("reset")) mMovingObject.t = 0.f;
 					SliderFloatW(120, "anim", &mMovingObject.animTime, 0.f, mMovingObject.maxAnimTime);
 					SameLine(); Checkbox("auto##auto anim", &mMovingObject.autoAnimate);
+					SliderFloat("speed##anim speed", &mMovingObject.animSpeed, -2.f, 2.f, "%.1f");
 					PopID();
 
 					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
@@ -1934,9 +1955,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void init_debug_stuff() {
 		mMovingObject.moverId = 3;
-		mMovingObject.startPos = glm::vec3(0,2,-3);
-		mMovingObject.endPos   = glm::vec3(0,2,-3);
+		mMovingObject.startPos = glm::vec3(0,1,0);
+		mMovingObject.endPos   = glm::vec3(0,1,0);
 		mMovingObject.rotAxisAngle.w = 0.f;
+		mMovingObject.autoAnimate = true;
 		mMovingObject.enabled  = true;
 	}
 
@@ -2078,7 +2100,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), 2.f * glm::pi<float>());
 
 			if (mDrawCalls[mMovingObject.moverId].mIsAnimated && mMovingObject.autoAnimate) {
-				mMovingObject.animTime = fmod(tObjAccumulated, mMovingObject.maxAnimTime);
+				if (mMovingObject.animSpeed < 0.f) {
+					mMovingObject.animTime = mMovingObject.maxAnimTime - fmod(-mMovingObject.animSpeed * tObjAccumulated, mMovingObject.maxAnimTime);
+				} else {
+					mMovingObject.animTime = fmod(mMovingObject.animSpeed * tObjAccumulated, mMovingObject.maxAnimTime);
+				}
 			}
 		} else {
 			tObjAccumulated = 0.f;
@@ -2326,6 +2352,7 @@ private: // v== Member variables ==v
 		float     animTime = 0.f;
 		float     maxAnimTime = 1.f;
 		bool      autoAnimate = true;
+		float     animSpeed = 1.f;
 	} mMovingObject;
 
 	struct {
@@ -2386,6 +2413,7 @@ private: // v== Member variables ==v
 	glm::uvec2 mHiResolution, mLoResolution;
 
 	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesBuffer;
+	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesPrevBuffer;
 };
 
 int main(int argc, char **argv) // <== Starting point ==

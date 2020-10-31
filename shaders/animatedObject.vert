@@ -24,9 +24,8 @@ layout(push_constant) uniform PushConstantsDII { int mDrawIdOffset; };	// negati
 // It is updated every frame.
 layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 
-layout(set = 3, binding = 0, std430) readonly buffer BoneMatricesBuffer {
-	mat4 mat[];
-} boneMatrices;
+layout(set = 3, binding = 0, std430) readonly buffer BoneMatricesBuffer     { mat4 mat[]; } boneMatrices;
+layout(set = 3, binding = 1, std430) readonly buffer BoneMatricesPrevBuffer { mat4 mat[]; } boneMatricesPrev;
 
 // -------------------------------------------------------
 
@@ -66,11 +65,10 @@ void main()
 				 + boneMatrices.mat[aBoneIndices[2]] * boneWeights[2]
 				 + boneMatrices.mat[aBoneIndices[3]] * boneWeights[3];
 
-	vec4 aniPosOS = boneWeights[0] * (boneMatrices.mat[aBoneIndices[0]] * vec4(aPosition, 1))
-				  + boneWeights[1] * (boneMatrices.mat[aBoneIndices[1]] * vec4(aPosition, 1))
-				  + boneWeights[2] * (boneMatrices.mat[aBoneIndices[2]] * vec4(aPosition, 1))
-				  + boneWeights[3] * (boneMatrices.mat[aBoneIndices[3]] * vec4(aPosition, 1));
-	aniPosOS.xyz /= aniPosOS.w; aniPosOS.w = 1; // doesn't help
+	mat4 prev_boneMat = boneMatricesPrev.mat[aBoneIndices[0]] * boneWeights[0]
+					  + boneMatricesPrev.mat[aBoneIndices[1]] * boneWeights[1]
+					  + boneMatricesPrev.mat[aBoneIndices[2]] * boneWeights[2]
+					  + boneMatricesPrev.mat[aBoneIndices[3]] * boneWeights[3];
 
 	mat4 mMatrix = v_out.modelMatrix;
 	mat4 vMatrix = uboMatUsr.mViewMatrix;
@@ -78,18 +76,16 @@ void main()
 	mat4 vmMatrix = vMatrix * mMatrix;
 	mat4 pvmMatrix = pMatrix * vmMatrix;
 
-	//vec4 positionOS  = boneMat * vec4(aPosition, 1.0);
-	vec4 positionOS  = aniPosOS;
+	vec4 positionOS  = boneMat * vec4(aPosition, 1.0);
 	vec4 positionVS  = vmMatrix * positionOS;
 	vec4 positionCS  = pMatrix * positionVS;
 
 	vec3 normalOS = normalize(mat3(boneMat) * normalize(aNormal));
 
-	//vec3 normalOS    = normalize(aNormal);
 	//vec3 tangentOS   = normalize(aTangent);
 	//vec3 bitangentOS = normalize(aBitangent);
 
-	mat4 prev_modelMatrix = (mDrawIdOffset >= 0) ? v_out.modelMatrix : uboMatUsr.mPrevFrameMovingObjectModelMatrix;
+	mat4 prev_modelMatrix = uboMatUsr.mPrevFrameMovingObjectModelMatrix;
 
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;
@@ -98,7 +94,7 @@ void main()
 	//v_out.tangentOS   = tangentOS;
 	//v_out.bitangentOS = bitangentOS;
 	v_out.positionCS  = positionCS;	// TODO: recheck - is it ok to interpolate clip space vars?
-	v_out.positionCS_prev = uboMatUsr.mPrevFrameProjViewMatrix * prev_modelMatrix * positionOS;
+	v_out.positionCS_prev = uboMatUsr.mPrevFrameProjViewMatrix * prev_modelMatrix * prev_boneMat * vec4(aPosition, 1.0);
 
 	gl_Position = positionCS;
 }

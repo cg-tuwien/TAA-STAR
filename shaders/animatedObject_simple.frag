@@ -14,6 +14,7 @@ layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 layout (location = 0) in VertexData
 {
 	vec2 texCoords;   // texture coordinates
+	flat uint materialIndex;
 } fs_in;
 
 layout (location = 0) out vec4 oFragColor;
@@ -22,7 +23,11 @@ layout (location = 2) out vec4 oFragVelocity;
 
 void main()
 {
-	oFragColor = vec4(1,0,0,1);
+	uint matIndex = fs_in.materialIndex;
+	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+	vec4 col = texture(textures[texIndex], fs_in.texCoords);
+
+	oFragColor = vec4(col.rgb,1);
 	oFragMatId = 0;
 	oFragVelocity = vec4(0);
 }

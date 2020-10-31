@@ -34,12 +34,15 @@ layout(set = 3, binding = 0, std430) readonly buffer BoneMatricesBuffer {
 // Data from vert -> tesc or frag:
 layout (location = 0) out VertexData {
 	vec2 texCoords;
+	flat uint materialIndex;
 } v_out;
 // -------------------------------------------------------
 
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	v_out.materialIndex = uboMatUsr.mActiveMovingObjectMaterialIdx;
+
 	// "normalize" bone weights - there may be more than four in the model, but we only get the first four here; make sure they add up to one
 	vec4 boneWeights = aBoneWeights;
 	boneWeights.w = 1.0 - dot(aBoneWeights.xyz, vec3(1,1,1));
