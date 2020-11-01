@@ -22,7 +22,15 @@ layout (std430, set = 0, binding = 2) readonly buffer MaterialIndexBuffer   { ui
 layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { uint attrib_base[]; };			// per meshgroup
 layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
 
-layout(push_constant) uniform PushConstantsDII { int mDrawIdOffset; };	// negative: moving object
+layout(push_constant) uniform PushConstantsDII {
+	mat4  mMover_modelMatrix;
+	mat4  mMover_modelMatrix_prev;
+	int   mMover_materialIndex;
+	int   mMover_meshIndex;
+
+	int   mDrawIdOffset; // negative numbers -> moving object id
+	float pad1;
+};
 
 
 // "mMatrices" uniform buffer containing camera matrices:
@@ -61,8 +69,8 @@ void main()
 		v_out.movingObjectId = 0;
 	} else {
 		// moving object
-		v_out.materialIndex = uboMatUsr.mActiveMovingObjectMaterialIdx;
-		v_out.modelMatrix   = uboMatUsr.mMovingObjectModelMatrix;
+		v_out.materialIndex = mMover_materialIndex;
+		v_out.modelMatrix   = mMover_modelMatrix;
 		v_out.movingObjectId = -mDrawIdOffset;
 	}
 
@@ -80,7 +88,7 @@ void main()
 	vec3 tangentOS   = normalize(aTangent);
 	vec3 bitangentOS = normalize(aBitangent);
 
-	mat4 prev_modelMatrix = (mDrawIdOffset >= 0) ? v_out.modelMatrix : uboMatUsr.mPrevFrameMovingObjectModelMatrix;
+	mat4 prev_modelMatrix = (mDrawIdOffset >= 0) ? v_out.modelMatrix : mMover_modelMatrix_prev;
 
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;

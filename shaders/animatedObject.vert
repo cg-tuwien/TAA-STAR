@@ -17,7 +17,15 @@ layout (location = 2) in vec3 aNormal;
 layout (location = 3) in vec4 aBoneWeights;
 layout (location = 4) in uvec4 aBoneIndices;
 
-layout(push_constant) uniform PushConstantsDII { int mDrawIdOffset; };	// negative: moving object
+layout(push_constant) uniform PushConstantsDII {
+	mat4  mMover_modelMatrix;
+	mat4  mMover_modelMatrix_prev;
+	int   mMover_materialIndex;
+	int   mMover_meshIndex;
+
+	int   mDrawIdOffset; // negative numbers -> moving object id
+	float pad1;
+};
 
 
 // "mMatrices" uniform buffer containing camera matrices:
@@ -51,24 +59,26 @@ layout (location = 0) out VertexData {
 void main()
 {
 	// moving object
-	v_out.materialIndex = uboMatUsr.mActiveMovingObjectMaterialIdx;
-	v_out.modelMatrix   = uboMatUsr.mMovingObjectModelMatrix;
+	v_out.materialIndex = mMover_materialIndex;
+	v_out.modelMatrix   = mMover_modelMatrix;
 	v_out.movingObjectId = -mDrawIdOffset;
 
 	// "normalize" bone weights - there may be more than four in the model, but we only get the first four here; make sure they add up to one
 	vec4 boneWeights = aBoneWeights;
 	boneWeights.w = 1.0 - boneWeights.x - boneWeights.y - boneWeights.z;
 
-	// weighted sum of the four bone matrices
-	mat4 boneMat = boneMatrices.mat[aBoneIndices[0]] * boneWeights[0]
-				 + boneMatrices.mat[aBoneIndices[1]] * boneWeights[1]
-				 + boneMatrices.mat[aBoneIndices[2]] * boneWeights[2]
-				 + boneMatrices.mat[aBoneIndices[3]] * boneWeights[3];
+	uint bonesBaseIndex = mMover_meshIndex * MAX_BONES;
 
-	mat4 prev_boneMat = boneMatricesPrev.mat[aBoneIndices[0]] * boneWeights[0]
-					  + boneMatricesPrev.mat[aBoneIndices[1]] * boneWeights[1]
-					  + boneMatricesPrev.mat[aBoneIndices[2]] * boneWeights[2]
-					  + boneMatricesPrev.mat[aBoneIndices[3]] * boneWeights[3];
+	// weighted sum of the four bone matrices
+	mat4 boneMat =      boneMatrices.mat    [bonesBaseIndex + aBoneIndices[0]] * boneWeights[0]
+				      + boneMatrices.mat    [bonesBaseIndex + aBoneIndices[1]] * boneWeights[1]
+				      + boneMatrices.mat    [bonesBaseIndex + aBoneIndices[2]] * boneWeights[2]
+				      + boneMatrices.mat    [bonesBaseIndex + aBoneIndices[3]] * boneWeights[3];
+
+	mat4 prev_boneMat = boneMatricesPrev.mat[bonesBaseIndex + aBoneIndices[0]] * boneWeights[0]
+					  + boneMatricesPrev.mat[bonesBaseIndex + aBoneIndices[1]] * boneWeights[1]
+					  + boneMatricesPrev.mat[bonesBaseIndex + aBoneIndices[2]] * boneWeights[2]
+					  + boneMatricesPrev.mat[bonesBaseIndex + aBoneIndices[3]] * boneWeights[3];
 
 	mat4 mMatrix = v_out.modelMatrix;
 	mat4 vMatrix = uboMatUsr.mViewMatrix;
@@ -85,7 +95,7 @@ void main()
 	//vec3 tangentOS   = normalize(aTangent);
 	//vec3 bitangentOS = normalize(aBitangent);
 
-	mat4 prev_modelMatrix = uboMatUsr.mPrevFrameMovingObjectModelMatrix;
+	mat4 prev_modelMatrix = mMover_modelMatrix_prev;
 
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;

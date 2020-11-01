@@ -113,16 +113,13 @@
     <None Include="assets\models\goblin.dae">
       <Filter>assets</Filter>
     </None>
-    <None Include="shaders\animatedObject.frag">
-      <Filter>shaders</Filter>
-    </None>
     <None Include="shaders\animatedObject.vert">
       <Filter>shaders</Filter>
     </None>
-    <None Include="shaders\animatedObject_simple.frag">
+    <None Include="shaders\animatedObject_deferred.frag">
       <Filter>shaders</Filter>
     </None>
-    <None Include="shaders\animatedObject_simple.vert">
+    <None Include="shaders\animatedObject_forward.frag">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

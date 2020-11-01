@@ -51,13 +51,10 @@
 	vec4 mUserInput;																								\
 																													\
 	mat4 mPrevFrameProjViewMatrix;																					\
-	mat4 mMovingObjectModelMatrix;																					\
-	mat4 mPrevFrameMovingObjectModelMatrix;																			\
 	vec4 mJitterCurrentPrev;																						\
-	int  mActiveMovingObjectMaterialIdx;																			\
-	int  mPrevFrameActiveMovingObjectMaterialIdx;																	\
+																													\
 	float mLodBias;																									\
-	float pad1;																								\
+	float pad1,pad2,pad3;																							\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

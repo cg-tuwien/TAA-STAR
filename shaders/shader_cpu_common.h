@@ -3,7 +3,7 @@
 #define SPECCONST_VAL_OPAQUE			0u
 #define SPECCONST_VAL_TRANSPARENT		1u
 
-#define MAX_BONES	50
+#define MAX_BONES	60
 
 // don't have transparent movers (yet)
 

@@ -22,8 +22,9 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
-	- get bone indices -> more than max_bones!
-	- anim buffer overflow?
+	- pre-recording command buffers is most likely broken now, due to dynamic objects (is it really? re-record is necessary for model change anyway)
+
+	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
 
 	- drop SRBG support in TAA
 
@@ -46,7 +47,6 @@
 	- fix changed lighting flags in deferred shader
 
 	- shadows?
-	- rename mDrawCalls to something more appropriate (mMeshInfo?)
 
 	- need different alpha thresholds for blending/not blending
 
@@ -60,7 +60,7 @@
 
 	create one big vertex and index buffer (for scenery only? - tbd) [and matching buffers for other vertex-attributes: texCoord,normals,tangents,bitangents]
 
-	meshgroup ~= what is now called drawcall_data -> all the instances for a given meshid (differing only in their modelmatrix)
+	meshgroup ~= what was called drawcall_data in earlier versions -> all the instances for a given meshid (differing only in their modelmatrix)
 
 	build an array of VkDrawIndexedIndirectCommand (size = #meshgroups)
 	for each meshgroup mg:
@@ -117,13 +117,10 @@ class wookiee : public gvk::invokee
 		glm::vec4 mUserInput;
 
 		glm::mat4 mPrevFrameProjViewMatrix;
-		glm::mat4 mMovingObjectModelMatrix;
-		glm::mat4 mPrevFrameMovingObjectModelMatrix;
 		glm::vec4 mJitterCurrentPrev;
-		int  mActiveMovingObjectMaterialIdx;
-		int  mPrevFrameActiveMovingObjectMaterialIdx;
+
 		float mLodBias;
-		float pad1;
+		float pad1,pad2,pad3;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -145,7 +142,7 @@ class wookiee : public gvk::invokee
 
 	// Accumulated drawcall data for rendering the different meshes.
 	// Includes an index which refers to an entry in the "list" of materials.
-	struct drawcall_data
+	struct dynamic_object_mesh_data
 	{
 		avk::buffer mIndexBuffer;
 		avk::buffer mPositionsBuffer;
@@ -165,18 +162,43 @@ class wookiee : public gvk::invokee
 		std::vector<glm::vec4> mBoneWeights;
 		std::vector<glm::uvec4> mBoneIndices;
 
-		glm::mat4 mBaseTransform;	// we IGNORE the fact that there MAY be multiple instances of a mesh in the model here. With our mover models, that's not the case.
+		int mMaterialIndex;
+	};
+
+	struct dynamic_object_part {
+		int mMeshIndex;
+		glm::mat4 mMeshTransform;
+	};
+
+	struct dynamic_object
+	{
+		std::vector<dynamic_object_mesh_data> mMeshData;
+		std::vector<dynamic_object_part> mParts;			// different parts can refer to the same mesh (but with different transforms)
+
+		glm::mat4 mBaseTransform;			// independent of loaded object; neutral position, set by application (mainly scale, transform to foot-point, etc.)
+
+		glm::mat4 mMovementMatrix_current;	// set by application (dynamic movement)
+		glm::mat4 mMovementMatrix_prev;		// set by application (dynamic movement, previous frame)
+
 		bool mIsAnimated = false;
 		int mActiveAnimation = 0;
 		std::vector<gvk::animation> mAnimations;
 		std::vector<gvk::animation_clip_data> mAnimClips;
-		std::vector<glm::mat4> mBoneMatrices;
+		std::vector<glm::mat4> mBoneMatrices;				// [(mesh0,mat0),...(mesh0,matMAX_BONES-1),(mesh1,mat0),...]		// TODO: is this really per mesh, or should it be per "part" ?
 		std::vector<glm::mat4> mBoneMatricesPrev;
+
+		float mAnimTime = 0.f;				// set by application
 	};
 
-	// push constants for DrawIndexedIndirect
+	// push constants for DrawIndexedIndirect (also used for single dynamic models)
 	struct push_constant_data_for_dii {
-		int mDrawIdOffset;
+		glm::mat4 mMover_modelMatrix;
+		glm::mat4 mMover_modelMatrix_prev;
+		int       mMover_materialIndex;
+		int       mMover_meshIndex;
+
+		int       mDrawIdOffset; // negative numbers -> moving object id
+		float     pad1;
 	};
 
 	struct MeshgroupPerInstanceData {
@@ -216,10 +238,11 @@ class wookiee : public gvk::invokee
 		glm::mat4  modelMatrix;
 	};
 	std::vector<MovingObjectDef> mMovingObjectDefs = {	// name, filename
-		{ "Smooth sphere",	"assets/sphere_smooth.obj",			-1,	glm::mat4(1) },
-		{ "Sharp sphere",	"assets/sphere.obj",				-1,	glm::mat4(1) },
-		{ "Soccer ball",	"assets/Soccer_Ball_lores.obj",		-1,	glm::mat4(1) },
-		{ "Goblin",			"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-.05,0)), glm::vec3(0.02f)) },
+		{ "Smooth sphere",		"assets/sphere_smooth.obj",			-1,	glm::mat4(1) },
+		{ "Sharp sphere",		"assets/sphere.obj",				-1,	glm::mat4(1) },
+		{ "Soccer ball",		"assets/Soccer_Ball_lores.obj",		-1,	glm::mat4(1) },
+		{ "Goblin",				"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-.05,0)), glm::vec3(0.02f)) },
+//		{ "Dude",				"assets/dudeTest03.dae",			 0,	glm::mat4(1) },
 	};
 
 	struct ImageDef {
@@ -292,16 +315,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
 
-		// moving object info
-		mMatricesAndUserInput.mActiveMovingObjectMaterialIdx	= mMovingObject.enabled ? mMovingObjectFirstMatIdx + mMovingObject.moverId : -1;
-		mMatricesAndUserInput.mMovingObjectModelMatrix			= glm::rotate( glm::translate(glm::mat4(1), mMovingObject.translation), mMovingObject.rotationAngle, glm::vec3(mMovingObject.rotAxisAngle)) * mDrawCalls[mMovingObject.moverId].mBaseTransform;
-
 		// previous frame info
 		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
 
 		mMatricesAndUserInput.mPrevFrameProjViewMatrix					= prevFrameMatrices.mProjMatrix * prevFrameMatrices.mViewMatrix;
-		mMatricesAndUserInput.mPrevFrameMovingObjectModelMatrix			= prevFrameMatrices.mMovingObjectModelMatrix;
-		mMatricesAndUserInput.mPrevFrameActiveMovingObjectMaterialIdx	= prevFrameMatrices.mActiveMovingObjectMaterialIdx;
 		mMatricesAndUserInput.mJitterCurrentPrev						= glm::vec4(mCurrentJitter, prevFrameMatrices.mJitterCurrentPrev.x, prevFrameMatrices.mJitterCurrentPrev.y);
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
@@ -359,20 +376,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mLightsourcesBuffer[inFlightIndex]->fill(&updatedData, 0, avk::sync::not_required());
 	}
 
-	void prepare_bone_matrices_buffer()
+	void prepare_bone_matrices_buffer(size_t numMatrices)
 	{
 		auto* wnd = gvk::context().main_window();
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
 			mBoneMatricesBuffer[i] = gvk::context().create_buffer(
 				avk::memory_usage::host_coherent, {},
-				avk::storage_buffer_meta::create_from_size(MAX_BONES * sizeof(glm::mat4))
+				avk::storage_buffer_meta::create_from_size(numMatrices * sizeof(glm::mat4))
 			);
 			rdoc::labelBuffer(mBoneMatricesBuffer[i]->handle(), "mBoneMatricesBuffer", i);
 
 			mBoneMatricesPrevBuffer[i] = gvk::context().create_buffer(
 				avk::memory_usage::host_coherent, {},
-				avk::storage_buffer_meta::create_from_size(MAX_BONES * sizeof(glm::mat4))
+				avk::storage_buffer_meta::create_from_size(numMatrices * sizeof(glm::mat4))
 			);
 			rdoc::labelBuffer(mBoneMatricesPrevBuffer[i]->handle(), "mBoneMatricesPrevBuffer", i);
 		}
@@ -381,25 +398,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_bone_matrices()
 	{
 		if (!mMovingObject.enabled) return;
-		auto &dc = mDrawCalls[mMovingObject.moverId];
-		if (!dc.mIsAnimated) return;
-		auto anim = dc.mAnimations[dc.mActiveAnimation];
+		auto &dynObj = mDynObjects[mMovingObject.moverId];
+		if (!dynObj.mIsAnimated) return;
+		auto anim = dynObj.mAnimations[dynObj.mActiveAnimation];
 
 		// keep matrices of previous frame
-		dc.mBoneMatricesPrev = dc.mBoneMatrices;
+		dynObj.mBoneMatricesPrev = dynObj.mBoneMatrices;
 
-		anim.animate(dc.mAnimClips[dc.mActiveAnimation], static_cast<double>(mMovingObject.animTime));	// fill bone matrix data (-> dc.mBoneMatrices)
+		for (auto &m : dynObj.mBoneMatrices) m = glm::mat4(0);
+		anim.animate(dynObj.mAnimClips[dynObj.mActiveAnimation], static_cast<double>(dynObj.mAnimTime));	// fill bone matrix data (-> dc.mBoneMatrices)
 
 		static bool firstTime = true;
 		if (firstTime) {
-			// first time init
-			dc.mBoneMatricesPrev = dc.mBoneMatrices;
+			// first time init	// FIXME_DYNOBJ - this check is not sufficient
+			dynObj.mBoneMatricesPrev = dynObj.mBoneMatrices;
 			firstTime = false;
 		};
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
-		mBoneMatricesBuffer    [inFlightIndex]->fill(dc.mBoneMatrices.    data(), 0, avk::sync::not_required());
-		mBoneMatricesPrevBuffer[inFlightIndex]->fill(dc.mBoneMatricesPrev.data(), 0, avk::sync::not_required());
+		// must use the overloaded fill method and specify size, because the bone matrix vectors are differently sized for different dynObjects !
+		mBoneMatricesBuffer    [inFlightIndex]->fill(dynObj.mBoneMatrices.    data(), 0, 0, dynObj.mBoneMatrices.size()     * sizeof(glm::mat4), avk::sync::not_required());
+		mBoneMatricesPrevBuffer[inFlightIndex]->fill(dynObj.mBoneMatricesPrev.data(), 0, 0, dynObj.mBoneMatricesPrev.size() * sizeof(glm::mat4), avk::sync::not_required());
 	}
 
 	void update_camera_path_draw_buffer() {
@@ -893,6 +912,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// load and add moving objects
 		std::cout << "Loading extra models" << std::endl;
+		size_t totalNumBoneMatrices = 0;
 		mMovingObjectFirstMatIdx = static_cast<int>(distinctMaterialConfigs.size());
 		for (size_t iMover = 0; iMover < mMovingObjectDefs.size(); iMover++)
 		{
@@ -904,84 +924,105 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 			auto model = gvk::model_t::load_from_file(objdef.filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
 
-			const int materialIndex = static_cast<int>(distinctMaterialConfigs.size());
-			auto material = model->material_config_for_mesh(0);
-			if (material.mAmbientReflectivity == glm::vec4(0)) material.mAmbientReflectivity = glm::vec4(glm::vec3(0.1f), 0); // give it some ambient reflectivity if it has none
+			auto &dynObj = mDynObjects.emplace_back(dynamic_object{});
+			dynObj.mIsAnimated = objdef.animId >= 0;
+			dynObj.mBaseTransform = objdef.modelMatrix;
 
-			// fix goblin model - has no texture assigned, specular reflectivity is through the roof
-			if (objdef.name == "Goblin") {
-				material.mDiffuseTex = "assets/goblin.dds";
-				material.mSpecularReflectivity = glm::vec4(0);
+			// iterate through all the model's meshes (TODO: combine materials first? ( model->distinct_material_configs() ) - probably should do that in a real-life app to avoid loading duplicate textures etc...)
+			for (auto meshIndex = 0; meshIndex < model->num_meshes(); ++meshIndex) {
+
+				auto &meshData = dynObj.mMeshData.emplace_back(dynamic_object_mesh_data{});
+
+				// get material index in our global material buffer, modify material and push it to the global buffer
+				auto material = model->material_config_for_mesh(meshIndex);
+				material.mCustomData[0] = iMover + 1.f; // moving object id + 1
+
+				if (material.mAmbientReflectivity == glm::vec4(0)) material.mAmbientReflectivity = glm::vec4(glm::vec3(0.1f), 0); // give it some ambient reflectivity if it has none
+
+				// fix goblin model - has no texture assigned, specular reflectivity is through the roof
+				if (objdef.name == "Goblin" && meshIndex == 0) {
+					material.mDiffuseTex = "assets/goblin.dds";
+					material.mSpecularReflectivity = glm::vec4(0);
+				}
+
+				meshData.mMaterialIndex = static_cast<int>(distinctMaterialConfigs.size());
+				distinctMaterialConfigs.push_back(material);
+
+
+				// get the mesh data from the loaded model
+				auto selection = make_models_and_meshes_selection(model, meshIndex);
+				auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
+				auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0) : gvk::get_2d_texture_coordinates(selection, 0);
+
+				auto normals = gvk::get_normals(selection);
+				std::vector<glm::vec3>  tangents;
+				std::vector<glm::vec3>  bitangents;
+				std::vector<glm::vec4>  boneWeights;
+				std::vector<glm::uvec4> boneIndices;
+				if (dynObj.mIsAnimated) {
+					boneWeights = gvk::get_bone_weights(selection);
+					boneIndices = gvk::get_bone_indices(selection);
+				} else {
+					tangents    = gvk::get_tangents(selection);
+					bitangents  = gvk::get_bitangents(selection);
+				}
+
+				// Create all the GPU buffers, but don't fill yet:
+				meshData.mIndexBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices));
+				meshData.mPositionsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position));
+				meshData.mTexCoordsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords));
+				meshData.mNormalsBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals));
+				if (dynObj.mIsAnimated) {
+					meshData.mBoneWeightsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneWeights));
+					meshData.mBoneIndicesBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneIndices));
+				} else {
+					meshData.mTangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents));
+					meshData.mBitangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents));
+				}
+
+				// store mesh data for later upload
+				meshData.mIndices		= std::move(indices);
+				meshData.mPositions		= std::move(vertices);
+				meshData.mTexCoords		= std::move(texCoords);
+				meshData.mNormals		= std::move(normals);
+				meshData.mTangents		= std::move(tangents);
+				meshData.mBitangents	= std::move(bitangents);
+				meshData.mBoneWeights	= std::move(boneWeights);
+				meshData.mBoneIndices	= std::move(boneIndices);
+
+				// store the different instance-transforms of the mesh (aka "parts" of the model)
+				auto transforms = get_mesh_instance_transforms(model, static_cast<int>(meshIndex), glm::mat4(1)); // TODO <- apply objdef.modelMatrix here or keep separate in dynObj ?
+				for (auto &tform : transforms) {
+					dynObj.mParts.emplace_back(dynamic_object_part{static_cast<int>(meshIndex), tform});
+				}
 			}
-
-			material.mCustomData[0] = iMover + 1.f; // moving object id + 1
-			distinctMaterialConfigs.push_back(material);
-
-			auto& ref = mDrawCalls.emplace_back(drawcall_data{});
-			ref.mIsAnimated = objdef.animId >= 0;
-
-			auto selection = make_models_and_meshes_selection(model, 0);
-			auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
-			auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0)
-										   : gvk::get_2d_texture_coordinates        (selection, 0);
-
-			auto normals    = gvk::get_normals(selection);
-			std::vector<glm::vec3>  tangents;
-			std::vector<glm::vec3>  bitangents;
-			std::vector<glm::vec4>  boneWeights;
-			std::vector<glm::uvec4> boneIndices;
-			if (ref.mIsAnimated) {
-				boneWeights = gvk::get_bone_weights(selection);
-				boneIndices = gvk::get_bone_indices(selection);
-			} else {
-				tangents    = gvk::get_tangents(selection);
-				bitangents  = gvk::get_bitangents(selection);
-			}
-
-			// Create all the GPU buffers, but don't fill yet:
-			ref.mIndexBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::index_buffer_meta::create_from_data(indices));
-			ref.mPositionsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position));
-			ref.mTexCoordsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords));
-			ref.mNormalsBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals));
-			if (ref.mIsAnimated) {
-				ref.mBoneWeightsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneWeights));
-				ref.mBoneIndicesBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneIndices));
-			} else {
-				ref.mTangentsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents));
-				ref.mBitangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents));
-			}
-
-
-			ref.mIndices = std::move(indices);
-			ref.mPositions = std::move(vertices);
-			ref.mTexCoords = std::move(texCoords);
-			ref.mNormals = std::move(normals);
-			ref.mTangents = std::move(tangents);
-			ref.mBitangents = std::move(bitangents);
-			ref.mBoneWeights = std::move(boneWeights);
-			ref.mBoneIndices = std::move(boneIndices);
-			ref.mBaseTransform = objdef.modelMatrix * model->mesh_root_matrix(0);
 
 			// load animation
-			ref.mActiveAnimation = 0;
-			if (ref.mIsAnimated) {
-				static bool hadAnim = false;
-				if (hadAnim) { throw avk::runtime_error("Not more than 1 anim for now!"); }	// FIXME later! for now, only 1 animated object is supported
-				hadAnim = true;
+			dynObj.mActiveAnimation = 0;
+			if (dynObj.mIsAnimated) {
+				//static bool hadAnim = false;
+				//if (hadAnim) { throw avk::runtime_error("Not more than 1 anim for now!"); }	// FIXME later! for now, only 1 animated object is supported
+				//hadAnim = true;
 
-				if (model->num_bones(0) > MAX_BONES) {
-					throw avk::runtime_error("Model mesh #0 has more bones (" + std::to_string(model->num_bones(0)) + ") than MAX_BONES (" + std::to_string(MAX_BONES) + ") !");
+				auto allMeshIndices = model->select_all_meshes();
+
+				for (auto meshIdx : allMeshIndices) {
+					if (model->num_bones(meshIdx) > MAX_BONES) {
+						throw avk::runtime_error("Model mesh #" + std::to_string(meshIdx) + " has more bones (" + std::to_string(model->num_bones(meshIdx)) + ") than MAX_BONES (" + std::to_string(MAX_BONES) + ") !");
+					}
 				}
 
 				auto anim_clip = model->load_animation_clip(objdef.animId, 0, 10'000'000);
-				printf("Loaded anim clip, start ticks=%f, end ticks=%f, tps=%f\n", anim_clip.mStartTicks, anim_clip.mEndTicks, anim_clip.mTicksPerSecond);
-				ref.mBoneMatrices.resize(MAX_BONES, glm::mat4(0));
-				ref.mAnimations.push_back(model->prepare_animation_for_meshes_into_tightly_packed_contiguous_memory(objdef.animId, { 0 }, ref.mBoneMatrices.data(), MAX_BONES));
-				ref.mAnimClips.push_back(anim_clip);
+				//printf("Loaded anim clip, start ticks=%f, end ticks=%f, tps=%f\n", anim_clip.mStartTicks, anim_clip.mEndTicks, anim_clip.mTicksPerSecond);
+				assert(anim_clip.mTicksPerSecond > 0.0 && anim_clip.mEndTicks > anim_clip.mStartTicks);
 
-				mMovingObject.maxAnimTime = static_cast<float>(anim_clip.mEndTicks * anim_clip.mTicksPerSecond);
+				dynObj.mBoneMatrices.resize(MAX_BONES * allMeshIndices.size(), glm::mat4(0));
+				totalNumBoneMatrices += dynObj.mBoneMatrices.size();
+				dynObj.mAnimations.push_back(model->prepare_animation_for_meshes_into_tightly_packed_contiguous_memory(objdef.animId, allMeshIndices, dynObj.mBoneMatrices.data(), MAX_BONES));
+				dynObj.mAnimClips.push_back(anim_clip);
 			}
 		}
+		prepare_bone_matrices_buffer(totalNumBoneMatrices);
 		// --end moving objects
 
 		// load test images
@@ -1084,18 +1125,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mDrawCommandsBuffer   ->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 
 		// upload data for other models
-		for (auto& dc : mDrawCalls) {
-			                                                       // Take care of the command buffer's lifetime, but do not establish a barrier before or after the command
-			dc.mIndexBuffer				->fill(dc.mIndices.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mPositionsBuffer			->fill(dc.mPositions.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mTexCoordsBuffer			->fill(dc.mTexCoords.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			dc.mNormalsBuffer			->fill(dc.mNormals.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			if (dc.mIsAnimated) {
-				dc.mBoneWeightsBuffer	->fill(dc.mBoneWeights.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-				dc.mBoneIndicesBuffer	->fill(dc.mBoneIndices.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			} else {
-				dc.mTangentsBuffer		->fill(dc.mTangents.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-				dc.mBitangentsBuffer	->fill(dc.mBitangents.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		for (auto& dynObj : mDynObjects) {
+			for (auto &md : dynObj.mMeshData) {
+				md.mIndexBuffer				->fill(md.mIndices.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				md.mPositionsBuffer			->fill(md.mPositions.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				md.mTexCoordsBuffer			->fill(md.mTexCoords.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				md.mNormalsBuffer			->fill(md.mNormals.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				if (dynObj.mIsAnimated) {
+					md.mBoneWeightsBuffer	->fill(md.mBoneWeights.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+					md.mBoneIndicesBuffer	->fill(md.mBoneIndices.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				} else {
+					md.mTangentsBuffer		->fill(md.mTangents.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+					md.mBitangentsBuffer	->fill(md.mBitangents.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				}
 			}
 		}
 
@@ -1176,6 +1218,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(2, 1, mFramebuffer[0]->image_view_at(2)->as_input_attachment(), shader_type::fragment),
 			descriptor_binding(2, 2, mFramebuffer[0]->image_view_at(3)->as_input_attachment(), shader_type::fragment)
 		);
+
 	}
 
 	void prepare_forward_rendering_pipelines()
@@ -1209,29 +1252,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
-
-		mPipelineFwdAnimObject = context().create_graphics_pipeline_for(
-			"shaders/animatedObject.vert", "shaders/animatedObject.frag",
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
-			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
-			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec4>() -> to_location(3),		// aBoneWeights
-			from_buffer_binding(4) -> stream_per_vertex<glm::uvec4>()-> to_location(4),		// aBoneIndices
-			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
-			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // subpass #0
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
-			descriptor_binding(0, 0, mMaterialBuffer),
-			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
-			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
-			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
-			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
-			descriptor_binding(3, 1, mBoneMatricesPrevBuffer[0])
-		);
-
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
@@ -1297,6 +1317,29 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
+		mPipelineAnimObject = context().create_graphics_pipeline_for(
+			"shaders/animatedObject.vert",
+			(FORWARD_RENDERING) ? "shaders/animatedObject_forward.frag" : "shaders/animatedObject_deferred.frag",
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
+			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec4>() -> to_location(3),		// aBoneWeights
+			from_buffer_binding(4) -> stream_per_vertex<glm::uvec4>()-> to_location(4),		// aBoneIndices
+			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, 0u, // subpass #0
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
+			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
+			descriptor_binding(3, 1, mBoneMatricesPrevBuffer[0])
+		);
+
 		uint32_t subpass = (FORWARD_RENDERING) ? 1u : 2u;
 
 		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
@@ -1323,7 +1366,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 	}
 
-	// stuff that will eventually go into avk::command_buffer_t::draw_indexed_indirect later
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
 		cmd->draw_indexed_indirect(
 			*mSceneData.mDrawCommandsBuffer,
@@ -1337,6 +1379,69 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			*mSceneData.mTangentsBuffer,
 			*mSceneData.mBitangentsBuffer
 		);
+	}
+
+	void draw_dynamic_objects(avk::command_buffer &cmd, gvk::window::frame_id_t fif) {
+		if (!mMovingObject.enabled) return;
+
+		push_constant_data_for_dii pushc_dii = {};
+		if (mDynObjects[mMovingObject.moverId].mIsAnimated) {
+			// animated
+			rdoc::beginSection(cmd->handle(), "render dynamic object (animated)");
+			cmd->bind_pipeline(mPipelineAnimObject);
+
+			cmd->bind_descriptors(mPipelineAnimObject->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
+				descriptor_binding(3, 1, mBoneMatricesPrevBuffer[fif])
+				}));
+
+			auto &dynObj = mDynObjects[mMovingObject.moverId];
+			for (auto &part : dynObj.mParts) {
+				auto &md = dynObj.mMeshData[part.mMeshIndex];
+
+				pushc_dii.mDrawIdOffset           = -(mMovingObject.moverId + 1);
+				pushc_dii.mMover_modelMatrix      = dynObj.mMovementMatrix_current * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_modelMatrix_prev = dynObj.mMovementMatrix_prev    * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
+				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
+
+				cmd->push_constants(mPipelineAnimObject->layout(), pushc_dii);
+				cmd->draw_indexed(
+					*md.mIndexBuffer,
+					*md.mPositionsBuffer,
+					*md.mTexCoordsBuffer,
+					*md.mNormalsBuffer,
+					*md.mBoneWeightsBuffer,
+					*md.mBoneIndicesBuffer
+				);
+			}
+			rdoc::endSection(cmd->handle());
+		} else {
+			// not animated
+			rdoc::beginSection(cmd->handle(), "render dynamic object (not animated)");
+			auto &dynObj = mDynObjects[mMovingObject.moverId];
+			for (auto &part : dynObj.mParts) {
+				auto &md = dynObj.mMeshData[part.mMeshIndex];
+
+				pushc_dii.mDrawIdOffset           = -(mMovingObject.moverId + 1);
+				pushc_dii.mMover_modelMatrix      = dynObj.mMovementMatrix_current * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_modelMatrix_prev = dynObj.mMovementMatrix_prev    * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
+				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
+
+				const auto &firstPipe  = FORWARD_RENDERING ? mPipelineFwdOpaque : mPipelineFirstPass;
+				cmd->push_constants(firstPipe->layout(), pushc_dii);
+				cmd->draw_indexed(
+					*md.mIndexBuffer,
+					*md.mPositionsBuffer,
+					*md.mTexCoordsBuffer,
+					*md.mNormalsBuffer,
+					*md.mTangentsBuffer,
+					*md.mBitangentsBuffer
+				);
+			}
+			rdoc::endSection(cmd->handle());
+		}
 	}
 
 	// Record actual draw calls for all the drawcall-data that we have
@@ -1394,55 +1499,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 
 		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
-		push_constant_data_for_dii pushc_dii;
+		push_constant_data_for_dii pushc_dii = {};
 		pushc_dii.mDrawIdOffset = 0;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
-#if FORWARD_RENDERING
-		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups);
-#else
-		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + mSceneData.mNumTransparentMeshgroups);
-#endif
-		// draw moving object, if any
-		if (mMovingObject.enabled) {
-			if (mDrawCalls[mMovingObject.moverId].mIsAnimated) {
-				// animated
-#if FORWARD_RENDERING
-				commandBuffer->bind_pipeline(mPipelineFwdAnimObject);
+		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
 
-				commandBuffer->bind_descriptors(mPipelineFwdAnimObject->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
-					descriptor_binding(3, 1, mBoneMatricesPrevBuffer[fif])
-				}));
-
-				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
-				commandBuffer->push_constants(mPipelineFwdAnimObject->layout(), pushc_dii);
-				auto &drawCall = mDrawCalls[mMovingObject.moverId];
-				commandBuffer->draw_indexed(
-					*drawCall.mIndexBuffer,
-					*drawCall.mPositionsBuffer,
-					*drawCall.mTexCoordsBuffer,
-					*drawCall.mNormalsBuffer,
-					*drawCall.mBoneWeightsBuffer,
-					*drawCall.mBoneIndicesBuffer
-				);
-#endif
-			} else {
-				// not animated
-				pushc_dii.mDrawIdOffset = -(mMovingObject.moverId + 1);
-				commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
-				auto &drawCall = mDrawCalls[mMovingObject.moverId];
-				commandBuffer->draw_indexed(
-					*drawCall.mIndexBuffer,
-					*drawCall.mPositionsBuffer,
-					*drawCall.mTexCoordsBuffer,
-					*drawCall.mNormalsBuffer,
-					*drawCall.mTangentsBuffer,
-					*drawCall.mBitangentsBuffer
-				);
-			}
-		}
+		// draw dynamic objects
+		draw_dynamic_objects(commandBuffer, fif);
 
 #if FORWARD_RENDERING
+		// draw the transparent parts of the scene
 		commandBuffer->bind_pipeline(secondPipe);
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
@@ -1711,9 +1777,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Checkbox("cont rot", &mMovingObject.rotContinous);
 					if (Button("reset")) mMovingObject.t = 0.f;
-					SliderFloatW(120, "anim", &mMovingObject.animTime, 0.f, mMovingObject.maxAnimTime);
-					SameLine(); Checkbox("auto##auto anim", &mMovingObject.autoAnimate);
-					SliderFloat("speed##anim speed", &mMovingObject.animSpeed, -2.f, 2.f, "%.1f");
+					auto &dynObj = mDynObjects[mMovingObject.moverId];
+					if (dynObj.mIsAnimated) {
+						auto &clip = dynObj.mAnimClips[dynObj.mActiveAnimation];
+						float minAnimTime = static_cast<float>(clip.mStartTicks * clip.mTicksPerSecond);
+						float maxAnimTime = static_cast<float>(clip.mEndTicks   * clip.mTicksPerSecond);
+						SliderFloatW(120, "anim", &dynObj.mAnimTime, minAnimTime, maxAnimTime);
+						SameLine(); Checkbox("auto##auto anim", &mMovingObject.autoAnimate);
+						SliderFloat("speed##anim speed", &mMovingObject.animSpeed, -2.f, 2.f, "%.1f");
+					}
 					PopID();
 
 					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
@@ -1897,7 +1969,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		
 		prepare_matrices_ubo();
 		prepare_lightsources_ubo();
-		prepare_bone_matrices_buffer();
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
 
@@ -1975,10 +2046,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if RECORD_CMDBUFFER_IN_RENDER
 
 #if FORWARD_RENDERING
-		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend, &mPipelineFwdAnimObject };
+		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
 #else
 		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFirstPass, &mPipelineLightingPass };
 #endif
+		gfx_pipes.push_back(&mPipelineAnimObject);
 		gfx_pipes.push_back(&mPipelineTestImage);
 		gfx_pipes.push_back(&mPipelineDrawCamPath);
 
@@ -2099,13 +2171,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mMovingObject.translation = mMovingObject.startPos + effectiveT * dir;
 			mMovingObject.rotationAngle = fmod(glm::radians(mMovingObject.rotAxisAngle.w) * (mMovingObject.rotContinous ? tObjAccumulated : effectiveT), 2.f * glm::pi<float>());
 
-			if (mDrawCalls[mMovingObject.moverId].mIsAnimated && mMovingObject.autoAnimate) {
-				if (mMovingObject.animSpeed < 0.f) {
-					mMovingObject.animTime = mMovingObject.maxAnimTime - fmod(-mMovingObject.animSpeed * tObjAccumulated, mMovingObject.maxAnimTime);
-				} else {
-					mMovingObject.animTime = fmod(mMovingObject.animSpeed * tObjAccumulated, mMovingObject.maxAnimTime);
-				}
+			auto &dynObj = mDynObjects[mMovingObject.moverId];
+			if (dynObj.mIsAnimated && mMovingObject.autoAnimate) {
+				auto &clip = dynObj.mAnimClips[dynObj.mActiveAnimation];
+				float minAnimTime = static_cast<float>(clip.mStartTicks * clip.mTicksPerSecond);
+				float maxAnimTime = static_cast<float>(clip.mEndTicks   * clip.mTicksPerSecond);
+				float timePassed = fmod(abs(mMovingObject.animSpeed) * tObjAccumulated, maxAnimTime - minAnimTime);
+				dynObj.mAnimTime = (mMovingObject.animSpeed < 0.f) ? maxAnimTime - timePassed : minAnimTime + timePassed;
 			}
+
+			// set current and previous movement matrix
+			// FIXME - first time init of prev, init after object was inactive...
+			mDynObjects[mMovingObject.moverId].mMovementMatrix_prev    = mDynObjects[mMovingObject.moverId].mMovementMatrix_current;
+			mDynObjects[mMovingObject.moverId].mMovementMatrix_current = glm::rotate(glm::translate(glm::mat4(1), mMovingObject.translation), mMovingObject.rotationAngle, glm::vec3(mMovingObject.rotAxisAngle));
+
 		} else {
 			tObjAccumulated = 0.f;
 		}
@@ -2284,7 +2363,7 @@ private: // v== Member variables ==v
 	std::vector<gvk::material_gpu_data> mMaterialData;
 	avk::buffer mMaterialBuffer;
 	std::vector<avk::image_sampler> mImageSamplers;
-	std::vector<drawcall_data> mDrawCalls;
+	std::vector<dynamic_object> mDynObjects;
 #if !RECORD_CMDBUFFER_IN_RENDER
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
 #endif
@@ -2297,9 +2376,9 @@ private: // v== Member variables ==v
 	avk::graphics_pipeline mPipelineFwdOpaque;
 	avk::graphics_pipeline mPipelineFwdTransparent;
 	avk::graphics_pipeline mPipelineFwdTransparentNoBlend;
-	avk::graphics_pipeline mPipelineFwdAnimObject;
 
 	// Common pipelines:
+	avk::graphics_pipeline mPipelineAnimObject;
 	avk::graphics_pipeline mPipelineDrawCamPath;
 	avk::graphics_pipeline mPipelineTestImage;
 
@@ -2349,8 +2428,6 @@ private: // v== Member variables ==v
 		int       units = 0; // 0 = per sec, 1 = per frame
 		int       repeat = 1; // 0 = no, 1 = cycle, 2 = ping-pong
 		bool      rotContinous = false;
-		float     animTime = 0.f;
-		float     maxAnimTime = 1.f;
 		bool      autoAnimate = true;
 		float     animSpeed = 1.f;
 	} mMovingObject;
