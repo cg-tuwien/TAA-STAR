@@ -90,7 +90,7 @@ void main()
 	vec4 positionVS  = vmMatrix * positionOS;
 	vec4 positionCS  = pMatrix * positionVS;
 
-	vec3 normalOS = normalize(mat3(boneMat) * normalize(aNormal));
+	vec3 normalOS = normalize(mat3(boneMat) * normalize(aNormal));	// TODO: is this correct for non-uniform scaling? inverse(transpose()) ?
 
 	//vec3 tangentOS   = normalize(aTangent);
 	//vec3 bitangentOS = normalize(aBitangent);

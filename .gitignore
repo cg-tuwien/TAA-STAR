@@ -34,3 +34,6 @@ taa.vcxproj.user
 # Other files to ignore
 notes.txt
 extras/TestScene/*.blend1
+
+# Optional assets (cannot include those due to licensing)
+assets/optional

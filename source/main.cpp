@@ -22,11 +22,14 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
+	- dragon model has animation problem (front wing horns)
+	  bone weights passed to shader often don't add up even nearly to one! not sorted by importance? -> that the problem?
+	  (they are ok for goblin, dude)
+	  --> fixed!
+
 	- pre-recording command buffers is most likely broken now, due to dynamic objects (is it really? re-record is necessary for model change anyway)
 
 	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
-
-	- drop SRBG support in TAA
 
 	- TAAU: WHY subtract jitter instead of add
 	- TAAU: with 4x upsampling and 4 samples -> why are there no "holes" in history? (because hist is cleared to full image?)
@@ -222,6 +225,7 @@ class wookiee : public gvk::invokee
 
 	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
 		{ "Start" },	// t,r filled in from code
+		{ "Origin",                  {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f, 0.f} },
 		{ "ES street flicker",       {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
 		{ "ES window flicker",       {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
 		{ "ES fence \"hole\"",       {-18.670401f, 3.432540f, 17.952700f}, {0.138731f, -0.005622f, -0.989478f, -0.040096f} },
@@ -237,12 +241,13 @@ class wookiee : public gvk::invokee
 		int        animId;
 		glm::mat4  modelMatrix;
 	};
-	std::vector<MovingObjectDef> mMovingObjectDefs = {	// name, filename
-		{ "Smooth sphere",		"assets/sphere_smooth.obj",			-1,	glm::mat4(1) },
-		{ "Sharp sphere",		"assets/sphere.obj",				-1,	glm::mat4(1) },
-		{ "Soccer ball",		"assets/Soccer_Ball_lores.obj",		-1,	glm::mat4(1) },
-		{ "Goblin",				"assets/goblin.dae",				 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,-.05,0)), glm::vec3(0.02f)) },
-//		{ "Dude",				"assets/dudeTest03.dae",			 0,	glm::mat4(1) },
+	std::vector<MovingObjectDef> mMovingObjectDefs = {
+		{ "Smooth sphere",		"assets/sphere_smooth.obj",							-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
+		{ "Sharp sphere",		"assets/sphere.obj",								-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
+		{ "Soccer ball",		"assets/Soccer_Ball_lores.obj",						-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
+		{ "Goblin",				"assets/goblin.dae",								 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,.95f,0)), glm::vec3(.02f)) },
+		{ "Dragon",				"assets/optional/dragon/Dragon_2.5_baked.dae",		 0,	glm::scale(glm::mat4(1), glm::vec3(.1f)) },
+		{ "Dude",				"assets/optional/dude/dudeTest03.dae",				 0,	glm::scale(glm::rotate(glm::mat4(1), glm::radians(180.f), glm::vec3(0,1,0)), glm::vec3(3.f)) },
 	};
 
 	struct ImageDef {
@@ -917,9 +922,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		for (size_t iMover = 0; iMover < mMovingObjectDefs.size(); iMover++)
 		{
 			// FIXME - this only works for objects with 1 mesh (at least only the first mesh is rendered)
-			auto &objdef = mMovingObjectDefs[iMover];
+			auto objdef = mMovingObjectDefs[iMover];
 			if (!std::filesystem::exists(objdef.filename)) {
 				LOG_WARNING("Object file \"" + std::string(objdef.filename) + "\" does not exist - falling back to default sphere)");
+				mMovingObjectDefs[iMover].name = "Not available"; // (std::string("N/A (") + objdef.name + ")").c_str();
 				objdef = mMovingObjectDefs[0];
 			}
 			auto model = gvk::model_t::load_from_file(objdef.filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
@@ -939,10 +945,29 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (material.mAmbientReflectivity == glm::vec4(0)) material.mAmbientReflectivity = glm::vec4(glm::vec3(0.1f), 0); // give it some ambient reflectivity if it has none
 
+				int texCoordSet = 0;
+
 				// fix goblin model - has no texture assigned, specular reflectivity is through the roof
 				if (objdef.name == "Goblin" && meshIndex == 0) {
 					material.mDiffuseTex = "assets/goblin.dds";
 					material.mSpecularReflectivity = glm::vec4(0);
+				}
+
+				// fix dragon model
+				if (objdef.name == "Dragon") {
+					if (material.mDiffuseTex != "") material.mDiffuseTex = "assets/optional/dragon/Dragon_ground_color.jpg";
+					material.mSpecularTex		= "";
+					material.mAmbientTex		= "";
+					material.mEmissiveTex		= "";
+					material.mHeightTex			= "";
+					material.mNormalsTex		= "";
+					material.mShininessTex		= "";
+					material.mOpacityTex		= "";
+					material.mDisplacementTex	= "";
+					material.mReflectionTex		= "";
+					material.mLightmapTex		= "";
+					material.mExtraTex			= "";
+					texCoordSet = 1;	// 0 = for bump mapping?
 				}
 
 				meshData.mMaterialIndex = static_cast<int>(distinctMaterialConfigs.size());
@@ -952,7 +977,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				// get the mesh data from the loaded model
 				auto selection = make_models_and_meshes_selection(model, meshIndex);
 				auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
-				auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, 0) : gvk::get_2d_texture_coordinates(selection, 0);
+				auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, texCoordSet) : gvk::get_2d_texture_coordinates(selection, texCoordSet);
 
 				auto normals = gvk::get_normals(selection);
 				std::vector<glm::vec3>  tangents;
@@ -2026,8 +2051,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void init_debug_stuff() {
 		mMovingObject.moverId = 3;
-		mMovingObject.startPos = glm::vec3(0,1,0);
-		mMovingObject.endPos   = glm::vec3(0,1,0);
+		mMovingObject.startPos = glm::vec3(0,0,0);
+		mMovingObject.endPos   = glm::vec3(0,0,0);
 		mMovingObject.rotAxisAngle.w = 0.f;
 		mMovingObject.autoAnimate = true;
 		mMovingObject.enabled  = true;
