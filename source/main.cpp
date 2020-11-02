@@ -8,7 +8,7 @@
 #include "taa.hpp"
 #include "splines.hpp"
 #include "IniUtil.h"
-
+#include "InterpolationCurve.hpp"
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -437,8 +437,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		glm::quat rot = glm::quat(1,0,0,0);
 		for (int i = 0; i < mCameraSpline.drawNpoints; ++i) {
 			float t = static_cast<float>(i) / static_cast<float>(mCameraSpline.drawNpoints - 1);
-			mCameraSpline.spline.interpolate(t, pos, rot);
-			samples[i] = pos;
+			samples[i] = mCameraSpline.interpolationCurve.value_at(t);
 		}
 
 		mNumCamPathPositions = mCameraSpline.drawNpoints;
@@ -1754,14 +1753,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 
 					Checkbox("follow path", &mCameraSpline.enable);
-					if (mCameraSpline.enable && mCameraSpline.spline.camP.size() < 4) mCameraSpline.enable = false; // need min. 4 pts
+					if (mCameraSpline.enable && !mCameraSpline.interpolationCurve.valid()) mCameraSpline.enable = false; // need min. 2 or 4 pts
 					if (mCameraSpline.enable && mCameraSpline.tStart == 0.f) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
 					SameLine();
 					if (Button("reset")) mCameraSpline.tStart = static_cast<float>(glfwGetTime());
 					SameLine();
 					if (Button("edit")) showCamPathDefWindow = true;
-					Checkbox("cycle", &mCameraSpline.cyclic); SameLine();
-					//Combo("rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
+					Checkbox("cycle", &mCameraSpline.cyclic);
+					SameLine();
+					Checkbox("look along", &mCameraSpline.lookAlong);
 
 					PopID();
 				}
@@ -1865,9 +1865,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					bool changed = false;
 					static std::string lastFn = "";
 
-					auto &pos = mCameraSpline.spline.camP;
-					auto &rot = mCameraSpline.spline.camR;
-					if (Button("Clear")) { pos.clear(); pos.push_back(glm::vec3(0)); }
+					static std::vector<glm::vec3> pos = mCameraSpline.interpolationCurve.control_points();
+					static std::vector<glm::quat> rot; // not used for now
+					if (rot.size() != pos.size()) rot.resize(pos.size(), glm::quat(1, 0, 0, 0));
+
+					bool isCatmull = mCameraSpline.interpolationCurve.type() == InterpolationCurveType::catmull_rom_spline;
+
+					auto cameraT = mQuakeCam.translation();
+					auto cameraR = mQuakeCam.rotation();
+
+
+					if (Button("Clear")) { pos.clear(); pos.push_back(glm::vec3(0)); changed = true; }
 
 					SameLine();
 					if (Button("Load...")) {
@@ -1875,6 +1883,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
 						if (fns.size()) {
 							loadCamPath(fns[0]);
+							pos = mCameraSpline.interpolationCurve.control_points();
 							changed = true;
 						}
 					}
@@ -1888,34 +1897,41 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						}
 					}
 
-					InputFloatW(60, "duration", &mCameraSpline.spline.cam_t_max, 0.f, 0.f, "%.1f");
+					InputFloatW(60, "duration", &mCameraSpline.duration, 0.f, 0.f, "%.1f");
 					SameLine();
-					if (Checkbox("const.speed", &mCameraSpline.spline.use_arclen)) mDrawCamPathPositions_valid = false;
+					if (Checkbox("const.speed", &mCameraSpline.constantSpeed)) mDrawCamPathPositions_valid = false;
 					SameLine();
-					float alpha = mCameraSpline.spline.get_catmullrom_alpha();
-					if (InputFloatW(40, "a##Catmull-Rom alpha", &alpha, 0.f, 0.f, "%.1f")) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
-					HelpMarker("Catmull-Rom alpha (affects path interpolation):\n0.5: centripetal\n0.0: uniform\n1.0: chordal");
+					//float alpha = mCameraSpline.spline.get_catmullrom_alpha();
+					//if (InputFloatW(40, "a##Catmull-Rom alpha", &alpha, 0.f, 0.f, "%.1f")) { mCameraSpline.spline.set_catmullrom_alpha(alpha); changed = true; }
+					//HelpMarker("Catmull-Rom alpha (affects path interpolation):\n0.5: centripetal\n0.0: uniform\n1.0: chordal");
 
-					ComboW(120, "rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0");
-					SameLine();
-					static bool show_rot = true;
-					Checkbox("show rotation input", &show_rot);
+					//ComboW(120, "rotate", &mCameraSpline.spline.rotation_mode, "none\0from keyframes\0from position\0"); // FIXME
+					Checkbox("look along", &mCameraSpline.lookAlong);
+					//SameLine();
+					//static bool show_rot = true;
+					//Checkbox("show rotation input", &show_rot);
 					int delPos = -1;
 					int addPos = -1;
 					int moveUp = -1;
 					int moveDn = -1;
 					int numP = static_cast<int>(pos.size());
 
+					int splineType = static_cast<int>(mCameraSpline.interpolationCurve.type());
+					if (Combo("type##splinetype", &splineType, "Bezier\0Quad. B-spline\0Cubic B-spline\0Catmull-Rom\0")) {
+						mCameraSpline.interpolationCurve.setType(static_cast<InterpolationCurveType>(splineType));
+						mDrawCamPathPositions_valid = false;
+					}
+
 					Separator();
 					BeginChild("scrollbox", ImVec2(0, 200));
 					for (int i = 0; i < numP; ++i) {
 						PushID(i);
-						if (i == 1 || i == numP - 1) Separator();
+						if (isCatmull && (i == 1 || i == numP - 1)) Separator();
 						if (InputFloat3W(120, "##pos", &(pos[i].x), "%.2f")) changed = true;
-						if (show_rot) {
-							SameLine();
-							if (InputFloat4W(160, "##rot", &(rot[i].x), "%.2f")) changed = true;
-						}
+						//if (show_rot) {
+						//	SameLine();
+						//	if (InputFloat4W(160, "##rot", &(rot[i].x), "%.2f")) changed = true;
+						//}
 						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); rot[i] = mQuakeCam.rotation(); changed = true; }
 						SameLine(); if (Button("-")) delPos = i;
 						SameLine(); if (Button("+")) addPos = i;
@@ -1926,29 +1942,31 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 					EndChild();
 
-					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, glm::vec3(0));	rot.insert(rot.begin() + addPos + 1, glm::quat());	changed = true; }
+					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, cameraT);		rot.insert(rot.begin() + addPos + 1, cameraR);		changed = true; }
 					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						rot.erase (rot.begin() + delPos);					changed = true; }
 					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				std::swap(rot[moveUp - 1], rot[moveUp]);			changed = true; }
 					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]);				std::swap(rot[moveDn + 1], rot[moveDn]);			changed = true; }
 
 					Separator();
-					auto t = mQuakeCam.translation();
-					auto r = mQuakeCam.rotation();
-					if (show_rot)	Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f",	t.x, t.y, t.z, r.x, r.y, r.z, r.w);
+					auto t = cameraT;
+					auto r = cameraR;
+					if (false /*show_rot*/)	Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f",	t.x, t.y, t.z, r.x, r.y, r.z, r.w);
 					else			Text("cam pos %.2f %.2f %.2f",							t.x, t.y, t.z);
 					Separator();
 
-					if (Button("auto-set cycle lead in/out")) {
-						// affects last regular point and in/out points
-						auto sz = pos.size();
-						if (sz > 3) {
-							pos[sz-2] = pos[1];		rot[sz-2] = rot[1];
-							pos[sz-1] = pos[2];		rot[sz-1] = rot[2];
-							pos[0]    = pos[sz-3];	rot[0]    = rot[sz-3];
-							changed = true;
+					if (isCatmull) {
+						if (Button("auto-set cycle lead in/out")) {
+							// affects last regular point and in/out points
+							auto sz = pos.size();
+							if (sz > 3) {
+								pos[sz - 2] = pos[1];	rot[sz - 2] = rot[1];
+								pos[sz - 1] = pos[2];	rot[sz - 1] = rot[2];
+								pos[0] = pos[sz - 3];	rot[0] = rot[sz - 3];
+								changed = true;
+							}
 						}
+						HelpMarker("Update points for cyclic path:\nLast regular point is set to first regular point.\nLead-in and lead-out are set to match cycle.");
 					}
-					HelpMarker("Update points for cyclic path:\nLast regular point is set to first regular point.\nLead-in and lead-out are set to match cycle.");
 
 					static int numpts = 100;
 					Checkbox("show path", &mCameraSpline.draw); SameLine();
@@ -1959,7 +1977,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 
 
-					if (changed) { mCameraSpline.spline.modified(); mDrawCamPathPositions_valid = false; }
+					if (changed) {
+						// mCameraSpline.spline.modified(); // FIXME - recalc arclen?
+						mDrawCamPathPositions_valid = false;
+						mCameraSpline.interpolationCurve.set_control_points(pos);
+					} 
 
 					End();
 				}
@@ -2130,15 +2152,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// camera path
 		if (mCameraSpline.enable) {
 			// FIXME for slow-mo! also need to fix reset
-			float t_spline = (t - mCameraSpline.tStart) / mCameraSpline.spline.cam_t_max;
+			float t_spline = (t - mCameraSpline.tStart) / mCameraSpline.duration;
 			if (t_spline > 1.f) {
-				if (mCameraSpline.cyclic) t_spline = glm::fract(t_spline); else { mCameraSpline.enable = false; mCameraSpline.tStart = 0.f; }
+				if (mCameraSpline.cyclic) t_spline = glm::fract(t_spline); else { mCameraSpline.enable = false; mCameraSpline.tStart = 0.f; t_spline = 1.f; }
 			}
-			glm::vec3 pos = mQuakeCam.translation();
-			glm::quat rot = mQuakeCam.rotation();
-			mCameraSpline.spline.interpolate(t_spline, pos, rot);
-			mQuakeCam.set_translation(pos);
-			mQuakeCam.set_rotation(rot);
+			//glm::vec3 pos = mQuakeCam.translation();
+			//glm::quat rot = mQuakeCam.rotation();
+			//mCameraSpline.spline.interpolate(t_spline, pos, rot);
+			//mQuakeCam.set_translation(pos);
+			//mQuakeCam.set_rotation(rot);
+			mQuakeCam.set_translation(mCameraSpline.interpolationCurve.value_at(t_spline));
+			if (mCameraSpline.lookAlong) mQuakeCam.look_along(mCameraSpline.interpolationCurve.slope_at(t_spline));
 		}
 
 		float dtCam = dt;
@@ -2313,14 +2337,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		std::string sec;
 
 		sec = "CamPath";
-		iniWriteFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
-		iniWriteBool	(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
-		iniWriteInt		(ini, sec, "rotmode",	mCameraSpline.spline.rotation_mode);
-		iniWriteFloat	(ini, sec, "cmr_alpha",	mCameraSpline.spline.get_catmullrom_alpha());
-		iniWriteInt		(ini, sec, "num_pos",	(int)mCameraSpline.spline.camP.size());
-		for (int i = 0; i < (int)mCameraSpline.spline.camP.size(); ++i) {
-			iniWriteVec3(ini, sec, "pos_" + std::to_string(i), mCameraSpline.spline.camP[i]);
-			iniWriteQuat(ini, sec, "rot_" + std::to_string(i), mCameraSpline.spline.camR[i]);
+		iniWriteInt     (ini, sec, "type",			static_cast<int>(mCameraSpline.interpolationCurve.type()));
+		iniWriteFloat	(ini, sec, "duration",		mCameraSpline.duration);
+		iniWriteBool	(ini, sec, "constantSpeed",	mCameraSpline.constantSpeed);
+		iniWriteBool	(ini, sec, "lookAlong",		mCameraSpline.lookAlong);
+		//iniWriteFloat	(ini, sec, "cmr_alpha",	mCameraSpline.spline.get_catmullrom_alpha());
+
+		auto &pos = mCameraSpline.interpolationCurve.control_points();
+		iniWriteInt		(ini, sec, "num_pos",	(int)pos.size());
+		for (int i = 0; i < (int)pos.size(); ++i) {
+			iniWriteVec3(ini, sec, "pos_" + std::to_string(i), pos[i]);
+			//iniWriteQuat(ini, sec, "rot_" + std::to_string(i), rot[i]);
 		}
 
 		return file.generate(ini);
@@ -2337,20 +2364,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		float alpha = 0.5f;
 
 		sec = "CamPath";
-		iniReadFloat	(ini, sec, "duration",	mCameraSpline.spline.cam_t_max);
-		iniReadBool		(ini, sec, "arclength",	mCameraSpline.spline.use_arclen);
-		iniReadInt		(ini, sec, "rotmode",	mCameraSpline.spline.rotation_mode);
-		iniReadFloat	(ini, sec, "cmr_alpha",	alpha); mCameraSpline.spline.set_catmullrom_alpha(alpha);
+		int aType = static_cast<int>(mCameraSpline.interpolationCurve.type());
+		iniReadInt      (ini, sec, "type",			aType);	mCameraSpline.interpolationCurve.setType(static_cast<InterpolationCurveType>(aType));
+		iniReadFloat	(ini, sec, "duration",		mCameraSpline.duration);
+		iniReadBool		(ini, sec, "constantSpeed",	mCameraSpline.constantSpeed);
+		iniReadBool		(ini, sec, "lookAlong",		mCameraSpline.lookAlong);
+		//iniReadFloat	(ini, sec, "cmr_alpha",	alpha); mCameraSpline.spline.set_catmullrom_alpha(alpha);
+
 		int num_pos = 0;
 		iniReadInt		(ini, sec, "num_pos",	num_pos);
-		mCameraSpline.spline.camP.resize(num_pos);
-		mCameraSpline.spline.camR.resize(num_pos);
+		std::vector<glm::vec3> pos(num_pos);
 		for (int i = 0; i < num_pos; ++i) {
-			iniReadVec3 (ini, sec, "pos_" + std::to_string(i), mCameraSpline.spline.camP[i]);
-			iniReadQuat (ini, sec, "rot_" + std::to_string(i), mCameraSpline.spline.camR[i]);
+			iniReadVec3 (ini, sec, "pos_" + std::to_string(i), pos[i]);
+			//iniReadQuat (ini, sec, "rot_" + std::to_string(i), rot[i]);
 		}
+		mCameraSpline.interpolationCurve.set_control_points(pos);
 
-		mCameraSpline.spline.modified();
+		//mCameraSpline.spline.modified();
 		return true;
 	}
 
@@ -2510,9 +2540,14 @@ private: // v== Member variables ==v
 		bool   enable;
 		float  tStart;
 		bool   cyclic = true;
-		Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
+		//Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
 		bool   draw = false;
 		int    drawNpoints = 1000;
+
+		float duration = 8.f;
+		bool  constantSpeed = false;
+		bool  lookAlong = false;
+		InterpolationCurve interpolationCurve = InterpolationCurve(InterpolationCurveType::catmull_rom_spline, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
 	} mCameraSpline;
 
 	glm::uvec2 mHiResolution, mLoResolution;
