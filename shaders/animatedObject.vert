@@ -14,8 +14,10 @@
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec2 aTexCoords;
 layout (location = 2) in vec3 aNormal;
-layout (location = 3) in vec4 aBoneWeights;
-layout (location = 4) in uvec4 aBoneIndices;
+layout (location = 3) in vec3 aTangent;
+layout (location = 4) in vec3 aBitangent;
+layout (location = 5) in vec4 aBoneWeights;
+layout (location = 6) in uvec4 aBoneIndices;
 
 layout(push_constant) uniform PushConstantsDII {
 	mat4  mMover_modelMatrix;
@@ -44,8 +46,8 @@ layout (location = 0) out VertexData {
 	vec3 positionVS;
 	vec2 texCoords;
 	vec3 normalOS;
-	//vec3 tangentOS;
-	//vec3 bitangentOS;
+	vec3 tangentOS;
+	vec3 bitangentOS;
 	vec4 positionCS;		// TODO: don't really need this!
 	vec4 positionCS_prev;	// position in previous frame
 
@@ -90,10 +92,10 @@ void main()
 	vec4 positionVS  = vmMatrix * positionOS;
 	vec4 positionCS  = pMatrix * positionVS;
 
-	vec3 normalOS = normalize(mat3(boneMat) * normalize(aNormal));	// TODO: is this correct for non-uniform scaling? inverse(transpose()) ?
-
-	//vec3 tangentOS   = normalize(aTangent);
-	//vec3 bitangentOS = normalize(aBitangent);
+	mat3 normalMatrix = mat3(inverse(transpose(boneMat)));				// TODO: can we do inverse(transpose(mat3(M))) instead? could be faster
+	vec3 normalOS     = normalize(normalMatrix * normalize(aNormal));	// TODO: (1) first normalize() necessary?   (2) aNormal should be normalized already... (really?)
+	vec3 tangentOS    = normalize(normalMatrix * normalize(aTangent));
+	vec3 bitangentOS  = normalize(normalMatrix * normalize(aBitangent));
 
 	mat4 prev_modelMatrix = mMover_modelMatrix_prev;
 
@@ -101,8 +103,8 @@ void main()
 	v_out.positionVS  = positionVS.xyz;
 	v_out.texCoords   = aTexCoords;
 	v_out.normalOS    = normalOS;
-	//v_out.tangentOS   = tangentOS;
-	//v_out.bitangentOS = bitangentOS;
+	v_out.tangentOS   = tangentOS;
+	v_out.bitangentOS = bitangentOS;
 	v_out.positionCS  = positionCS;	// TODO: recheck - is it ok to interpolate clip space vars?
 	v_out.positionCS_prev = uboMatUsr.mPrevFrameProjViewMatrix * prev_modelMatrix * prev_boneMat * vec4(aPosition, 1.0);
 

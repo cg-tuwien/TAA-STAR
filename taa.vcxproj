@@ -48,8 +48,6 @@
     <None Include="assets\models\goblin.dae" />
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
     <None Include="shaders\animatedObject.vert" />
-    <None Include="shaders\animatedObject_deferred.frag" />
-    <None Include="shaders\animatedObject_forward.frag" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\drawpath.frag" />
     <None Include="shaders\drawpath.vert" />

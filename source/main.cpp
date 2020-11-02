@@ -242,9 +242,9 @@ class wookiee : public gvk::invokee
 		glm::mat4  modelMatrix;
 	};
 	std::vector<MovingObjectDef> mMovingObjectDefs = {
-		{ "Smooth sphere",		"assets/sphere_smooth.obj",							-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
-		{ "Sharp sphere",		"assets/sphere.obj",								-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
-		{ "Soccer ball",		"assets/Soccer_Ball_lores.obj",						-1,	glm::translate(glm::mat4(1), glm::vec3(0,1,0)) },
+		{ "Smooth sphere",		"assets/sphere_smooth.obj",							-1,	glm::mat4(1) },
+		{ "Sharp sphere",		"assets/sphere.obj",								-1,	glm::mat4(1) },
+		{ "Soccer ball",		"assets/Soccer_Ball_lores.obj",						-1,	glm::mat4(1) },
 		{ "Goblin",				"assets/goblin.dae",								 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,.95f,0)), glm::vec3(.02f)) },
 		{ "Dragon",				"assets/optional/dragon/Dragon_2.5_baked.dae",		 0,	glm::scale(glm::mat4(1), glm::vec3(.1f)) },
 		{ "Dude",				"assets/optional/dude/dudeTest03.dae",				 0,	glm::scale(glm::rotate(glm::mat4(1), glm::radians(180.f), glm::vec3(0,1,0)), glm::vec3(3.f)) },
@@ -955,12 +955,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				// fix dragon model
 				if (objdef.name == "Dragon") {
-					if (material.mDiffuseTex != "") material.mDiffuseTex = "assets/optional/dragon/Dragon_ground_color.jpg";
+					material.mDiffuseTex		= "assets/optional/dragon/Dragon_ground_color.jpg";
 					material.mSpecularTex		= "";
 					material.mAmbientTex		= "";
 					material.mEmissiveTex		= "";
 					material.mHeightTex			= "";
-					material.mNormalsTex		= "";
+					material.mNormalsTex		= "assets/optional/dragon/Dragon_Nor.jpg";
 					material.mShininessTex		= "";
 					material.mOpacityTex		= "";
 					material.mDisplacementTex	= "";
@@ -978,18 +978,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto selection = make_models_and_meshes_selection(model, meshIndex);
 				auto [vertices, indices] = gvk::get_vertices_and_indices(selection);
 				auto texCoords = mFlipManually ? gvk::get_2d_texture_coordinates_flipped(selection, texCoordSet) : gvk::get_2d_texture_coordinates(selection, texCoordSet);
+				auto normals	= gvk::get_normals(selection);
+				auto tangents	= gvk::get_tangents(selection);
+				auto bitangents	= gvk::get_bitangents(selection);
 
-				auto normals = gvk::get_normals(selection);
-				std::vector<glm::vec3>  tangents;
-				std::vector<glm::vec3>  bitangents;
 				std::vector<glm::vec4>  boneWeights;
 				std::vector<glm::uvec4> boneIndices;
 				if (dynObj.mIsAnimated) {
 					boneWeights = gvk::get_bone_weights(selection);
 					boneIndices = gvk::get_bone_indices(selection);
-				} else {
-					tangents    = gvk::get_tangents(selection);
-					bitangents  = gvk::get_bitangents(selection);
 				}
 
 				// Create all the GPU buffers, but don't fill yet:
@@ -997,12 +994,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				meshData.mPositionsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], avk::content_description::position));
 				meshData.mTexCoordsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(texCoords));
 				meshData.mNormalsBuffer			= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(normals));
+				meshData.mTangentsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents));
+				meshData.mBitangentsBuffer		= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents));
 				if (dynObj.mIsAnimated) {
 					meshData.mBoneWeightsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneWeights));
 					meshData.mBoneIndicesBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(boneIndices));
-				} else {
-					meshData.mTangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(tangents));
-					meshData.mBitangentsBuffer	= gvk::context().create_buffer(avk::memory_usage::device, bufferUsageFlags, avk::vertex_buffer_meta::create_from_data(bitangents));
 				}
 
 				// store mesh data for later upload
@@ -1156,12 +1152,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				md.mPositionsBuffer			->fill(md.mPositions.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 				md.mTexCoordsBuffer			->fill(md.mTexCoords.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 				md.mNormalsBuffer			->fill(md.mNormals.data(),     0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				md.mTangentsBuffer			->fill(md.mTangents.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+				md.mBitangentsBuffer		->fill(md.mBitangents.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 				if (dynObj.mIsAnimated) {
 					md.mBoneWeightsBuffer	->fill(md.mBoneWeights.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 					md.mBoneIndicesBuffer	->fill(md.mBoneIndices.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-				} else {
-					md.mTangentsBuffer		->fill(md.mTangents.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-					md.mBitangentsBuffer	->fill(md.mBitangents.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 				}
 			}
 		}
@@ -1344,12 +1339,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mPipelineAnimObject = context().create_graphics_pipeline_for(
 			"shaders/animatedObject.vert",
-			(FORWARD_RENDERING) ? "shaders/animatedObject_forward.frag" : "shaders/animatedObject_deferred.frag",
+#if FORWARD_RENDERING
+			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
+#else
+			"shaders/blinnphong_and_normal_mapping.frag",
+#endif
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
 			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
 			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec4>() -> to_location(3),		// aBoneWeights
-			from_buffer_binding(4) -> stream_per_vertex<glm::uvec4>()-> to_location(4),		// aBoneIndices
+			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// aTangent
+			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// aBitangent
+			from_buffer_binding(5) -> stream_per_vertex<glm::vec4>() -> to_location(5),		// aBoneWeights
+			from_buffer_binding(6) -> stream_per_vertex<glm::uvec4>()-> to_location(6),		// aBoneIndices
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, 0u, // subpass #0
@@ -1436,6 +1437,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					*md.mPositionsBuffer,
 					*md.mTexCoordsBuffer,
 					*md.mNormalsBuffer,
+					*md.mTangentsBuffer,
+					*md.mBitangentsBuffer,
 					*md.mBoneWeightsBuffer,
 					*md.mBoneIndicesBuffer
 				);
