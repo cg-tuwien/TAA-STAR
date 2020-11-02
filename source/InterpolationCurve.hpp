@@ -17,6 +17,11 @@ public:
 	glm::vec3 value_at(float t);
 	glm::vec3 slope_at(float t);
 
+	float mapConstantSpeedTime(float t);
+
+	int  arcLenSamplesPerSegment() { return mArcLenSamplesPerSegment; }
+	void setArcLenSamplesPerSegment(int numSamples) { mArcLenSamplesPerSegment = numSamples; invalidateArcLenTable(); }
+
 	bool valid();
 private:
 	InterpolationCurveType mType;
@@ -26,6 +31,12 @@ private:
 	gvk::cubic_uniform_b_spline		mInterpolatorCubeB;
 	gvk::catmull_rom_spline			mInterpolatorCatmull;
 
+	int mArcLenSamplesPerSegment = 20;
+
+	std::vector<float> mArcLenTable;
+
 	gvk::cp_interpolation & interpolator();
+	void buildArcLenTable();
+	void invalidateArcLenTable();
 };
 

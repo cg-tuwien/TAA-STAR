@@ -437,6 +437,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		glm::quat rot = glm::quat(1,0,0,0);
 		for (int i = 0; i < mCameraSpline.drawNpoints; ++i) {
 			float t = static_cast<float>(i) / static_cast<float>(mCameraSpline.drawNpoints - 1);
+			if (mCameraSpline.constantSpeed) t = mCameraSpline.interpolationCurve.mapConstantSpeedTime(t);
 			samples[i] = mCameraSpline.interpolationCurve.value_at(t);
 		}
 
@@ -2046,7 +2047,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		current_composition()->add_element(mQuakeCam);
 
 		// load default camera path
-		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
+//		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
 
 		setup_ui_callback();
 
@@ -2075,6 +2076,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	void init_debug_stuff() {
+		return;
 		mMovingObject.moverId = 3;
 		mMovingObject.startPos = glm::vec3(0,0,0);
 		mMovingObject.endPos   = glm::vec3(0,0,0);
@@ -2161,6 +2163,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//mCameraSpline.spline.interpolate(t_spline, pos, rot);
 			//mQuakeCam.set_translation(pos);
 			//mQuakeCam.set_rotation(rot);
+			if (mCameraSpline.constantSpeed) t_spline = mCameraSpline.interpolationCurve.mapConstantSpeedTime(t_spline);
 			mQuakeCam.set_translation(mCameraSpline.interpolationCurve.value_at(t_spline));
 			if (mCameraSpline.lookAlong) mQuakeCam.look_along(mCameraSpline.interpolationCurve.slope_at(t_spline));
 		}
