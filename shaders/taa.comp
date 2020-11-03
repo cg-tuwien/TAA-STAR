@@ -53,6 +53,7 @@ struct Parameters {
 	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
 	bool mResetHistory;
 	bool mUseYCoCg;
+	bool mShrinkChromaAxis;			// ony used if mUseYCoCg - reduce Chroma influence on clip box
 	bool mVarianceClipping;
 	bool mShapedNeighbourhood;
 	bool mLumaWeightingLottes;
@@ -70,21 +71,25 @@ struct Parameters {
 	float mDebugScale;
 	bool mDebugCenter;
 
-	//float pad1;
+	float pad1,pad2,pad3;
 };
-layout(push_constant) uniform PushConstants {
-	Parameters	param[2];
-	bool		splitScreen;
-	int			splitX;
-	bool        mUpsampling;
-} pushConstants;
+
+//layout(push_constant) uniform PushConstants {
+//} pushConstants;
 
 Parameters params;
 
 layout(set = 1, binding = 0) uniform Matrices {
 	mat4 mHistoryViewProjMatrix;
 	mat4 mInverseViewProjMatrix;
-} uboMat;
+
+	Parameters	param[2];
+	bool		splitScreen;
+	int			splitX;
+	bool        mUpsampling;
+
+	float pad1;
+} ubo;
 // -------------------------------------------------------
 
 // Globals
@@ -260,6 +265,16 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 		cliptowardsCol = centerCol; // here centerCol is always inside the AABB; note: playdead still clip towards average color 
 	}
 
+	if (params.mUseYCoCg && params.mShrinkChromaAxis) {
+		// shrink clip-box in the two chroma axes (see Inside-code from playdead, and [Karis14])
+		// .r = Y = luma, .gb = CoCg = Chroma (chroma orange, chroma green)
+		vec2 halfSize = 0.25 * 0.5 * vec2(maxCol.gb - minCol.gb);	// NOTE: Inside does that with Luma (.r), but that doesn't make any sense... bug?
+		vec2 center = centerCol.gb;	// 
+		minCol.gb = center - halfSize;
+		maxCol.gb = center + halfSize;
+		cliptowardsCol.gb = center;
+	}
+
 	// TODO: optionally unjitter differently: neighbourhood samples, current color -> need to make sure cliptowardsCol stays inside AABB
 
 	//if (any(lessThan(centerCol, minCol)) || any(greaterThan(centerCol, maxCol))) gDebugValue = vec4(1,0,0,0);
@@ -372,8 +387,8 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 
 	if (!canUseVelocity) {
 		vec4 clipSpace = vec4(currentUv * 2.0 - 1.0, currentDepth, 1);
-		vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
-		vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
+		vec4 worldSpace = ubo.mInverseViewProjMatrix * clipSpace;
+		vec4 historyClipSpace = ubo.mHistoryViewProjMatrix * worldSpace;
 		historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
 		historyDepth = historyClipSpace.z / historyClipSpace.w;
 	}
@@ -505,8 +520,8 @@ void main()
 	vec2 uv = tc_to_uv(iuv, textureSize_hiRes);
 	if (any(greaterThanEqual(iuv, textureSize_hiRes))) return;
 
-	int paramsIdx = (pushConstants.splitScreen && iuv.x > pushConstants.splitX) ? 1 : 0;
-	params = pushConstants.param[paramsIdx];
+	int paramsIdx = (ubo.splitScreen && iuv.x > ubo.splitX) ? 1 : 0;
+	params = ubo.param[paramsIdx];
 
 
 	ivec2 iuv_lores = uv_to_tc(uv, textureSize_loRes);
@@ -535,7 +550,7 @@ void main()
 	float beta;
 	getColorAndAabb(iuv_lores, currentColor, colMin, colMax, colClipTowards);		// colors are in YCoGg (if enabled)
 	// may have different unjitter settings than neighbourhood, so get current color separately
-	if (pushConstants.mUpsampling) {
+	if (ubo.mUpsampling) {
 		currentColor = getCurrentUpsampledColor(iuv, uv, beta); 
 	} else {
 		currentColor = getCurrentColor(iuv_lores); 
@@ -544,8 +559,8 @@ void main()
 	float depth = texelFetch(uCurrentDepth, iuv_lores, 0).r;
 	
 //	vec4 clipSpace = vec4(uv * 2.0 - 1.0, depth, 1);
-//	vec4 worldSpace = uboMat.mInverseViewProjMatrix * clipSpace;
-//	vec4 historyClipSpace = uboMat.mHistoryViewProjMatrix * worldSpace;
+//	vec4 worldSpace = ubo.mInverseViewProjMatrix * clipSpace;
+//	vec4 historyClipSpace = ubo.mHistoryViewProjMatrix * worldSpace;
 //	vec2 historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
 //	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
 	vec2 historyUv;

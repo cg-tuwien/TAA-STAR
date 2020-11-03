@@ -38,6 +38,7 @@ class taa : public gvk::invokee
 		VkBool32 mPassThrough				= VK_FALSE;		// effectively disables TAA: result <- input,
 		VkBool32 mResetHistory				= VK_FALSE;
 		VkBool32 mUseYCoCg					= VK_FALSE;
+		VkBool32 mShrinkChromaAxis			= VK_FALSE;		// ony used if mUseYCoCg - reduce Chroma influence on clip box
 		VkBool32 mVarianceClipping			= VK_FALSE;
 		VkBool32 mShapedNeighbourhood		= VK_FALSE;
 		VkBool32 mLumaWeightingLottes		= VK_FALSE;;
@@ -55,16 +56,13 @@ class taa : public gvk::invokee
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		//float pad1;
+		float pad1,pad2,pad3;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
-	struct push_constants_for_taa {		// Note to self: be careful about alignment, esp. with vec#!
-		Parameters	param[2];
-		VkBool32	splitScreen;
-		int			splitX;
-		VkBool32    mUpsampling;
-	};
+	//struct push_constants_for_taa {		// Note to self: be careful about alignment, esp. with vec#!
+	//	// moved everything to uniforms buffer
+	//};
 
 	struct push_constants_for_sharpener {
 		float sharpeningFactor	= 1.f;
@@ -83,10 +81,18 @@ class taa : public gvk::invokee
 		int splitX = -1;
 	};
 
-	struct matrices_for_taa {
+	struct uniforms_for_taa {
 		glm::mat4 mHistoryViewProjMatrix;
 		glm::mat4 mInverseViewProjMatrix;
+
+		Parameters	param[2];
+		VkBool32	splitScreen;
+		int			splitX;
+		VkBool32    mUpsampling;
+
+		float pad1;
 	};
+	static_assert(sizeof(uniforms_for_taa) % 16 == 0, "uniforms_for_taa struct is not padded"); // very crude check for padding to 16-bytes
 
 public:
 	taa(avk::queue* aQueue)
@@ -383,33 +389,41 @@ public:
 					}
 					CheckboxB32("pass through", &param.mPassThrough); HelpMarker("Effectively disables TAA, but runs shader");
 					static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
-					Combo("color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+					ComboW(120, "color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
 					if (CheckboxB32("shaped neighbourhood", &param.mShapedNeighbourhood)) if (param.mShapedNeighbourhood) param.mVarianceClipping = VK_FALSE;
 					HelpMarker("[Karis14] average the min/max of 3x3 and 5-tap clipboxes");
 					if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
-					SliderFloat("gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
+					SameLine(); SliderFloatW(100, "##gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
 					CheckboxB32("use YCoCg", &param.mUseYCoCg);
+					if (!param.mUseYCoCg) PushStyleVar(ImGuiStyleVar_Alpha, GetStyle().Alpha * 0.5f);
+					SameLine(); CheckboxB32("shrink chroma", &param.mShrinkChromaAxis);
+					if (!param.mUseYCoCg) PopStyleVar();
+					HelpMarker("Use YCoCg: Perform clamping/clipping in YCoCg color space instead of RGB.\nShrink chroma: (in addition) Shape the YCoCg clip box to reduce the influence of chroma.");
 					CheckboxB32("luma weight (Lottes)", &param.mLumaWeightingLottes); HelpMarker("Not to be confused with tonemap luma weight (Karis)!\nSet min and max alpha to define feedback range.");
 					CheckboxB32("depth culling", &param.mDepthCulling);
 					CheckboxB32("reject out-of-screen", &param.mRejectOutside);
 					//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
 					CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
 					CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
+					PushItemWidth(120);
 					InputFloat("unjitter factor", &param.mUnjitterFactor);
 					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug x16", "debug x1" };
-					if (isPrimary) Combo("sample distribution", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
+					if (isPrimary) Combo("sample pattern", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
 					
 					SliderFloat("alpha", &param.mJitterNdcAndAlpha.w, 0.0f, 1.0f);
 					SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
 					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
 					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
-					Combo("vel. sample mode", &param.mVelocitySampleMode, "simple\0""3x3 longest\0""3x3 closest\0");
+					Combo("vel.sampling", &param.mVelocitySampleMode, "simple\0""3x3 longest\0""3x3 closest\0");
 					HelpMarker("simple:      just sample velocity at the current fragment\n"
-						       "3x3 longest: take the longest velocity vector in a 3x3 neighbourhood\n"
-						       "3x3 closest: take the velocity from the (depth-wise) closest fragment in a 3x3 neighbourhood"
+						       "3x3 longest: take the longest velocity vector in a 3x3\n"
+						       "             neighbourhood\n"
+						       "3x3 closest: take the velocity from the (depth-wise) closest"
+						       "             fragment in a 3x3 neighbourhood"
 					);
 					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
+					PopItemWidth();
 
 					CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
 					HelpMarker("Not to be confused with luma weight (Lottes)!");
@@ -513,7 +527,7 @@ public:
 		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0);	// ac: changed from clamp_to_border to clamp_to_edge
 
 		for (size_t i = 0; i < CF; ++i) {
-			mMatricesBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(matrices_for_taa)));
+			mUniformsBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(uniforms_for_taa)));
 		}
 
 		mTaaPipeline = context().create_compute_pipeline_for(
@@ -527,8 +541,8 @@ public:
 			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
 			descriptor_binding(0, 7, *mSrcVelocity[0]),
 			descriptor_binding(0, 8, mHistoryImages[0]->as_storage_image()),	// output for history
-			descriptor_binding(1, 0, mMatricesBuffer[0]),
-			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
+			descriptor_binding(1, 0, mUniformsBuffer[0])
+			//push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
 
 		mSharpenerPipeline = context().create_compute_pipeline_for(
@@ -752,14 +766,14 @@ public:
 		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
 		//printf("jitter %f %f\n", jitter.x, jitter.y);
 		for (int i = 0; i < 2; ++i) {
-			mTaaPushConstants.param[i] = mParameters[i];
-			mTaaPushConstants.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mTaaPushConstants.param[i].mJitterNdcAndAlpha.w);
-			mTaaPushConstants.param[i].mBypassHistoryUpdate = bypassHistUpdate;
-			mTaaPushConstants.param[i].mResetHistory = mResetHistory;
+			mTaaUniforms.param[i] = mParameters[i];
+			mTaaUniforms.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mTaaUniforms.param[i].mJitterNdcAndAlpha.w);
+			mTaaUniforms.param[i].mBypassHistoryUpdate = bypassHistUpdate;
+			mTaaUniforms.param[i].mResetHistory = mResetHistory;
 		}
-		mTaaPushConstants.mUpsampling = mUpsampling;
-		mTaaPushConstants.splitScreen = mSplitScreen;
-		mTaaPushConstants.splitX      = mSplitX;
+		mTaaUniforms.mUpsampling = mUpsampling;
+		mTaaUniforms.splitScreen = mSplitScreen;
+		mTaaUniforms.splitX      = mSplitX;
 
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
 
@@ -792,11 +806,10 @@ public:
 		static bool isVeryFirstFrame = true;
 		if (mTaaEnabled && !isVeryFirstFrame) {	// history is invalid for the very first frame
 
-			// fill matrices UBO
-			matrices_for_taa matrices;
-			matrices.mInverseViewProjMatrix = glm::inverse(mHistoryProjMatrices[inFlightIndex] * mHistoryViewMatrices[inFlightIndex]);
-			matrices.mHistoryViewProjMatrix = mHistoryProjMatrices[inFlightLastIndex] * mHistoryViewMatrices[inFlightLastIndex];
-			mMatricesBuffer[inFlightIndex]->fill(&matrices, 0, sync::not_required()); // sync is done with establish_global_memory_barrier below
+			// fill in matrices to uniforms UBO
+			mTaaUniforms.mInverseViewProjMatrix = glm::inverse(mHistoryProjMatrices[inFlightIndex] * mHistoryViewMatrices[inFlightIndex]);
+			mTaaUniforms.mHistoryViewProjMatrix = mHistoryProjMatrices[inFlightLastIndex] * mHistoryViewMatrices[inFlightLastIndex];
+			mUniformsBuffer[inFlightIndex]->fill(&mTaaUniforms, 0, sync::not_required()); // sync is done with establish_global_memory_barrier below
 
 			helpers::record_timing_interval_start(cmdbfr->handle(), fmt::format("TAA {}", inFlightIndex));
 
@@ -820,9 +833,9 @@ public:
 				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),		// -> shader: uDebug
 				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),							// -> shader: uCurrentVelocity
 				descriptor_binding(0, 8, mHistoryImages[inFlightIndex]->as_storage_image()),	// -> shader: uResultHistory
-				descriptor_binding(1, 0, mMatricesBuffer[inFlightIndex])
+				descriptor_binding(1, 0, mUniformsBuffer[inFlightIndex])
 				}));
-			cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
+			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
 
@@ -1049,7 +1062,7 @@ private:
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;
 	std::array<glm::mat4, CF> mHistoryViewMatrices;
-	std::array<avk::buffer, CF> mMatricesBuffer;
+	std::array<avk::buffer, CF> mUniformsBuffer;
 
 	avk::sampler mSampler;
 
@@ -1057,7 +1070,8 @@ private:
 	std::array<avk::command_buffer, CF> mSyncAfterCommandBuffers;
 
 	avk::compute_pipeline mTaaPipeline;
-	push_constants_for_taa mTaaPushConstants;
+	//push_constants_for_taa mTaaPushConstants;
+	uniforms_for_taa mTaaUniforms;
 
 	avk::compute_pipeline mPostProcessPipeline;
 	push_constants_for_postprocess mPostProcessPushConstants;
