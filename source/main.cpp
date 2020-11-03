@@ -2547,6 +2547,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniWriteFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
 
 		sec = "Camera";
+		iniWriteVec3	(ini, sec, "mQuakeCam.translation",			mQuakeCam.translation());
+		iniWriteQuat	(ini, sec, "mQuakeCam.rotation",			mQuakeCam.rotation());
 		iniWriteBool	(ini, sec, "mAutoMovement",					mAutoMovement);
 		iniWriteInt		(ini, sec, "mAutoMovementUnits",			mAutoMovementUnits);
 		iniWriteBool	(ini, sec, "mAutoRotate",					mAutoRotate);
@@ -2613,6 +2615,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniReadFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
 
 		sec = "Camera";
+		auto camT = mQuakeCam.translation();
+		auto camR = mQuakeCam.rotation();
+		iniReadVec3		(ini, sec, "mQuakeCam.translation",			camT); mQuakeCam.set_translation(camT);
+		iniReadQuat		(ini, sec, "mQuakeCam.rotation",			camR); mQuakeCam.set_rotation(camR);
 		iniReadBool		(ini, sec, "mAutoMovement",					mAutoMovement);
 		iniReadInt		(ini, sec, "mAutoMovementUnits",			mAutoMovementUnits);
 		iniReadBool		(ini, sec, "mAutoRotate",					mAutoRotate);
