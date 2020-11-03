@@ -429,19 +429,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void update_camera_path_draw_buffer() {
 		if (!mCameraSpline.draw) return;
 		if (mDrawCamPathPositions_valid) return;
-		if (mCameraSpline.drawNpoints < 2) return;
+
+		int nSamples = mCameraSpline.drawNpoints;
+		int nCpl     = static_cast<int>(mCameraSpline.interpolationCurve.num_control_points());
+
+		mNumCamPathPositions = nSamples + nCpl; // samples + control points
+		if (mNumCamPathPositions > mMaxCamPathPositions) {
+			mNumCamPathPositions = mMaxCamPathPositions;
+			nSamples = mNumCamPathPositions - nCpl;
+		}
+		if (nSamples < 2) return;
 
 		// sample points from spline
-		std::vector<glm::vec3> samples(mCameraSpline.drawNpoints);
-		glm::vec3 pos = glm::vec3(0);
-		glm::quat rot = glm::quat(1,0,0,0);
-		for (int i = 0; i < mCameraSpline.drawNpoints; ++i) {
-			float t = static_cast<float>(i) / static_cast<float>(mCameraSpline.drawNpoints - 1);
+		std::vector<glm::vec4> samples(mNumCamPathPositions);
+		for (int i = 0; i < nSamples; ++i) {
+			float t = static_cast<float>(i) / static_cast<float>(nSamples - 1);
 			if (mCameraSpline.constantSpeed) t = mCameraSpline.interpolationCurve.mapConstantSpeedTime(t);
-			samples[i] = mCameraSpline.interpolationCurve.value_at(t);
+			samples[i] = glm::vec4(mCameraSpline.interpolationCurve.value_at(t), 0);
 		}
+		// control points
+		auto &cpl = mCameraSpline.interpolationCurve.control_points();
+		for (int i = 0; i < nCpl; ++i) samples[nSamples + i] = glm::vec4(cpl[i], static_cast<float>(i+1));
 
-		mNumCamPathPositions = mCameraSpline.drawNpoints;
 		mDrawCamPathPositionsBuffer->fill(samples.data(), 0, 0,  samples.size() * sizeof(samples[0]), avk::sync::wait_idle(true)); // wait_idle is ok here, this is only in response to GUI input
 
 		mDrawCamPathPositions_valid = true;
@@ -1370,8 +1379,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
 			"shaders/drawpath.vert", "shaders/drawpath.frag",
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec4>() -> to_location(0),		// <-- aPositionAndId
 			cfg::primitive_topology::points,
+			cfg::depth_write::disabled(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, subpass,
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
@@ -1867,8 +1877,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					static std::string lastFn = "";
 
 					static std::vector<glm::vec3> pos = mCameraSpline.interpolationCurve.control_points();
-					static std::vector<glm::quat> rot; // not used for now
-					if (rot.size() != pos.size()) rot.resize(pos.size(), glm::quat(1, 0, 0, 0));
+
+					if (!mCameraSpline.editorControlPointsValid) {
+						pos = mCameraSpline.interpolationCurve.control_points();
+						mCameraSpline.editorControlPointsValid = true;
+					}
+
+					//static std::vector<glm::quat> rot; // not used for now
+					//if (rot.size() != pos.size()) rot.resize(pos.size(), glm::quat(1, 0, 0, 0));
 
 					bool isCatmull = mCameraSpline.interpolationCurve.type() == InterpolationCurveType::catmull_rom_spline;
 
@@ -1933,26 +1949,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//	SameLine();
 						//	if (InputFloat4W(160, "##rot", &(rot[i].x), "%.2f")) changed = true;
 						//}
-						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); rot[i] = mQuakeCam.rotation(); changed = true; }
+						SameLine(); if (Button("set")) { pos[i] = mQuakeCam.translation(); /* rot[i] = mQuakeCam.rotation(); changed = true; */ }
 						SameLine(); if (Button("-")) delPos = i;
 						SameLine(); if (Button("+")) addPos = i;
 						SameLine(); if (Button("^")) moveUp = i;
 						SameLine(); if (Button("v")) moveDn = i;
-						SameLine(); if (Button("go")) { mQuakeCam.set_translation(pos[i]); mQuakeCam.set_rotation(rot[i]); }
+						SameLine(); if (Button("go")) { mQuakeCam.set_translation(pos[i]); /* mQuakeCam.set_rotation(rot[i]); */ }
 						PopID();
 					}
 					EndChild();
 
-					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, cameraT);		rot.insert(rot.begin() + addPos + 1, cameraR);		changed = true; }
-					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						rot.erase (rot.begin() + delPos);					changed = true; }
-					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				std::swap(rot[moveUp - 1], rot[moveUp]);			changed = true; }
-					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]);				std::swap(rot[moveDn + 1], rot[moveDn]);			changed = true; }
+					if (addPos >= 0)											{ pos.insert(pos.begin() + addPos + 1, cameraT);		/* rot.insert(rot.begin() + addPos + 1, cameraR);	*/	changed = true; }
+					if (delPos >= 0)											{ pos.erase (pos.begin() + delPos);						/* rot.erase (rot.begin() + delPos);				*/	changed = true; }
+					if (moveUp >  0)											{ std::swap(pos[moveUp - 1], pos[moveUp]);				/* std::swap(rot[moveUp - 1], rot[moveUp]);			*/	changed = true; }
+					if (moveDn >= 0 && moveDn < static_cast<int>(pos.size())-1) { std::swap(pos[moveDn + 1], pos[moveDn]);				/* std::swap(rot[moveDn + 1], rot[moveDn]);			*/	changed = true; }
 
 					Separator();
 					auto t = cameraT;
 					auto r = cameraR;
-					if (false /*show_rot*/)	Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f",	t.x, t.y, t.z, r.x, r.y, r.z, r.w);
-					else			Text("cam pos %.2f %.2f %.2f",							t.x, t.y, t.z);
+					//if (show_rot)	Text("cam pos %.2f %.2f %.2f  rot %.2f %.2f %.2f %.2f",	t.x, t.y, t.z, r.x, r.y, r.z, r.w);
+					//else			Text("cam pos %.2f %.2f %.2f",							t.x, t.y, t.z);
+					Text("cam pos %.2f %.2f %.2f",							t.x, t.y, t.z);
 					Separator();
 
 					if (isCatmull) {
@@ -1960,22 +1977,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							// affects last regular point and in/out points
 							auto sz = pos.size();
 							if (sz > 3) {
-								pos[sz - 2] = pos[1];	rot[sz - 2] = rot[1];
-								pos[sz - 1] = pos[2];	rot[sz - 1] = rot[2];
-								pos[0] = pos[sz - 3];	rot[0] = rot[sz - 3];
+								pos[sz - 2] = pos[1];	/* rot[sz - 2] = rot[1]; */
+								pos[sz - 1] = pos[2];	/* rot[sz - 1] = rot[2]; */
+								pos[0] = pos[sz - 3];	/* rot[0] = rot[sz - 3]; */
 								changed = true;
 							}
 						}
 						HelpMarker("Update points for cyclic path:\nLast regular point is set to first regular point.\nLead-in and lead-out are set to match cycle.");
 					}
 
-					static int numpts = 100;
-					Checkbox("show path", &mCameraSpline.draw); SameLine();
-					PushItemWidth(80);
-					if (InputInt("points", &mCameraSpline.drawNpoints, 0)) mDrawCamPathPositions_valid = false;
-					PopItemWidth();
+					Checkbox("interactive editor", &mCameraSpline.draw);
+					HelpMarker("Drag control points in XZ plane.\nHold down SHIFT to change Y.");
+					SameLine();
+					if (InputIntW(80, "points", &mCameraSpline.drawNpoints, 0)) mDrawCamPathPositions_valid = false;
 					if (mCameraSpline.drawNpoints > mMaxCamPathPositions) mCameraSpline.drawNpoints = mMaxCamPathPositions;
-
 
 
 					if (changed) {
@@ -2024,7 +2039,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_skybox();
 
 		// create a buffer for drawing camera path
-		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec3), mMaxCamPathPositions).describe_only_member(glm::vec3(0), avk::content_description::position));
+		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec4), mMaxCamPathPositions).describe_only_member(glm::vec4(0), avk::content_description::position));
 
 		load_and_prepare_scene();
 
@@ -2047,7 +2062,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		current_composition()->add_element(mQuakeCam);
 
 		// load default camera path
-//		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
+		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
 
 		setup_ui_callback();
 
@@ -2115,9 +2130,101 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 	}
 
+	void handle_input_for_path_editor() {
+		using namespace gvk;
+
+		if (!mCameraSpline.draw) return;
+		if (mQuakeCam.is_enabled()) return;
+
+		ImGuiIO &io = ImGui::GetIO();
+		if (io.WantCaptureMouse) return;
+
+		static glm::ivec2 prev_pos = {0,0};
+		static bool prev_lmb = false;
+		static int prev_cpt_id = -1;
+
+		const bool restrictEditAxes = true; // better to design floor aligned paths: change only xz (unless shift is pressed, then change y)
+
+		glm::ivec2 pos = glm::ivec2(input().cursor_position());
+		bool lmb = (input().mouse_button_down(GLFW_MOUSE_BUTTON_LEFT));
+		bool shift = input().key_down(key_code::left_shift) || input().key_down(key_code::right_shift);
+
+		bool click = lmb && !prev_lmb;
+		bool drag  = lmb && prev_lmb;
+
+		glm::mat4 pvMat = mQuakeCam.projection_and_view_matrix();
+
+		auto world_to_ndc = [&pvMat](glm::vec3 p) -> glm::vec3 {
+			glm::vec4 ndc = pvMat * glm::vec4(p, 1);
+			if (abs(ndc.w) > 0.00001f) ndc /= ndc.w;
+			return ndc;
+		};
+
+		auto ndc_to_screen = [this](glm::vec3 ndc) -> glm::vec2 {
+			glm::vec2 xy = glm::vec2(ndc);
+			xy = xy * 0.5f + 0.5f;
+			return xy * glm::vec2(mHiResolution);
+		};
+
+
+		int cpt_id = prev_cpt_id;
+		if (!drag) {
+			// test if we are above a control point
+
+			cpt_id = -1;
+			const float minDistForHit = 5.f;
+			float closest_distance = std::numeric_limits<float>::max();
+			auto &cpts = mCameraSpline.interpolationCurve.control_points();
+			for (size_t i = 0; i < mCameraSpline.interpolationCurve.num_control_points(); ++i) {
+				glm::vec3 ndc = world_to_ndc(mCameraSpline.interpolationCurve.control_point_at(i));
+				float d = glm::length(glm::vec2(pos) - ndc_to_screen(ndc));
+				if (d < minDistForHit && d < closest_distance) {
+					closest_distance = d;
+					cpt_id = static_cast<int>(i);
+				}
+			}
+			context().main_window()->set_cursor_mode((cpt_id >= 0) ? ((restrictEditAxes && shift) ? cursor::vertical_resize_cursor : cursor::crosshair_cursor) : cursor::arrow_cursor);
+		}
+
+		if (cpt_id >= static_cast<int>(mCameraSpline.interpolationCurve.num_control_points())) cpt_id = -1;
+
+		if (lmb && cpt_id >= 0) {
+			// keep depth
+			glm::vec3 cpt_orig = mCameraSpline.interpolationCurve.control_point_at(cpt_id);
+			glm::vec3 cpt_ndc = world_to_ndc(cpt_orig);
+			glm::vec4 ndc = glm::vec4((glm::vec2(pos) / glm::vec2(mHiResolution)) * 2.f - 1.f, cpt_ndc.z, 1);
+			glm::vec4 world = glm::inverse(pvMat) * ndc;
+			if (abs(world.w) > 0.00001f) world /= world.w;
+
+			// restrict
+			if (restrictEditAxes) {
+				if (!shift) {
+					world.y = cpt_orig.y;
+				} else {
+					world.x = cpt_orig.x;
+					world.z = cpt_orig.z;
+				}
+			}
+
+			//printf("new %f %f %f\n", world.x, world.y, world.z);
+			std::vector<glm::vec3> cpts = mCameraSpline.interpolationCurve.control_points();
+			cpts[cpt_id] = world;
+			mCameraSpline.interpolationCurve.set_control_points(cpts);
+			mCameraSpline.editorControlPointsValid = false;
+			mDrawCamPathPositions_valid = false;
+		}
+
+		prev_pos = pos;
+		prev_lmb = lmb;
+		prev_cpt_id = cpt_id;
+
+	}
+
 	void update() override
 	{
 		init_updater_only_once(); // don't init in initialize, taa hasn't created its pipelines there yet.
+
+		handle_input_for_path_editor();
 
 		// global GUI toggle
 		if (gvk::input().key_pressed(gvk::key_code::f3)) imgui_helper::globalEnable = !imgui_helper::globalEnable;
@@ -2545,7 +2652,8 @@ private: // v== Member variables ==v
 		bool   cyclic = true;
 		//Spline spline = Spline(8.f, { {-1,0,0},{0,0,0},{1,0,0},{1,0,10},{0,0,10},{0,0,0},{0,0,-1} });
 		bool   draw = false;
-		int    drawNpoints = 1000;
+		int    drawNpoints = 5000;
+		bool   editorControlPointsValid = false;
 
 		float duration = 8.f;
 		bool  constantSpeed = false;

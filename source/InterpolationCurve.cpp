@@ -24,6 +24,7 @@ gvk::cp_interpolation & InterpolationCurve::interpolator()
 
 void InterpolationCurve::set_control_points(std::vector<glm::vec3> pControlPoints) { interpolator().set_control_points(pControlPoints); invalidateArcLenTable(); }
 const std::vector<glm::vec3>& InterpolationCurve::control_points() { return interpolator().control_points(); }
+const glm::vec3& InterpolationCurve::control_point_at(size_t index) { return interpolator().control_point_at(index); }
 size_t InterpolationCurve::num_control_points() { return interpolator().control_points().size(); }
 glm::vec3 InterpolationCurve::value_at(float t) { return valid() ? interpolator().value_at(t) : glm::vec3(0); }
 glm::vec3 InterpolationCurve::slope_at(float t) { return valid() ? interpolator().slope_at(t) : glm::vec3(0); }

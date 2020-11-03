@@ -13,6 +13,7 @@ public:
 
 	void set_control_points(std::vector<glm::vec3> pControlPoints);
 	const std::vector<glm::vec3>& control_points();
+	const glm::vec3& control_point_at(size_t index);
 	size_t num_control_points();
 	glm::vec3 value_at(float t);
 	glm::vec3 slope_at(float t);
