@@ -62,7 +62,7 @@ struct Parameters {
 	float mRejectionAlpha;
 	bool mRejectOutside;
 	int mUseVelocityVectors;		// 0=off 1=for movers only 2=for everything
-	bool mUseLongestVelocityVector;
+	int mVelocitySampleMode;		// 0=simple 1=3x3_max 2=3x3_closest
 	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 	bool mToneMapLumaKaris;			// "tone mapping" by luma weighting (Karis)
 
@@ -315,6 +315,26 @@ vec4 clipAabbSlow(
 		return p + r;
 }
 
+vec3 findClosestUvAndZ_3x3(vec2 uv) {
+	// uv should be dead-center on a texel, we don't want to interpolate the depth buffer!
+
+	vec2 toUv = vec2(1,1) / textureSize(uCurrentDepth, 0);
+
+	vec2 offset, closestOffset;
+	float d, dClosest;
+	offset = toUv * vec2(-1,-1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r;                     closestOffset = offset; dClosest = d;
+	offset = toUv * vec2( 0,-1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2( 1,-1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2(-1, 0); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2( 0, 0); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2( 1, 0); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2(-1, 1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2( 0, 1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+	offset = toUv * vec2( 1, 1); d = SAMPLE_TEX(uCurrentDepth, uv + offset).r; if (d < dClosest) { closestOffset = offset; dClosest = d; }
+
+	return vec3(uv + closestOffset, dClosest);
+}
+
 void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
 	vec4 velocitySample = SAMPLE_TEX(uCurrentVelocity, currentUv);
 
@@ -322,8 +342,9 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 	if (params.mUseVelocityVectors == 0 || (params.mUseVelocityVectors == 1 && velocitySample.w < 0.5)) canUseVelocity = false;
 
 	if (canUseVelocity) {
-		if (params.mUseLongestVelocityVector) {
-			// sample 3x3 neighbourhood, take longest vector ; note: we don't deal with depth here, should we?
+		if (params.mVelocitySampleMode == 1) {
+			// 3x3 longest
+			// sample 3x3 neighbourhood, take longest vector
 			vec2 toUv = vec2(1,1) / textureSize(uCurrentVelocity, 0);
 			vec2 maxVel = velocitySample.xy;
 			vec2 sam;
@@ -336,7 +357,12 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 1,  0)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
 			sam = SAMPLE_TEX(uCurrentVelocity, currentUv + toUv * vec2( 1,  1)).xy; if (dot(sam,sam) > dot(maxVel,maxVel)) maxVel = sam;
 			velocitySample.xy = sam;
-		}
+		} else if (params.mVelocitySampleMode == 2) {
+			// 3x3 closest
+			// find closest fragment in 3x3 neighbourhood from depth buffer, sample velocity from that location
+			vec3 closestUvAndZ = findClosestUvAndZ_3x3(currentUv);
+			velocitySample = SAMPLE_TEX(uCurrentVelocity, closestUvAndZ.xy);
+		} // else: we already have the simple velocity sample
 
 		// velocity sample is already scaled from ndc to uv in .xy, .z holds the raw (ndc) depth difference
 		historyUv    = currentUv    - velocitySample.xy;

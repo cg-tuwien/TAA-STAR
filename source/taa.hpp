@@ -47,7 +47,7 @@ class taa : public gvk::invokee
 		float mRejectionAlpha				= 1.0f;
 		VkBool32 mRejectOutside				= VK_FALSE;
 		int mUseVelocityVectors				= 1;			// 0=off 1=for movers only 2=for everything
-		VkBool32 mUseLongestVelocityVector	= VK_FALSE;
+		int mVelocitySampleMode				= 0;			// 0=simple 1=3x3_max 2=3x3_closest
 		int mInterpolationMode				= 0;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 		VkBool32 mToneMapLumaKaris			= VK_FALSE;		// "tone mapping" by luma weighting (Karis)
 
@@ -404,7 +404,11 @@ public:
 					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
 					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
-					CheckboxB32("use longest vel.vector", &param.mUseLongestVelocityVector);
+					Combo("vel. sample mode", &param.mVelocitySampleMode, "simple\0""3x3 longest\0""3x3 closest\0");
+					HelpMarker("simple:      just sample velocity at the current fragment\n"
+						       "3x3 longest: take the longest velocity vector in a 3x3 neighbourhood\n"
+						       "3x3 closest: take the velocity from the (depth-wise) closest fragment in a 3x3 neighbourhood"
+					);
 					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
 
 					CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
@@ -937,7 +941,7 @@ public:
 			iniWriteFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
 			iniWriteFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
 			iniWriteInt		(ini, sec, "mUseVelocityVectors",		param.mUseVelocityVectors);
-			iniWriteBool32	(ini, sec, "mUseLongestVelocityVector",	param.mUseLongestVelocityVector);
+			iniWriteInt		(ini, sec, "mVelocitySampleMode",		param.mVelocitySampleMode);
 			iniWriteInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
 			iniWriteBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
 			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
@@ -991,7 +995,7 @@ public:
 			iniReadFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
 			iniReadFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
 			iniReadInt		(ini, sec, "mUseVelocityVectors",		param.mUseVelocityVectors);
-			iniReadBool32	(ini, sec, "mUseLongestVelocityVector",	param.mUseLongestVelocityVector);
+			iniReadInt		(ini, sec, "mVelocitySampleMode",		param.mVelocitySampleMode);
 			iniReadInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
 			iniReadBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
