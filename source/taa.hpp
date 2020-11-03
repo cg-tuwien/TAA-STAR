@@ -8,6 +8,7 @@
 #include "helper_functions.hpp"
 
 #include "rdoc_helper.hpp"
+#include "IniUtil.h"
 #include "shader_cpu_common.h"
 
 // FidelityFX-CAS
@@ -910,6 +911,114 @@ public:
 
 	void finalize() override
 	{
+	}
+
+	void writeSettingsToIni(mINI::INIStructure &ini) {
+		std::string sec;
+		
+		for (int iPass = 0; iPass < 2; ++iPass) {
+			sec = "TAA_Param_" + std::to_string(iPass);
+			Parameters &param = mParameters[iPass];
+
+			iniWriteBool32	(ini, sec, "mPassThrough",				param.mPassThrough);
+			iniWriteInt		(ini, sec, "mColorClampingOrClipping",	param.mColorClampingOrClipping);
+			iniWriteBool32	(ini, sec, "mShapedNeighbourhood",		param.mShapedNeighbourhood);
+			iniWriteBool32	(ini, sec, "mVarianceClipping",			param.mVarianceClipping);
+			iniWriteFloat	(ini, sec, "mVarClipGamma",				param.mVarClipGamma);
+			iniWriteBool32	(ini, sec, "mUseYCoCg",					param.mUseYCoCg);
+			iniWriteBool32	(ini, sec, "mLumaWeightingLottes",		param.mLumaWeightingLottes);
+			iniWriteBool32	(ini, sec, "mDepthCulling",				param.mDepthCulling);
+			iniWriteBool32	(ini, sec, "mRejectOutside",			param.mRejectOutside);
+			iniWriteBool32	(ini, sec, "mUnjitterNeighbourhood",	param.mUnjitterNeighbourhood);
+			iniWriteBool32	(ini, sec, "mUnjitterCurrentSample",	param.mUnjitterCurrentSample);
+			iniWriteFloat	(ini, sec, "mUnjitterFactor",			param.mUnjitterFactor);
+			iniWriteFloat	(ini, sec, "mJitterNdcAndAlpha.w",		param.mJitterNdcAndAlpha.w);
+			iniWriteFloat	(ini, sec, "mMinAlpha", 				param.mMinAlpha);
+			iniWriteFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
+			iniWriteFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
+			iniWriteInt		(ini, sec, "mUseVelocityVectors",		param.mUseVelocityVectors);
+			iniWriteBool32	(ini, sec, "mUseLongestVelocityVector",	param.mUseLongestVelocityVector);
+			iniWriteInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
+			iniWriteBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
+			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
+			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
+			iniWriteBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
+		}
+
+		sec = "TAA_Primary";
+		iniWriteBool	(ini, sec, "mTaaEnabled",					mTaaEnabled);
+		iniWriteInt		(ini, sec, "mSampleDistribution",			mSampleDistribution);
+		iniWriteInt		(ini, sec, "mSharpener",					mSharpener);
+		iniWriteFloat	(ini, sec, "mSharpenFactor",				mSharpenFactor);
+		iniWriteBool	(ini, sec, "mShowDebug",					mShowDebug);
+		iniWriteBool	(ini, sec, "mSplitScreen",					mSplitScreen);
+		iniWriteInt		(ini, sec, "mSplitX",						mSplitX);
+		iniWriteInt		(ini, sec, "mFixedJitterIndex",				mFixedJitterIndex);
+		iniWriteFloat	(ini, sec, "mJitterExtraScale",				mJitterExtraScale);
+		iniWriteInt		(ini, sec, "mJitterSlowMotion",				mJitterSlowMotion);
+		iniWriteFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
+
+		sec = "TAA_Postprocess";
+		auto &pp = mPostProcessPushConstants;
+		iniWriteBool	(ini, sec, "mPostProcessEnabled",			mPostProcessEnabled);
+		iniWriteBool32	(ini, sec, "zoom",							pp.zoom);
+		iniWriteBool32	(ini, sec, "showZoomBox",					pp.showZoomBox);
+		iniWriteIVec4	(ini, sec, "zoomSrcLTWH",					pp.zoomSrcLTWH);
+		iniWriteIVec4	(ini, sec, "zoomDstLTWH",					pp.zoomDstLTWH);
+	}
+
+	void readSettingsFromIni(mINI::INIStructure &ini) {
+		std::string sec;
+
+		for (int iPass = 0; iPass < 2; ++iPass) {
+			sec = "TAA_Param_" + std::to_string(iPass);
+			Parameters &param = mParameters[iPass];
+
+			iniReadBool32	(ini, sec, "mPassThrough",				param.mPassThrough);
+			iniReadInt		(ini, sec, "mColorClampingOrClipping",	param.mColorClampingOrClipping);
+			iniReadBool32	(ini, sec, "mShapedNeighbourhood",		param.mShapedNeighbourhood);
+			iniReadBool32	(ini, sec, "mVarianceClipping",			param.mVarianceClipping);
+			iniReadFloat	(ini, sec, "mVarClipGamma",				param.mVarClipGamma);
+			iniReadBool32	(ini, sec, "mUseYCoCg",					param.mUseYCoCg);
+			iniReadBool32	(ini, sec, "mLumaWeightingLottes",		param.mLumaWeightingLottes);
+			iniReadBool32	(ini, sec, "mDepthCulling",				param.mDepthCulling);
+			iniReadBool32	(ini, sec, "mRejectOutside",			param.mRejectOutside);
+			iniReadBool32	(ini, sec, "mUnjitterNeighbourhood",	param.mUnjitterNeighbourhood);
+			iniReadBool32	(ini, sec, "mUnjitterCurrentSample",	param.mUnjitterCurrentSample);
+			iniReadFloat	(ini, sec, "mUnjitterFactor",			param.mUnjitterFactor);
+			iniReadFloat	(ini, sec, "mJitterNdcAndAlpha.w",		param.mJitterNdcAndAlpha.w);
+			iniReadFloat	(ini, sec, "mMinAlpha", 				param.mMinAlpha);
+			iniReadFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
+			iniReadFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
+			iniReadInt		(ini, sec, "mUseVelocityVectors",		param.mUseVelocityVectors);
+			iniReadBool32	(ini, sec, "mUseLongestVelocityVector",	param.mUseLongestVelocityVector);
+			iniReadInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
+			iniReadBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
+			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
+			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
+			iniReadBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
+		}
+
+		sec = "TAA_Primary";
+		iniReadBool		(ini, sec, "mTaaEnabled",					mTaaEnabled);
+		iniReadInt		(ini, sec, "mSampleDistribution",			mSampleDistribution);
+		iniReadInt		(ini, sec, "mSharpener",					mSharpener);
+		iniReadFloat	(ini, sec, "mSharpenFactor",				mSharpenFactor);
+		iniReadBool		(ini, sec, "mShowDebug",					mShowDebug);
+		iniReadBool		(ini, sec, "mSplitScreen",					mSplitScreen);
+		iniReadInt		(ini, sec, "mSplitX",						mSplitX);
+		iniReadInt		(ini, sec, "mFixedJitterIndex",				mFixedJitterIndex);
+		iniReadFloat	(ini, sec, "mJitterExtraScale",				mJitterExtraScale);
+		iniReadInt		(ini, sec, "mJitterSlowMotion",				mJitterSlowMotion);
+		iniReadFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
+
+		sec = "TAA_Postprocess";
+		auto &pp = mPostProcessPushConstants;
+		iniReadBool		(ini, sec, "mPostProcessEnabled",			mPostProcessEnabled);
+		iniReadBool32	(ini, sec, "zoom",							pp.zoom);
+		iniReadBool32	(ini, sec, "showZoomBox",					pp.showZoomBox);
+		iniReadIVec4	(ini, sec, "zoomSrcLTWH",					pp.zoomSrcLTWH);
+		iniReadIVec4	(ini, sec, "zoomDstLTWH",					pp.zoomDstLTWH);
 	}
 
 private:

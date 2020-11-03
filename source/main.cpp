@@ -1863,7 +1863,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 				}
 
-				if (Button("ImGui?")) showImguiDemoWindow = true;
+				static std::string lastSettingsFn = "settings.ini";
+
+				Separator();
+				Text("Settings:"); SameLine();
+				if (Button("Load...")) {
+					//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+					auto fns = pfd::open_file("Load settings", lastSettingsFn, { "Setting files (.ini)", "*.ini", "All files", "*" }).result();
+					if (fns.size()) {
+						loadSettings(fns[0]);
+					}
+				}
+				SameLine();
+				if (Button("Save...")) {
+					//if (lastParamsFn == "") lastParamsFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
+					auto fn = pfd::save_file("Save settings as", lastSettingsFn, { "Setting files (.ini)", "*.ini", "All files", "*" }).result();
+					if (fn != "") {
+						saveSettings(fn, true);
+						lastSettingsFn = fn;
+					}
+				}
+
+				//if (Button("ImGui?")) showImguiDemoWindow = true;
 				End();	// main window
 
 
@@ -1874,7 +1895,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SetWindowSize(ImVec2(250.0f, 400.0f), ImGuiCond_FirstUseEver);
 
 					bool changed = false;
-					static std::string lastFn = "";
+					static std::string lastPathEditorFn = "";
 
 					static std::vector<glm::vec3> pos = mCameraSpline.interpolationCurve.control_points();
 
@@ -1897,7 +1918,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Button("Load...")) {
 						//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
-						auto fns = pfd::open_file("Load camera path", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						auto fns = pfd::open_file("Load camera path", lastPathEditorFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
 						if (fns.size()) {
 							loadCamPath(fns[0]);
 							pos = mCameraSpline.interpolationCurve.control_points();
@@ -1907,10 +1928,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Button("Save...")) {
 						//if (lastParamsFn == "") lastParamsFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
-						auto fn = pfd::save_file("Save camera path as", lastFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
+						auto fn = pfd::save_file("Save camera path as", lastPathEditorFn, { "Cam path files (.cam)", "*.cam", "All files", "*" }).result();
 						if (fn != "") {
 							saveCamPath(fn, true);
-							lastFn = fn;
+							lastPathEditorFn = fn;
 						}
 					}
 
@@ -2444,9 +2465,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mINI::INIFile file(fullFilename);
 		mINI::INIStructure ini;
-		std::string sec;
+		writeCamPathToIni(ini);
+		return file.generate(ini);
+	}
 
-		sec = "CamPath";
+	bool loadCamPath(std::string fullFilename) {
+		mINI::INIFile file(fullFilename);
+		mINI::INIStructure ini;
+
+		if (!file.read(ini)) return false;
+		readCamPathFromIni(ini);
+		return true;
+	}
+
+	void writeCamPathToIni(mINI::INIStructure &ini) {
+		std::string sec = "CamPath";
 		iniWriteInt     (ini, sec, "type",			static_cast<int>(mCameraSpline.interpolationCurve.type()));
 		iniWriteFloat	(ini, sec, "duration",		mCameraSpline.duration);
 		iniWriteBool	(ini, sec, "constantSpeed",	mCameraSpline.constantSpeed);
@@ -2460,37 +2493,167 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//iniWriteQuat(ini, sec, "rot_" + std::to_string(i), rot[i]);
 		}
 
-		return file.generate(ini);
 	}
 
-	bool loadCamPath(std::string fullFilename) {
-		mINI::INIFile file(fullFilename);
-		mINI::INIStructure ini;
+	void readCamPathFromIni(mINI::INIStructure &ini) {
+		std::string sec = "CamPath";
 
-		if (!file.read(ini)) return false;
-
-		std::string sec;
-
-		float alpha = 0.5f;
-
-		sec = "CamPath";
 		int aType = static_cast<int>(mCameraSpline.interpolationCurve.type());
-		iniReadInt      (ini, sec, "type",			aType);	mCameraSpline.interpolationCurve.setType(static_cast<InterpolationCurveType>(aType));
-		iniReadFloat	(ini, sec, "duration",		mCameraSpline.duration);
-		iniReadBool		(ini, sec, "constantSpeed",	mCameraSpline.constantSpeed);
-		iniReadBool		(ini, sec, "lookAlong",		mCameraSpline.lookAlong);
+		iniReadInt(ini, sec, "type", aType);	mCameraSpline.interpolationCurve.setType(static_cast<InterpolationCurveType>(aType));
+		iniReadFloat(ini, sec, "duration", mCameraSpline.duration);
+		iniReadBool(ini, sec, "constantSpeed", mCameraSpline.constantSpeed);
+		iniReadBool(ini, sec, "lookAlong", mCameraSpline.lookAlong);
+		//float alpha = 0.5f;
 		//iniReadFloat	(ini, sec, "cmr_alpha",	alpha); mCameraSpline.spline.set_catmullrom_alpha(alpha);
 
 		int num_pos = 0;
-		iniReadInt		(ini, sec, "num_pos",	num_pos);
+		iniReadInt(ini, sec, "num_pos", num_pos);
 		std::vector<glm::vec3> pos(num_pos);
 		for (int i = 0; i < num_pos; ++i) {
-			iniReadVec3 (ini, sec, "pos_" + std::to_string(i), pos[i]);
+			iniReadVec3(ini, sec, "pos_" + std::to_string(i), pos[i]);
 			//iniReadQuat (ini, sec, "rot_" + std::to_string(i), rot[i]);
 		}
-		mCameraSpline.interpolationCurve.set_control_points(pos);
 
-		//mCameraSpline.spline.modified();
+		mCameraSpline.interpolationCurve.set_control_points(pos);
+		mCameraSpline.editorControlPointsValid = false;
+		mDrawCamPathPositions_valid = false;
+	}
+
+	bool saveSettings(std::string fullFilename, bool overwrite) {
+		if (!overwrite) {
+			struct stat buffer;
+			if (stat(fullFilename.c_str(), &buffer) == 0) return false;
+		}
+
+		mINI::INIFile file(fullFilename);
+		mINI::INIStructure ini;
+		std::string sec;
+
+		sec = "Lights";
+		iniWriteInt		(ini, sec, "mMaxPointLightCount",			mMaxPointLightCount);
+		iniWriteInt		(ini, sec, "mMaxSpotLightCount",			mMaxSpotLightCount);
+		iniWriteVec3	(ini, sec, "mDirLight.intensity",			mDirLight.intensity);
+		iniWriteVec3	(ini, sec, "mDirLight.dir",					mDirLight.dir);
+		iniWriteFloat	(ini, sec, "mDirLight.boost",				mDirLight.boost);
+		iniWriteVec3	(ini, sec, "mAmbLight.col",					mAmbLight.col);
+		iniWriteFloat	(ini, sec, "mAmbLight.boost",				mAmbLight.boost);
+		iniWriteInt		(ini, sec, "mLightingMode",					mLightingMode);
+
+		sec = "Rendering";
+		iniWriteFloat	(ini, sec, "mAlphaThreshold",				mAlphaThreshold);
+		iniWriteBool	(ini, sec, "mUseAlphaBlending",				mUseAlphaBlending);
+		iniWriteFloat	(ini, sec, "mLodBias",						mLodBias);
+		iniWriteBool	(ini, sec, "mLoadBiasTaaOnly",				mLoadBiasTaaOnly);
+		iniWriteFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
+
+		sec = "Camera";
+		iniWriteBool	(ini, sec, "mAutoMovement",					mAutoMovement);
+		iniWriteInt		(ini, sec, "mAutoMovementUnits",			mAutoMovementUnits);
+		iniWriteBool	(ini, sec, "mAutoRotate",					mAutoRotate);
+		iniWriteVec2	(ini, sec, "mAutoRotateDegrees",			mAutoRotateDegrees);
+		iniWriteBool	(ini, sec, "mAutoBob",						mAutoBob);
+		iniWriteBool	(ini, sec, "mAutoStrafe",					mAutoStrafe);
+		iniWriteFloat	(ini, sec, "mAutoStrafeSpeed",				mAutoStrafeSpeed);
+		iniWriteFloat	(ini, sec, "mAutoStrafeDist",				mAutoStrafeDist);
+		iniWriteBool	(ini, sec, "mCameraSpline.enable",			mCameraSpline.enable);	// ATTN on load
+		iniWriteBool	(ini, sec, "mCameraSpline.cyclic",			mCameraSpline.cyclic);
+		//iniWriteBool	(ini, sec, "mCameraSpline.lookAlong",		mCameraSpline.lookAlong);	// this is stored with cam path
+
+		sec = "DynObjects";
+		iniWriteBool	(ini, sec, "mMovingObject.enabled",			mMovingObject.enabled);
+		iniWriteInt		(ini, sec, "mMovingObject.moverId",			mMovingObject.moverId);
+		iniWriteVec3	(ini, sec, "mMovingObject.startPos",		mMovingObject.startPos);
+		iniWriteVec3	(ini, sec, "mMovingObject.endPos",			mMovingObject.endPos);
+		iniWriteVec4	(ini, sec, "mMovingObject.rotAxisAngle",	mMovingObject.rotAxisAngle);
+		iniWriteFloat	(ini, sec, "mMovingObject.speed",			mMovingObject.speed);
+		iniWriteInt		(ini, sec, "mMovingObject.units",			mMovingObject.units);
+		iniWriteInt		(ini, sec, "mMovingObject.repeat",			mMovingObject.repeat);
+		iniWriteBool	(ini, sec, "mMovingObject.rotContinous",	mMovingObject.rotContinous);
+		iniWriteFloat	(ini, sec, "dynObj.mAnimTime",				mDynObjects[mMovingObject.moverId].mAnimTime);
+		iniWriteBool	(ini, sec, "mMovingObject.autoAnimate",		mMovingObject.autoAnimate);
+		iniWriteFloat	(ini, sec, "mMovingObject.animSpeed",		mMovingObject.animSpeed);
+
+		sec = "Images";
+		iniWriteBool	(ini, sec, "mTestImageSettings.enabled",	mTestImageSettings.enabled);
+		iniWriteInt		(ini, sec, "mTestImageSettings.imageId",	mTestImageSettings.imageId);
+		iniWriteBool	(ini, sec, "mTestImageSettings.bilinear",	mTestImageSettings.bilinear);
+
+		sec = "PathEditor";
+		iniWriteBool	(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
+		iniWriteInt		(ini, sec, "mCameraSpline.drawNpoints",		mCameraSpline.drawNpoints);
+
+		mAntiAliasing.writeSettingsToIni(ini);
+		writeCamPathToIni(ini);
+
+		return file.generate(ini);
+	}
+
+	bool loadSettings(std::string fullFilename) {
+		mINI::INIFile file(fullFilename);
+		mINI::INIStructure ini;
+		std::string sec;
+
+		if (!file.read(ini)) return false;
+		
+		sec = "Lights";
+		iniReadInt		(ini, sec, "mMaxPointLightCount",			mMaxPointLightCount);
+		iniReadInt		(ini, sec, "mMaxSpotLightCount",			mMaxSpotLightCount);
+		iniReadVec3		(ini, sec, "mDirLight.intensity",			mDirLight.intensity);
+		iniReadVec3		(ini, sec, "mDirLight.dir",					mDirLight.dir);
+		iniReadFloat	(ini, sec, "mDirLight.boost",				mDirLight.boost);
+		iniReadVec3		(ini, sec, "mAmbLight.col",					mAmbLight.col);
+		iniReadFloat	(ini, sec, "mAmbLight.boost",				mAmbLight.boost);
+		iniReadInt		(ini, sec, "mLightingMode",					mLightingMode);
+
+		sec = "Rendering";
+		iniReadFloat	(ini, sec, "mAlphaThreshold",				mAlphaThreshold);
+		iniReadBool		(ini, sec, "mUseAlphaBlending",				mUseAlphaBlending);
+		iniReadFloat	(ini, sec, "mLodBias",						mLodBias);
+		iniReadBool		(ini, sec, "mLoadBiasTaaOnly",				mLoadBiasTaaOnly);
+		iniReadFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
+
+		sec = "Camera";
+		iniReadBool		(ini, sec, "mAutoMovement",					mAutoMovement);
+		iniReadInt		(ini, sec, "mAutoMovementUnits",			mAutoMovementUnits);
+		iniReadBool		(ini, sec, "mAutoRotate",					mAutoRotate);
+		iniReadVec2		(ini, sec, "mAutoRotateDegrees",			mAutoRotateDegrees);
+		iniReadBool		(ini, sec, "mAutoBob",						mAutoBob);
+		iniReadBool		(ini, sec, "mAutoStrafe",					mAutoStrafe);
+		iniReadFloat	(ini, sec, "mAutoStrafeSpeed",				mAutoStrafeSpeed);
+		iniReadFloat	(ini, sec, "mAutoStrafeDist",				mAutoStrafeDist);
+		iniReadBool		(ini, sec, "mCameraSpline.enable",			mCameraSpline.enable);	// ATTN on load
+		iniReadBool		(ini, sec, "mCameraSpline.cyclic",			mCameraSpline.cyclic);
+		//iniReadBool	(ini, sec, "mCameraSpline.lookAlong",		mCameraSpline.lookAlong);	// this is stored with cam path
+
+		sec = "DynObjects";
+		iniReadBool		(ini, sec, "mMovingObject.enabled",			mMovingObject.enabled);
+		iniReadInt		(ini, sec, "mMovingObject.moverId",			mMovingObject.moverId);
+		iniReadVec3		(ini, sec, "mMovingObject.startPos",		mMovingObject.startPos);
+		iniReadVec3		(ini, sec, "mMovingObject.endPos",			mMovingObject.endPos);
+		iniReadVec4		(ini, sec, "mMovingObject.rotAxisAngle",	mMovingObject.rotAxisAngle);
+		iniReadFloat	(ini, sec, "mMovingObject.speed",			mMovingObject.speed);
+		iniReadInt		(ini, sec, "mMovingObject.units",			mMovingObject.units);
+		iniReadInt		(ini, sec, "mMovingObject.repeat",			mMovingObject.repeat);
+		iniReadBool		(ini, sec, "mMovingObject.rotContinous",	mMovingObject.rotContinous);
+		iniReadFloat	(ini, sec, "dynObj.mAnimTime",				mDynObjects[mMovingObject.moverId].mAnimTime);
+		iniReadBool		(ini, sec, "mMovingObject.autoAnimate",		mMovingObject.autoAnimate);
+		iniReadFloat	(ini, sec, "mMovingObject.animSpeed",		mMovingObject.animSpeed);
+
+		sec = "Images";
+		iniReadBool		(ini, sec, "mTestImageSettings.enabled",	mTestImageSettings.enabled);
+		iniReadInt		(ini, sec, "mTestImageSettings.imageId",	mTestImageSettings.imageId);
+		iniReadBool		(ini, sec, "mTestImageSettings.bilinear",	mTestImageSettings.bilinear);
+
+		sec = "PathEditor";
+		iniReadBool		(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
+		iniReadInt		(ini, sec, "mCameraSpline.drawNpoints",		mCameraSpline.drawNpoints);
+
+		mAntiAliasing.readSettingsFromIni(ini);
+		readCamPathFromIni(ini);
+
+		// TODO: check all stuff we need to reset
+		mReRecordCommandBuffers = true;
+
 		return true;
 	}
 
