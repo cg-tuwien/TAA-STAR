@@ -4,11 +4,14 @@
 #include <string>
 
 #include "rdoc_helper.hpp"
+#include "imgui_helper.hpp"
+#include "imgui_stdlib.h"
 #include "helper_functions.hpp"
 #include "taa.hpp"
 #include "splines.hpp"
 #include "IniUtil.h"
 #include "InterpolationCurve.hpp"
+
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -18,6 +21,9 @@
 
 // record (model) command buffer in render() instead of prerecording? (as workaround to allow shader hot reloading); note this is quite a bit slower (~ +2ms for Emerald Square)
 #define RECORD_CMDBUFFER_IN_RENDER 1
+
+// set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
+#define SET_WORKING_DIRECTORY 1
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -1625,6 +1631,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				static bool firstTimeInit = true;
 
 				static bool showCamPathDefWindow = false;
+				static bool showNotepadWindow    = false;
 				static bool showImguiDemoWindow  = false;
 
 				static CameraState savedCamState = {};
@@ -1665,7 +1672,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				Begin("Info & Settings");
 				SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-				SetWindowSize(ImVec2(250.0f, 700.0f), ImGuiCond_FirstUseEver);
+				SetWindowSize(ImVec2(250.0f, 500.0f), ImGuiCond_FirstUseEver);
 
 				if (mUpsampling) {
 					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "%g x upsampling %dx%d->%dx%d", mUpsamplingFactor, mLoResolution.x, mLoResolution.y, mHiResolution.x, mHiResolution.y);
@@ -1713,16 +1720,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
 				}
 
-				SliderFloat("alpha thres", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f);
-				if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
-				HelpMarker("When disabled, simple alpha-testing is used.");
-				PushItemWidth(60);
-				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
-				PopItemWidth();
-				SameLine();
-				Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
-
-				SliderFloat("Normal Mapping Strength", &mNormalMappingStrength, 0.0f, 1.0f);
+				if (CollapsingHeader("Rendering")) {
+					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
+					if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
+					HelpMarker("When disabled, simple alpha-testing is used.");
+					PushItemWidth(60);
+					InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
+					PopItemWidth();
+					SameLine();
+					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
+					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
+				}
 
 				if (CollapsingHeader("Camera")) {
 					PushID("CameraStuff");
@@ -1850,6 +1858,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						InputInt("frames", &mCaptureNumFrames);
 						PopItemWidth();
 					}
+
+					if (Button("Show ImGui demo window")) showImguiDemoWindow = true;
 				}
 
 				if (CollapsingHeader("Result images")) {
@@ -1871,7 +1881,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					//if (lastFn == "") lastFn = std::experimental::filesystem::canonical(gAssetsDir + "/params/").string();
 					auto fns = pfd::open_file("Load settings", lastSettingsFn, { "Setting files (.ini)", "*.ini", "All files", "*" }).result();
 					if (fns.size()) {
+						std::string oldNotes = mNotepad;
 						loadSettings(fns[0]);
+						lastSettingsFn = fns[0];
+						if (mNotepad != "" && mNotepad != oldNotes) showNotepadWindow = true;
 					}
 				}
 				SameLine();
@@ -1883,15 +1896,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						lastSettingsFn = fn;
 					}
 				}
+				if (Button("Notepad##ShowNotepad")) showNotepadWindow = !showNotepadWindow;
 
-				//if (Button("ImGui?")) showImguiDemoWindow = true;
 				End();	// main window
 
+				// ----- notepad -----------------------------------------------------
+				if (showNotepadWindow) {
+					Begin("Notepad", &showNotepadWindow);
+					SetWindowPos (ImVec2( 10.0f, 550.0f), ImGuiCond_FirstUseEver);		// TODO: fix pos
+					SetWindowSize(ImVec2(500.0f, 500.0f), ImGuiCond_FirstUseEver);
+					InputTextMultiline("##notes", &mNotepad, ImVec2(-FLT_MIN, -FLT_MIN));
+					End();
+				}
 
-				// camera path def window
+				// ----- camera path def window --------------------------------------
 				if (showCamPathDefWindow) {
 					Begin("Camera path", &showCamPathDefWindow);
-					SetWindowPos(ImVec2(500.0f, 10.0f), ImGuiCond_FirstUseEver);		// TODO: fix pos
+					SetWindowPos (ImVec2(500.0f,  10.0f), ImGuiCond_FirstUseEver);		// TODO: fix pos
 					SetWindowSize(ImVec2(250.0f, 400.0f), ImGuiCond_FirstUseEver);
 
 					bool changed = false;
@@ -2023,6 +2044,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					End();
 				}
 
+				
 				if (showImguiDemoWindow) ShowDemoWindow(&showImguiDemoWindow);
 
 				firstTimeInit = false;
@@ -2584,6 +2606,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniWriteBool	(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
 		iniWriteInt		(ini, sec, "mCameraSpline.drawNpoints",		mCameraSpline.drawNpoints);
 
+		sec = "Notes";
+		iniWriteText	(ini, sec, "notes",							mNotepad);
+
 		mAntiAliasing.writeSettingsToIni(ini);
 		writeCamPathToIni(ini);
 
@@ -2653,6 +2678,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		sec = "PathEditor";
 		iniReadBool		(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
 		iniReadInt		(ini, sec, "mCameraSpline.drawNpoints",		mCameraSpline.drawNpoints);
+
+		sec = "Notes";
+		iniReadText		(ini, sec, "notes",							mNotepad);
 
 		mAntiAliasing.readSettingsFromIni(ini);
 		readCamPathFromIni(ini);
@@ -2834,10 +2862,20 @@ private: // v== Member variables ==v
 
 	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesBuffer;
 	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesPrevBuffer;
+
+	std::string mNotepad = "";
 };
 
 int main(int argc, char **argv) // <== Starting point ==
 {
+#if SET_WORKING_DIRECTORY
+	// set working directory to directory of executable
+	if (argc > 0) {
+		std::filesystem::path exePath = argv[0];
+		std::filesystem::current_path(exePath.parent_path());
+	}
+#endif
+
 	// Init Renderdoc API
 	rdoc::init();
 
@@ -2925,22 +2963,25 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			printf("Usage: %s [optional parameters] [orca scene file path]\n", argv[0]);
-			printf("Parameters:\n");
-			printf("-w <width>\n"); 
-			printf("-h <height>\n"); 
-			printf("-fullscreen\n"); 
-			printf("-upsample <factor>\n"); 
-			printf("-sponza\n"); 
-			printf("-test\n"); 
-			printf("-novalidation\n");
-			printf("-validation\n");
-			printf("-blend\n");
-			printf("-noblend\n");
-			printf("-nomip\n");
-			printf("-hidewindow\n");
-			printf("-capture <numFrames>\n");
-			printf("--\n");
+			std::filesystem::path exePath = argv[0];
+			std::cout << "Usage: " << exePath.filename().string() << " [optional parameters] [orca scene file path]" << std::endl;
+			//printf("Usage: %s [optional parameters] [orca scene file path]\n", argv[0]);
+			std::cout << "Parameters:\n"
+				"-w <width>             set window width\n"
+				"-h <height>            set window height\n"
+				"-fullscreen            enable fullscreen mode\n"
+				"-upsample <factor>     upsampling factor (render framebuffer is <factor> times smaller than the window)\n"
+				"-sponza                ignore scene file path and load Sponza scene\n"
+				"-test                  ignore scene file path and load Test scene\n"
+				"-novalidation          disable validation layers (in debug builds)\n"
+				"-validation            enable validation layers (in release builds)\n"
+				"-blend                 use alpha blending for transparent parts\n"
+				"-noblend               use alpha testing for transparent parts\n"
+				"-nomip                 disable mip-map generation for loaded textures\n"
+				"-hidewindow            hide render window while scene loading is in progress\n"
+				"-capture <numFrames>   capture the first <numFrames> with RenderDoc (only when started FROM RenderDoc)\n"
+				"--                     terminate argument list, everything after is ignored\n"
+				<< std::endl;
 			return EXIT_FAILURE;
 		}
 

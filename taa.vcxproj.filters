@@ -29,6 +29,7 @@
     <ClCompile Include="source\splines.cpp" />
     <ClCompile Include="source\IniUtil.cpp" />
     <ClCompile Include="source\InterpolationCurve.cpp" />
+    <ClCompile Include="source\imgui_stdlib.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\cg_stdafx.hpp">
@@ -50,6 +51,7 @@
     <ClInclude Include="shaders\ffx_a.h" />
     <ClInclude Include="shaders\ffx_cas.h" />
     <ClInclude Include="source\InterpolationCurve.hpp" />
+    <ClInclude Include="source\imgui_stdlib.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">

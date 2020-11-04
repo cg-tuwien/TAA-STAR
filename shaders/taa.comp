@@ -38,20 +38,17 @@ layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
 // shortcut to texture(sampler2D(texture, uSampler), uv)
 #define SAMPLE_TEX(tex_,uv_) texture(sampler2D((tex_),uSampler), uv_)
 
-#define JITTER_UV (params.mJitterNdcAndAlpha.xy * 0.5 * params.mUnjitterFactor)
+#define JITTER_UV (ubo.mJitterNdc.xy * 0.5 * params.mUnjitterFactor)
 
 // ###### PUSH CONSTANTS AND UBOs ########################
 struct Parameters {
-	vec4 mJitterNdcAndAlpha;		// jitter is in NDC units, NOT UV units!
+	float mAlpha;
 	int  mColorClampingOrClipping;
 	bool mDepthCulling;
 	bool mUnjitterNeighbourhood;
 	bool mUnjitterCurrentSample;	// TODO: anything for depth/history depth??
 	float mUnjitterFactor;			// -1 or +1, for debugging
-
-	bool mBypassHistoryUpdate;
 	bool mPassThrough;				// effectively disables TAA: history <- input, result <- input,
-	bool mResetHistory;
 	bool mUseYCoCg;
 	bool mShrinkChromaAxis;			// ony used if mUseYCoCg - reduce Chroma influence on clip box
 	bool mVarianceClipping;
@@ -71,7 +68,7 @@ struct Parameters {
 	float mDebugScale;
 	bool mDebugCenter;
 
-	float pad1,pad2,pad3;
+//	float pad1,pad2;
 };
 
 //layout(push_constant) uniform PushConstants {
@@ -84,11 +81,15 @@ layout(set = 1, binding = 0) uniform Matrices {
 	mat4 mInverseViewProjMatrix;
 
 	Parameters	param[2];
+	vec4        mJitterNdc;		// only .xy used; jitter is in NDC units, NOT UV units!
 	bool		splitScreen;
 	int			splitX;
 	bool        mUpsampling;
 
-	float pad1;
+	bool        mBypassHistoryUpdate;
+	bool        mResetHistory;
+
+	float pad1,pad2,pad3;
 } ubo;
 // -------------------------------------------------------
 
@@ -544,8 +545,8 @@ void main()
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
 	}
-	if (params.mBypassHistoryUpdate) {
-		imageStore(uResultScreen,  iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));	// FIXME - un-tonemap?; (low priority, only used for debugging)
+	if (ubo.mBypassHistoryUpdate) {
+		imageStore(uResultScreen,  iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));	// FIXME - un-tonemap?; (low priority, only used for debugging anyway)
 		imageStore(uResultHistory, iuv, vec4(texelFetch(uHistoryFrame, iuv,       0).rgb, 1));
 		imageStore(uDebug,  iuv, vec4(0));
 		return;
@@ -581,7 +582,7 @@ void main()
 	
 	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
 
-	float alpha = params.mJitterNdcAndAlpha.a;
+	float alpha = params.mAlpha;
 
 	// ---- history rejection ----
 	// reject out-of-texture history samples
@@ -643,7 +644,7 @@ void main()
 		}
 	}
 
-	if (params.mResetHistory) { alpha = 1.0; beta = 1.0; }
+	if (ubo.mResetHistory) { alpha = 1.0; beta = 1.0; }
 
 	//vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
 	vec3 antiAliased = maybe_ycocg_to_rgb(mix(historyColor, currentColor, alpha * beta));	// current * ab + history * (1-ab)

@@ -3,6 +3,8 @@
 #include <mini/ini.h>
 #include <glm/glm.hpp>
 
+// Warn: iniWriteString/iniReadString assumes there are no special characters like newlines in the string. And probably the length is limited too.
+//   use iniWriteText/iniReadText for general purpose strings (can be multiline)
 
 void iniWriteString(mINI::INIStructure & ini, const std::string & section, const std::string & name, const std::string & val);
 void iniWriteBool  (mINI::INIStructure & ini, const std::string & section, const std::string & name, const bool & val);
@@ -16,6 +18,7 @@ void iniWriteIVec3 (mINI::INIStructure & ini, const std::string & section, const
 void iniWriteVec4  (mINI::INIStructure & ini, const std::string & section, const std::string & name, const glm::vec4 & val);
 void iniWriteIVec4 (mINI::INIStructure & ini, const std::string & section, const std::string & name, const glm::ivec4 & val);
 void iniWriteQuat  (mINI::INIStructure & ini, const std::string & section, const std::string & name, const glm::quat & val);
+void iniWriteText  (mINI::INIStructure & ini, const std::string & section, const std::string & name, const std::string & val);
 
 void iniReadString (mINI::INIStructure & ini, const std::string & section, const std::string & name, std::string & val);
 void iniReadBool   (mINI::INIStructure & ini, const std::string & section, const std::string & name, bool & val);
@@ -30,6 +33,7 @@ void iniReadIVec3  (mINI::INIStructure & ini, const std::string & section, const
 void iniReadVec4   (mINI::INIStructure & ini, const std::string & section, const std::string & name, glm::vec4 & val);
 void iniReadIVec4  (mINI::INIStructure & ini, const std::string & section, const std::string & name, glm::ivec4 & val);
 void iniReadQuat   (mINI::INIStructure & ini, const std::string & section, const std::string & name, glm::quat & val);
+void iniReadText   (mINI::INIStructure & ini, const std::string & section, const std::string & name, std::string & val);
 
 //void iniDoString   (bool write, mINI::INIStructure & ini, const std::string & section, const std::string & name, std::string & val);
 

@@ -28,15 +28,13 @@ class taa : public gvk::invokee
 {
 	// TODO: fix "non-shader parameters"
 	struct Parameters {		// Note to self: be careful about alignment, esp. with vec#!
-		glm::vec4 mJitterNdcAndAlpha		= glm::vec4(0.f, 0.f, 0.f, 0.05f);
+		float mAlpha						= 0.05f;
 		int mColorClampingOrClipping		= 1;
 		VkBool32 mDepthCulling				= VK_FALSE;
 		VkBool32 mUnjitterNeighbourhood		= VK_FALSE;
 		VkBool32 mUnjitterCurrentSample		= VK_FALSE;		// TODO: anything for depth/history depth??
 		float mUnjitterFactor				= 1.0f;			// -1 or +1
-		VkBool32 mBypassHistoryUpdate		= VK_FALSE;		// used by jitter debug slow motion
 		VkBool32 mPassThrough				= VK_FALSE;		// effectively disables TAA: result <- input,
-		VkBool32 mResetHistory				= VK_FALSE;
 		VkBool32 mUseYCoCg					= VK_FALSE;
 		VkBool32 mShrinkChromaAxis			= VK_FALSE;		// ony used if mUseYCoCg - reduce Chroma influence on clip box
 		VkBool32 mVarianceClipping			= VK_FALSE;
@@ -56,7 +54,7 @@ class taa : public gvk::invokee
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		float pad1,pad2,pad3;
+		//float pad1,pad2;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -86,11 +84,14 @@ class taa : public gvk::invokee
 		glm::mat4 mInverseViewProjMatrix;
 
 		Parameters	param[2];
+		glm::vec4	mJitterNdc;		// only .xy used
 		VkBool32	splitScreen;
 		int			splitX;
 		VkBool32    mUpsampling;
+		VkBool32    mBypassHistoryUpdate		= VK_FALSE;		// used by jitter debug slow motion
+		VkBool32    mResetHistory				= VK_FALSE;
 
-		float pad1;
+		float pad1,pad2,pad3;
 	};
 	static_assert(sizeof(uniforms_for_taa) % 16 == 0, "uniforms_for_taa struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -384,6 +385,9 @@ public:
 					if (isPrimary) {
 						Checkbox("enabled", &mTaaEnabled);
 						SameLine(); if (Button("En&cap")) { mTaaEnabled = true; mTriggerCapture = true; }
+						if (static_cast<float>(glfwGetTime()) - mLastResetHistoryTime < 0.5f) {
+							SameLine(); TextColored(ImVec4(1, 0, 0, 1), "HISTORY RESET");
+						}
 					} else {
 						SetCursorPosY(GetCursorPosY() + checkbox_height);
 					}
@@ -410,7 +414,7 @@ public:
 					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug x16", "debug x1" };
 					if (isPrimary) Combo("sample pattern", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
 					
-					SliderFloat("alpha", &param.mJitterNdcAndAlpha.w, 0.0f, 1.0f);
+					SliderFloat("alpha", &param.mAlpha, 0.0f, 1.0f);
 					SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
 					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
 					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
@@ -484,6 +488,7 @@ public:
 
 						}
 #endif
+						Checkbox("Reset history at any change", &mResetHistoryOnChange);
 					}
 
 					End();
@@ -762,18 +767,37 @@ public:
 			lastJitterIndex = thisJitterIndex;
 		}
 
+		// reset history on (any) parameter change?
+		static Parameters oldParams[2] = {};
+		static bool oldParamsValid = false;
+		if (mResetHistoryOnChange && oldParamsValid) {
+			for (int i = 0; i < 2; ++i) {
+				// zero out stuff where we do NOT want a history reset
+				Parameters compare[2] = { mParameters[i], oldParams[i] };
+				for (int j = 0; j < 2; ++j) {
+					compare[j].mDebugMode   = 0;
+					compare[j].mDebugScale  = 0.f;
+					compare[j].mDebugCenter = VK_FALSE;
+				}
+
+				if (memcmp(&compare[0], &compare[1], sizeof(Parameters)) != 0) mResetHistory = true;
+			}
+		}
+
+		if (mResetHistory) mLastResetHistoryTime = static_cast<float>(glfwGetTime());
+
 		mHistoryViewMatrices[inFlightIndex] = quakeCamera->view_matrix();
 		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
 		//printf("jitter %f %f\n", jitter.x, jitter.y);
 		for (int i = 0; i < 2; ++i) {
 			mTaaUniforms.param[i] = mParameters[i];
-			mTaaUniforms.param[i].mJitterNdcAndAlpha = glm::vec4(jitter.x, jitter.y, 0.0f, mTaaUniforms.param[i].mJitterNdcAndAlpha.w);
-			mTaaUniforms.param[i].mBypassHistoryUpdate = bypassHistUpdate;
-			mTaaUniforms.param[i].mResetHistory = mResetHistory;
 		}
+		mTaaUniforms.mJitterNdc  = glm::vec4(jitter.x, jitter.y, 0.f, 0.f);
 		mTaaUniforms.mUpsampling = mUpsampling;
 		mTaaUniforms.splitScreen = mSplitScreen;
 		mTaaUniforms.splitX      = mSplitX;
+		mTaaUniforms.mBypassHistoryUpdate = bypassHistUpdate;
+		mTaaUniforms.mResetHistory = mResetHistory;
 
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
 
@@ -785,6 +809,8 @@ public:
 		}
 
 		mResetHistory = false;
+		for (int i = 0; i < 2; ++i) oldParams[i] = mParameters[i];
+		oldParamsValid = true;
 	}
 
 	// Create a new command buffer every frame, record instructions into it, and submit it to the graphics queue:
@@ -949,7 +975,7 @@ public:
 			iniWriteBool32	(ini, sec, "mUnjitterNeighbourhood",	param.mUnjitterNeighbourhood);
 			iniWriteBool32	(ini, sec, "mUnjitterCurrentSample",	param.mUnjitterCurrentSample);
 			iniWriteFloat	(ini, sec, "mUnjitterFactor",			param.mUnjitterFactor);
-			iniWriteFloat	(ini, sec, "mJitterNdcAndAlpha.w",		param.mJitterNdcAndAlpha.w);
+			iniWriteFloat	(ini, sec, "mAlpha",					param.mAlpha);
 			iniWriteFloat	(ini, sec, "mMinAlpha", 				param.mMinAlpha);
 			iniWriteFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
 			iniWriteFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
@@ -974,6 +1000,7 @@ public:
 		iniWriteFloat	(ini, sec, "mJitterExtraScale",				mJitterExtraScale);
 		iniWriteInt		(ini, sec, "mJitterSlowMotion",				mJitterSlowMotion);
 		iniWriteFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
+		iniWriteBool	(ini, sec, "mResetHistoryOnChange",			mResetHistoryOnChange);
 
 		sec = "TAA_Postprocess";
 		auto &pp = mPostProcessPushConstants;
@@ -1003,7 +1030,7 @@ public:
 			iniReadBool32	(ini, sec, "mUnjitterNeighbourhood",	param.mUnjitterNeighbourhood);
 			iniReadBool32	(ini, sec, "mUnjitterCurrentSample",	param.mUnjitterCurrentSample);
 			iniReadFloat	(ini, sec, "mUnjitterFactor",			param.mUnjitterFactor);
-			iniReadFloat	(ini, sec, "mJitterNdcAndAlpha.w",		param.mJitterNdcAndAlpha.w);
+			iniReadFloat	(ini, sec, "mAlpha",					param.mAlpha);
 			iniReadFloat	(ini, sec, "mMinAlpha", 				param.mMinAlpha);
 			iniReadFloat	(ini, sec, "mMaxAlpha", 				param.mMaxAlpha);
 			iniReadFloat	(ini, sec, "mRejectionAlpha",			param.mRejectionAlpha);
@@ -1028,6 +1055,7 @@ public:
 		iniReadFloat	(ini, sec, "mJitterExtraScale",				mJitterExtraScale);
 		iniReadInt		(ini, sec, "mJitterSlowMotion",				mJitterSlowMotion);
 		iniReadFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
+		iniReadBool		(ini, sec, "mResetHistoryOnChange",			mResetHistoryOnChange);
 
 		sec = "TAA_Postprocess";
 		auto &pp = mPostProcessPushConstants;
@@ -1102,4 +1130,7 @@ private:
 
 	int mSharpener = 0; // 0=off 1=simple 2=FidelityFX-CAS
 	float mSharpenFactor = 0.5f;
+
+	bool mResetHistoryOnChange = true; // reset history when any parameter has changed?
+	float mLastResetHistoryTime = 0.f;
 };

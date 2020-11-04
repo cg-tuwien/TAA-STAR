@@ -1,5 +1,52 @@
 #include "IniUtil.h"
 
+
+static bool valid_char[256];
+static bool valid_char_inited = false;
+
+static const int textLineLength = 200;
+
+static void initValidChars() {
+	if (valid_char_inited) return;
+	const char *keep = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 +-/\"'#.,_!*";
+	for (int i = 0; i < 256; ++i) valid_char[i] = false;
+	for (const char *p = keep; *p; ++p) valid_char[*p] = true;
+	valid_char_inited = true;
+}
+
+static std::string encodeText(std::string s) {
+	initValidChars();
+	std::string res = "";
+	for (const char c : s) {
+		if (valid_char[c]) {
+			res += c;
+		} else {
+			char buf[10];
+			snprintf(buf, 10, "\\%.2x", c);
+			res += buf;
+		}
+	}
+	return res;
+}
+
+static std::string decodeText(std::string s) {
+	std::string res = "";
+	bool fail = false;
+	for (size_t i = 0; i < s.length(); ++i) {
+		if (s[i] != '\\') {
+			res += s[i];
+		} else {
+			char c1, c2;
+			if (++i < s.length()) { c1 = s[i]; } else { fail = true; break; }
+			if (++i < s.length()) { c2 = s[i]; } else { fail = true; break; }
+			if (c1 >= 'a' && c1 <= 'f') { c1 = c1 - 'a' + 10; } else if (c1 >= '0' && c1 <= '9') { c1 -= '0'; } else { fail = true; break; }
+			if (c2 >= 'a' && c2 <= 'f') { c2 = c2 - 'a' + 10; } else if (c2 >= '0' && c2 <= '9') { c2 -= '0'; } else { fail = true; break; }
+			res += c1 * 16 + c2;
+		}
+	}
+	return res;
+}
+
 // TODO: check if floats always use "." as comma when using to_string
 void iniWriteString(mINI::INIStructure &ini, const std::string &section, const std::string &name, const std::string &val)	{ ini[section][name] = val;	}
 void iniWriteBool  (mINI::INIStructure &ini, const std::string &section, const std::string &name, const bool &val)			{ ini[section][name] = val ? "1" : "0";	}
@@ -42,6 +89,16 @@ void iniWriteQuat  (mINI::INIStructure &ini, const std::string &section, const s
 	iniWriteFloat(ini, section, name + ".z", val.z);
 	iniWriteFloat(ini, section, name + ".w", val.w);
 }
+void iniWriteText(mINI::INIStructure &ini, const std::string &section, const std::string &name, const std::string &val)	{
+	std::string s = encodeText(val);
+	int numLines = static_cast<int>((s.length() + textLineLength - 1) / textLineLength);
+	iniWriteInt(ini, section, name + ".n", numLines);
+	for (int i = 0; i < numLines; ++i) {
+		iniWriteString(ini, section, name + ".s" + std::to_string(i), s.substr(i * textLineLength, textLineLength));
+	}
+}
+
+
 
 void iniReadString(mINI::INIStructure &ini, const std::string &section, const std::string &name, std::string &val)			{ if (ini[section][name] != "") val = ini[section][name]; }
 void iniReadBool  (mINI::INIStructure &ini, const std::string &section, const std::string &name, bool &val)					{ if (ini[section][name] != "") val = (ini[section][name] == "1") || (ini[section][name] == "true"); }
@@ -84,6 +141,20 @@ void iniReadQuat  (mINI::INIStructure &ini, const std::string &section, const st
 	iniReadFloat(ini, section, name + ".y", val.y);
 	iniReadFloat(ini, section, name + ".z", val.z);
 	iniReadFloat(ini, section, name + ".w", val.w);
+}
+void iniReadText  (mINI::INIStructure &ini, const std::string &section, const std::string &name, std::string &val)			{
+	int numLines = -1;
+	iniReadInt(ini, section, name + ".n", numLines);
+	if (numLines < 0) return;
+
+	std::string s = "";
+	for (int i = 0; i < numLines; ++i) {
+		std::string tmp = "";
+		iniReadString(ini, section, name + ".s" + std::to_string(i), tmp);
+		s += tmp;
+	}
+
+	val = decodeText(s);
 }
 
 
