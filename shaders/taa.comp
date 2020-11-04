@@ -268,11 +268,23 @@ void getColorAndAabb(in ivec2 iuv, out vec3 centerCol, out vec3 minCol, out vec3
 	if (params.mUseYCoCg && params.mShrinkChromaAxis) {
 		// shrink clip-box in the two chroma axes (see Inside-code from playdead, and [Karis14])
 		// .r = Y = luma, .gb = CoCg = Chroma (chroma orange, chroma green)
-		vec2 halfSize = 0.25 * 0.5 * vec2(maxCol.gb - minCol.gb);	// NOTE: Inside does that with Luma (.r), but that doesn't make any sense... bug?
-		vec2 center = centerCol.gb;	// 
-		minCol.gb = center - halfSize;
-		maxCol.gb = center + halfSize;
-		cliptowardsCol.gb = center;
+		// NOTE:
+		// This is differen from "Inside".
+		// "Inside" calcs chroma box size directly from Luma (.r) size, but that doesn't make any sense... does it?
+		// And Inside sets box center to current texel color.
+
+		//vec2 halfSize = 0.25 * 0.5 * vec2(maxCol.gb - minCol.gb);
+		//vec2 center = centerCol.gb;
+		//minCol.gb = center - halfSize;
+		//maxCol.gb = center + halfSize;
+		//cliptowardsCol.gb = center;
+
+		const vec3 scaleYCoCg = vec3(1.0, 0.5, 0.5);
+		vec3 halfSize = 0.5 * scaleYCoCg * (maxCol - minCol);
+		vec3 center = (minCol + maxCol) * 0.5;
+		minCol = center - halfSize;
+		maxCol = center + halfSize;
+		if (any(lessThan(cliptowardsCol, minCol)) || any(greaterThan(cliptowardsCol, maxCol))) cliptowardsCol = center;
 	}
 
 	// TODO: optionally unjitter differently: neighbourhood samples, current color -> need to make sure cliptowardsCol stays inside AABB
