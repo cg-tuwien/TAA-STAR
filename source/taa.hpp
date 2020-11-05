@@ -536,7 +536,7 @@ public:
 		}
 
 		mTaaPipeline = context().create_compute_pipeline_for(
-			"shaders/taa.comp",
+			compute_shader("shaders/taa.comp.spv"),
 			descriptor_binding(0, 0, mSampler),
 			descriptor_binding(0, 1, *mSrcColor[0]),
 			descriptor_binding(0, 2, *mSrcDepth[0]),
@@ -551,14 +551,14 @@ public:
 		);
 
 		mSharpenerPipeline = context().create_compute_pipeline_for(
-			"shaders/sharpen.comp",
+			compute_shader("shaders/sharpen.comp.spv"),
 			descriptor_binding(0, 1, *mResultImages[0]),
 			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_sharpener) }
 		);
 
 		mCasPipeline = context().create_compute_pipeline_for(
-			"shaders/sharpen_cas.comp",
+			compute_shader("shaders/sharpen_cas.comp.spv"),
 			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
 			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_cas) }
@@ -566,7 +566,7 @@ public:
 
 #if TAA_USE_POSTPROCESS_STEP
 		mPostProcessPipeline = context().create_compute_pipeline_for(
-			"shaders/post_process.comp",
+			compute_shader("shaders/post_process.comp.spv"),
 			descriptor_binding(0, 1, *mResultImages[0]),
 			descriptor_binding(0, 2, mPostProcessImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_postprocess) }

@@ -12,6 +12,7 @@
 #include "IniUtil.h"
 #include "InterpolationCurve.hpp"
 
+#define TEST_INTEL 0
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -24,6 +25,10 @@
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
+
+// small default window size ?
+#define USE_SMALLER_WINDOW 0
+
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -280,6 +285,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mStartCapture;
 	int mCaptureNumFrames = 1;
 	int mCaptureFramesLeft = 0;
+	bool mStartCaptureEarly = false;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -597,8 +603,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// Create the graphics pipeline to be used for drawing the skybox:
 		mSkyboxPipeline = context().create_graphics_pipeline_for(
 			// Shaders to be used with this pipeline:
-			vertex_shader("shaders/sky_gradient.vert"),
-			fragment_shader("shaders/sky_gradient.frag"),
+			vertex_shader("shaders/sky_gradient.vert.spv"),
+			fragment_shader("shaders/sky_gradient.frag.spv"),
 			// Declare the vertex input to the shaders:
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
 			context().create_renderpass({
@@ -1197,8 +1203,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mPipelineFirstPass = context().create_graphics_pipeline_for(
 			// Specify which shaders the pipeline consists of (type is inferred from the extension):
-			"shaders/transform_and_pass_on.vert",
-			"shaders/blinnphong_and_normal_mapping.frag",
+			vertex_shader("shaders/transform_and_pass_on.vert.spv"),
+			fragment_shader("shaders/blinnphong_and_normal_mapping.frag.spv"),
 			// The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
@@ -1224,8 +1230,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 		mPipelineLightingPass = context().create_graphics_pipeline_for(
-			"shaders/lighting_pass.vert",
-			"shaders/lighting_pass.frag",
+			vertex_shader("shaders/lighting_pass.vert.spv"),
+			fragment_shader("shaders/lighting_pass.frag.spv"),
 			from_buffer_binding(0) -> stream_per_vertex(&helpers::quad_vertex::mPosition)          -> to_location(0),
 			from_buffer_binding(0) -> stream_per_vertex(&helpers::quad_vertex::mTextureCoordinate) -> to_location(1),
 			cfg::front_face::define_front_faces_to_be_clockwise(),
@@ -1261,11 +1267,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-		const char * vert_shader_name = "shaders/transform_and_pass_on.vert";
-		const char * frag_shader_name = "shaders/fwd_geometry.frag";
+		const char * vert_shader_name = "shaders/transform_and_pass_on.vert.spv";
+		const char * frag_shader_name = "shaders/fwd_geometry.frag.spv";
 
 		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
-			vert_shader_name,
+			vertex_shader(vert_shader_name),
 			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
 																																  // The next lines define the format and location of the vertex shader inputs:
 			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
@@ -1290,7 +1296,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
 		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
-			vert_shader_name,
+			vertex_shader(vert_shader_name),
 			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
 			//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
@@ -1320,7 +1326,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// alternative pipeline - render transparency with simple alpha test only, no blending
 		mPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
-			vert_shader_name,
+			vertex_shader(vert_shader_name),
 			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
 			cfg::culling_mode::disabled,
@@ -1353,11 +1359,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace gvk;
 
 		mPipelineAnimObject = context().create_graphics_pipeline_for(
-			"shaders/animatedObject.vert",
+			vertex_shader("shaders/animatedObject.vert.spv"),
 #if FORWARD_RENDERING
-			fragment_shader("shaders/fwd_geometry.frag").set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
+			fragment_shader("shaders/fwd_geometry.frag.spv").set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
 #else
-			"shaders/blinnphong_and_normal_mapping.frag",
+			fragment_shader("shaders/blinnphong_and_normal_mapping.frag.spv"),
 #endif
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
 			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
@@ -1384,7 +1390,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		uint32_t subpass = (FORWARD_RENDERING) ? 1u : 2u;
 
 		mPipelineDrawCamPath = context().create_graphics_pipeline_for(
-			"shaders/drawpath.vert", "shaders/drawpath.frag",
+			vertex_shader("shaders/drawpath.vert.spv"),
+			fragment_shader("shaders/drawpath.frag.spv"),
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec4>() -> to_location(0),		// <-- aPositionAndId
 			cfg::primitive_topology::points,
 			cfg::depth_write::disabled(),
@@ -1394,7 +1401,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 		mPipelineTestImage = context().create_graphics_pipeline_for(
-			"shaders/testimage.vert", "shaders/testimage.frag",
+			vertex_shader("shaders/testimage.vert.spv"),
+			fragment_shader("shaders/testimage.frag.spv"),
 			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mPosition)->to_location(0),
 			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mTextureCoordinate)->to_location(1),
 			cfg::front_face::define_front_faces_to_be_clockwise(),
@@ -2059,6 +2067,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	{
 		using namespace avk;
 		using namespace gvk;
+
+		if (mStartCaptureEarly) {
+			mStartCapture = false;
+			mCaptureFramesLeft = mCaptureNumFrames;
+			rdoc::start_capture();
+			LOG_INFO("Starting early capture for " + std::to_string(mCaptureNumFrames) + " frames");
+		}
 
 		auto* wnd = context().main_window();
 
@@ -2866,13 +2881,21 @@ private: // v== Member variables ==v
 	std::string mNotepad = "";
 };
 
+static std::filesystem::path getExecutablePath() {
+	wchar_t path[MAX_PATH] = { 0 };
+	GetModuleFileNameW(NULL, path, MAX_PATH);
+	return path;
+}
+
 int main(int argc, char **argv) // <== Starting point ==
 {
 #if SET_WORKING_DIRECTORY
 	// set working directory to directory of executable
-	if (argc > 0) {
-		std::filesystem::path exePath = argv[0];
-		std::filesystem::current_path(exePath.parent_path());
+	try {
+		std::filesystem::current_path(getExecutablePath().parent_path());
+	} catch (...) {
+		printf("ERROR: Failed to set working directory!\n");
+		// continue anyway...
 	}
 #endif
 
@@ -2891,16 +2914,12 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
-#if 0
-		int window_width  = 1280;
-		int window_height =  960;
-#else
-		int window_width  = 1920;
-		int window_height = 1080;
-#endif
+		int window_width  = USE_SMALLER_WINDOW ? 1280 : 1920;
+		int window_height = USE_SMALLER_WINDOW ?  960 : 1080;
 		bool hide_window = false;
 		float upsample_factor = 1.f;
 		bool fullscreen = false;
+		std::string devicehint = "";
 
 		std::string sceneFileName = "";
 		for (int i = 1; i < argc; i++) {
@@ -2926,7 +2945,7 @@ int main(int argc, char **argv) // <== Starting point ==
 					i++;
 					if (i >= argc) { badCmd = true; break; }
 					capture_n_frames = atoi(argv[i]);
-					if (capture_n_frames < 1) { badCmd = true; break; }
+					//if (capture_n_frames < 1) { badCmd = true; break; }
 				} else if (0 == _stricmp(argv[i], "-hidewindow")) {
 					hide_window = true;
 				} else if (0 == _stricmp(argv[i], "-sponza")) {
@@ -2950,6 +2969,10 @@ int main(int argc, char **argv) // <== Starting point ==
 					i++;
 					if (i >= argc) { badCmd = true; break; }
 					upsample_factor = (float)atof(argv[i]);
+				} else if (0 == _stricmp(argv[i], "-device")) {
+					i++;
+					if (i >= argc) { badCmd = true; break; }
+					devicehint = argv[i];
 				} else {
 					badCmd = true;
 					break;
@@ -2963,8 +2986,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			}
 		}
 		if (badCmd) {
-			std::filesystem::path exePath = argv[0];
-			std::cout << "Usage: " << exePath.filename().string() << " [optional parameters] [orca scene file path]" << std::endl;
+			std::cout << "Usage: " << getExecutablePath().filename().string() << " [optional parameters] [orca scene file path]" << std::endl;
 			//printf("Usage: %s [optional parameters] [orca scene file path]\n", argv[0]);
 			std::cout << "Parameters:\n"
 				"-w <width>             set window width\n"
@@ -2973,6 +2995,7 @@ int main(int argc, char **argv) // <== Starting point ==
 				"-upsample <factor>     upsampling factor (render framebuffer is <factor> times smaller than the window)\n"
 				"-sponza                ignore scene file path and load Sponza scene\n"
 				"-test                  ignore scene file path and load Test scene\n"
+				"-device <hint>         device hint for GPU selection (e.g., -device INTEL or -device RTX)\n"
 				"-novalidation          disable validation layers (in debug builds)\n"
 				"-validation            enable validation layers (in release builds)\n"
 				"-blend                 use alpha blending for transparent parts\n"
@@ -2993,7 +3016,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		mainWnd->set_additional_back_buffer_attachments({ 
 			avk::attachment::declare(vk::Format::eD32Sfloat, avk::on_load::clear, avk::depth_stencil(), avk::on_store::dont_care)
 		});
-		mainWnd->set_presentaton_mode(gvk::presentation_mode::mailbox);
+		mainWnd->set_presentaton_mode(TEST_INTEL ? gvk::presentation_mode::fifo : gvk::presentation_mode::mailbox);
 		mainWnd->set_number_of_presentable_images(3u);
 		mainWnd->set_number_of_concurrent_frames(wookiee::cConcurrentFrames);
 		mainWnd->request_srgb_framebuffer(true);
@@ -3020,9 +3043,10 @@ int main(int argc, char **argv) // <== Starting point ==
 		chewbacca.mUpsampling = upsample_factor > 1.f;
 
 		// setup capturing if RenderDoc is active
-		if (capture_n_frames > 0 && rdoc::active()) {
-			chewbacca.mCaptureNumFrames = capture_n_frames;
+		if (capture_n_frames != 0 && rdoc::active()) {
+			chewbacca.mCaptureNumFrames = abs(capture_n_frames);
 			chewbacca.mStartCapture = true;
+			chewbacca.mStartCaptureEarly = capture_n_frames < 0;
 		}
 
 		auto modifyValidationFunc = [&](gvk::validation_layers &val_layers) {
@@ -3034,6 +3058,9 @@ int main(int argc, char **argv) // <== Starting point ==
 		// request VK_EXT_debug_marker (ONLY if running from RenderDoc!) for object labeling
 		gvk::required_device_extensions dev_extensions;
 		for (auto ext : rdoc::required_device_extensions()) dev_extensions.add_extension(ext);
+#if TEST_INTEL
+		dev_extensions.add_extension("VK_KHR_shader_draw_parameters");
+#endif
 
 		// GO:
 		gvk::start(
@@ -3046,7 +3073,8 @@ int main(int argc, char **argv) // <== Starting point ==
 			[](vk::PhysicalDeviceFeatures& pdf) {
 				pdf.independentBlend  = VK_TRUE;	// request independent blending
 				pdf.multiDrawIndirect = VK_TRUE;	// request support for multiple draw indirect
-			} 
+			},
+			gvk::physical_device_selection_hint(devicehint)
 		);
 	}
 	catch (gvk::logic_error&) {}
