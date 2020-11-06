@@ -12,8 +12,6 @@
 #include "IniUtil.h"
 #include "InterpolationCurve.hpp"
 
-#define TEST_INTEL 0
-
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
@@ -115,6 +113,30 @@
 
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
+
+
+#define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
+
+void my_queue_submit_with_existing_fence(avk::queue &q, avk::command_buffer_t& aCommandBuffer, avk::fence &fen)
+{
+	using namespace avk;
+
+	const auto submitInfo = vk::SubmitInfo{}
+		.setCommandBufferCount(1u)
+		.setPCommandBuffers(aCommandBuffer.handle_ptr())
+		.setWaitSemaphoreCount(0u)
+		.setPWaitSemaphores(nullptr)
+		.setPWaitDstStageMask(nullptr)
+		.setSignalSemaphoreCount(0u)
+		.setPSignalSemaphores(nullptr);
+
+	q.handle().submit({ submitInfo }, fen->handle());
+
+	aCommandBuffer.invoke_post_execution_handler();
+
+	//aCommandBuffer.mState = command_buffer_state::submitted;	// cannot access :(
+}
+
 
 class wookiee : public gvk::invokee
 {
@@ -275,6 +297,7 @@ class wookiee : public gvk::invokee
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
 	static const uint32_t cConcurrentFrames = 3u;
+	static const uint32_t cSwapchainImages  = 3u;
 
 	std::string mSceneFileName = "assets/sponza_with_plants_and_terrain.fscene";
 	bool mDisableMip = false;
@@ -1417,6 +1440,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
+		//if (numDraws == 0) return;
 		cmd->draw_indexed_indirect(
 			*mSceneData.mDrawCommandsBuffer,
 			*mSceneData.mIndexBuffer,
@@ -2280,6 +2304,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update() override
 	{
+		//PRINT_DEBUGMARK("begin update()");
+
 		init_updater_only_once(); // don't init in initialize, taa hasn't created its pipelines there yet.
 
 		handle_input_for_path_editor();
@@ -2467,6 +2493,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 
 		auto mainWnd = gvk::context().main_window();
+		//PRINT_DEBUGMARK("begin render()");
 		update_matrices_and_user_input();
 		update_lightsources();
 		update_bone_matrices();
@@ -2476,11 +2503,62 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
 
 #if RECORD_CMDBUFFER_IN_RENDER
+#if 0
+		// original - crashes in forward-rendering
 		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
 		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
 		mQueue->submit(cmdbfr, std::optional<std::reference_wrapper<avk::semaphore_t>> {});
 		mainWnd->handle_lifetime(std::move(cmdbfr));
+
+#elif 0
+		// still crashes in forward-rendering, but no stack-overflow
+
+		if (mModelsCommandBufferFence[inFlightIndex].has_value()) {
+			PRINT_DEBUGMARK("Wait for fence");
+			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
+			PRINT_DEBUGMARK("..done waiting");
+		}
+
+		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
+		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
+		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(cmdbfr);
+		mainWnd->handle_lifetime(std::move(cmdbfr));
+
+#elif 0
+		// no (driver) crash, but some stack-overflow..
+
+		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
+			PRINT_DEBUGMARK("Alloc cmdbuf & fence");
+			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
+			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
+			mModelsCommandBufferFence[inFlightIndex] = gvk::context().create_fence(false);
+		} else {
+			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
+			mModelsCommandBufferFence[inFlightIndex]->reset();
+		}
+
+		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
+		my_queue_submit_with_existing_fence(*mQueue, mModelsCommandBuffer[inFlightIndex], mModelsCommandBufferFence[inFlightIndex]);
+#elif 1
+		// no (driver) crash, stack-overflow is now fixed by resetting the command buffer's mPostExecutionHandler
+
+		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
+			//PRINT_DEBUGMARK("Alloc cmdbuf");
+			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
+			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
+		} else {
+			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
+			mModelsCommandBuffer[inFlightIndex]->prepare_for_reuse(); // this basically does: mPostExecutionHandler.reset()
+		}
+
+		// note: vkResetCommandBuffer is not necessary - vkBeginCommandBuffer (when re-recording) does that implicitly
+		//if (VK_SUCCESS != vkResetCommandBuffer(mModelsCommandBuffer[inFlightIndex]->handle(), 0)) LOG_WARNING("vkResetCommandBuffer failed");
+
+		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
+		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
+#endif
 #else
 		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
 #endif
@@ -2744,9 +2822,10 @@ private: // v== Member variables ==v
 	avk::buffer mMaterialBuffer;
 	std::vector<avk::image_sampler> mImageSamplers;
 	std::vector<dynamic_object> mDynObjects;
-#if !RECORD_CMDBUFFER_IN_RENDER
+#if true || !RECORD_CMDBUFFER_IN_RENDER
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
 #endif
+	std::array<avk::fence, cConcurrentFrames> mModelsCommandBufferFence;
 
 	// Different pipelines used for (deferred) shading:
 	avk::graphics_pipeline mPipelineFirstPass;
@@ -3016,9 +3095,9 @@ int main(int argc, char **argv) // <== Starting point ==
 		mainWnd->set_additional_back_buffer_attachments({ 
 			avk::attachment::declare(vk::Format::eD32Sfloat, avk::on_load::clear, avk::depth_stencil(), avk::on_store::dont_care)
 		});
-		mainWnd->set_presentaton_mode(TEST_INTEL ? gvk::presentation_mode::fifo : gvk::presentation_mode::mailbox);
-		mainWnd->set_number_of_presentable_images(3u);
-		mainWnd->set_number_of_concurrent_frames(wookiee::cConcurrentFrames);
+		mainWnd->set_presentaton_mode(gvk::presentation_mode::mailbox);
+		mainWnd->set_number_of_presentable_images(wookiee::cSwapchainImages);
+		mainWnd->set_number_of_concurrent_frames (wookiee::cConcurrentFrames);
 		mainWnd->request_srgb_framebuffer(true);
 		mainWnd->open();
 
@@ -3058,9 +3137,6 @@ int main(int argc, char **argv) // <== Starting point ==
 		// request VK_EXT_debug_marker (ONLY if running from RenderDoc!) for object labeling
 		gvk::required_device_extensions dev_extensions;
 		for (auto ext : rdoc::required_device_extensions()) dev_extensions.add_extension(ext);
-#if TEST_INTEL
-		dev_extensions.add_extension("VK_KHR_shader_draw_parameters");
-#endif
 
 		// GO:
 		gvk::start(
