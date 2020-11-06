@@ -18,8 +18,8 @@
 // use the gvk updater for shader hot reloading and window resizing ?
 #define USE_GVK_UPDATER 1
 
-// record (model) command buffer in render() instead of prerecording? (as workaround to allow shader hot reloading); note this is quite a bit slower (~ +2ms for Emerald Square)
-#define RECORD_CMDBUFFER_IN_RENDER 1
+// re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
+#define RECORD_CMDBUFFER_IN_RENDER 0
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
@@ -31,12 +31,8 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
-	- dragon model has animation problem (front wing horns)
-	  bone weights passed to shader often don't add up even nearly to one! not sorted by importance? -> that the problem?
-	  (they are ok for goblin, dude)
-	  --> fixed!
 
-	- pre-recording command buffers is most likely broken now, due to dynamic objects (is it really? re-record is necessary for model change anyway)
+	- pre-recording command buffers *is* broken now (for dynamic objects: don't move)
 
 	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
 
@@ -2998,6 +2994,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool hide_window = false;
 		float upsample_factor = 1.f;
 		bool fullscreen = false;
+		bool vali_GpuAssisted = false;
+		bool vali_BestPractices = false;
 		std::string devicehint = "";
 
 		std::string sceneFileName = "";
@@ -3011,6 +3009,10 @@ int main(int argc, char **argv) // <== Starting point ==
 				} else if (0 == _stricmp(argv[i], "-validation")) {
 					forceValidation = true;
 					LOG_INFO("Validation layers enforced via command line parameter.");
+				} else if (0 == _stricmp(argv[i], "-gpuassist") || 0 == _stricmp(argv[i], "-gpuassisted")) {
+					vali_GpuAssisted = true;
+				} else if (0 == _stricmp(argv[i], "-bestpractice") || 0 == _stricmp(argv[i], "-bestpractices")) {
+					vali_BestPractices = true;
 				} else if (0 == _stricmp(argv[i], "-nomip")) {
 					disableMip = true;
 					LOG_INFO("Mip-mapping disabled via command line parameter.");
@@ -3077,6 +3079,8 @@ int main(int argc, char **argv) // <== Starting point ==
 				"-device <hint>         device hint for GPU selection (e.g., -device INTEL or -device RTX)\n"
 				"-novalidation          disable validation layers (in debug builds)\n"
 				"-validation            enable validation layers (in release builds)\n"
+				"-gpuassisted           enable GPU-Assisted validation extension\n"
+				"-bestpractices         enable best practices validation extension\n"
 				"-blend                 use alpha blending for transparent parts\n"
 				"-noblend               use alpha testing for transparent parts\n"
 				"-nomip                 disable mip-map generation for loaded textures\n"
@@ -3132,6 +3136,20 @@ int main(int argc, char **argv) // <== Starting point ==
 			// ac: disable or enforce validation layers via command line (renderdoc crashes when they are enabled....)
 			val_layers.enable_in_release_mode(forceValidation); // note: in release, this doesn't enable the debug callback, but val.errors are dumped to the console
 			if (disableValidation) val_layers.mLayers.clear();
+
+			bool haveVali = ((_DEBUG) || forceValidation) && (!disableValidation);
+			if (haveVali) {
+				// enable some extra validation layers/features
+				//val_layers.add_layer("VK_LAYER_LUNARG_assistant_layer"); // add the assistant layer
+				if (vali_GpuAssisted) {
+					val_layers.enable_feature(vk::ValidationFeatureEnableEXT::eGpuAssisted);
+					LOG_INFO("GPU-assisted validation extension enabled via command line parameter.");
+				}
+				if (vali_BestPractices) {
+					val_layers.enable_feature(vk::ValidationFeatureEnableEXT::eBestPractices);	// too verbose for now
+					LOG_INFO("Best-practices validation extension enabled via command line parameter.");
+				}
+			}
 		};
 
 		// request VK_EXT_debug_marker (ONLY if running from RenderDoc!) for object labeling
