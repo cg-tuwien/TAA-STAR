@@ -27,6 +27,18 @@
 // small default window size ?
 #define USE_SMALLER_WINDOW 0
 
+// just for convenience...
+#ifdef _DEBUG
+#define IS_DEBUG_BUILD 1
+#define IF_DEBUG_BUILD(x) x
+#define IF_RELEASE_BUILD(x)
+#define IF_DEBUG_BUILD_ELSE(x,y) x
+#else
+#define IS_DEBUG_BUILD 0
+#define IF_DEBUG_BUILD(x)
+#define IF_RELEASE_BUILD(x) x
+#define IF_DEBUG_BUILD_ELSE(x,y) y
+#endif
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -1440,7 +1452,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
-		//if (numDraws == 0) return;
+		if (numDraws == 0) return; // no point in wasting a drawcall that draws nothing (though it would work just fine)
 		cmd->draw_indexed_indirect(
 			*mSceneData.mDrawCommandsBuffer,
 			*mSceneData.mIndexBuffer,
@@ -3139,19 +3151,23 @@ int main(int argc, char **argv) // <== Starting point ==
 			val_layers.enable_in_release_mode(forceValidation); // note: in release, this doesn't enable the debug callback, but val.errors are dumped to the console
 			if (disableValidation) val_layers.mLayers.clear();
 
-			bool haveVali = ((_DEBUG) || forceValidation) && (!disableValidation);
+			bool haveVali = (IF_DEBUG_BUILD_ELSE(true,false) || forceValidation) && (!disableValidation);
+			std::string vali_status = haveVali ? "basic" : "off";
 			if (haveVali) {
 				// enable some extra validation layers/features
 				//val_layers.add_layer("VK_LAYER_LUNARG_assistant_layer"); // add the assistant layer
 				if (vali_GpuAssisted) {
 					val_layers.enable_feature(vk::ValidationFeatureEnableEXT::eGpuAssisted);
 					LOG_INFO("GPU-assisted validation extension enabled via command line parameter.");
+					vali_status += " + GpuAssisted";
 				}
 				if (vali_BestPractices) {
 					val_layers.enable_feature(vk::ValidationFeatureEnableEXT::eBestPractices);	// too verbose for now
 					LOG_INFO("Best-practices validation extension enabled via command line parameter.");
+					vali_status += " + BestPractices";
 				}
 			}
+			LOG_INFO("Final Validation layers: " + vali_status);
 		};
 
 		// request VK_EXT_debug_marker (ONLY if running from RenderDoc!) for object labeling
