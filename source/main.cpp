@@ -19,7 +19,7 @@
 #define USE_GVK_UPDATER 1
 
 // re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
-#define RECORD_CMDBUFFER_IN_RENDER 0
+#define RECORD_CMDBUFFER_IN_RENDER 1
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
@@ -30,9 +30,6 @@
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
-
-
-	- pre-recording command buffers *is* broken now (for dynamic objects: don't move)
 
 	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
 
@@ -151,6 +148,9 @@ class wookiee : public gvk::invokee
 		glm::mat4 mPrevFrameProjViewMatrix;
 		glm::vec4 mJitterCurrentPrev;
 
+		glm::mat4 mMover_additionalModelMatrix;
+		glm::mat4 mMover_additionalModelMatrix_prev;
+
 		float mLodBias;
 		float pad1,pad2,pad3;
 	};
@@ -224,8 +224,7 @@ class wookiee : public gvk::invokee
 
 	// push constants for DrawIndexedIndirect (also used for single dynamic models)
 	struct push_constant_data_for_dii {
-		glm::mat4 mMover_modelMatrix;
-		glm::mat4 mMover_modelMatrix_prev;
+		glm::mat4 mMover_baseModelMatrix;
 		int       mMover_materialIndex;
 		int       mMover_meshIndex;
 
@@ -356,6 +355,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mMatricesAndUserInput.mPrevFrameProjViewMatrix					= prevFrameMatrices.mProjMatrix * prevFrameMatrices.mViewMatrix;
 		mMatricesAndUserInput.mJitterCurrentPrev						= glm::vec4(mCurrentJitter, prevFrameMatrices.mJitterCurrentPrev.x, prevFrameMatrices.mJitterCurrentPrev.y);
+
+		// dynamic models positioning
+		auto &dynObj = mDynObjects[mMovingObject.moverId];
+		mMatricesAndUserInput.mMover_additionalModelMatrix      = dynObj.mMovementMatrix_current;
+		mMatricesAndUserInput.mMover_additionalModelMatrix_prev = dynObj.mMovementMatrix_prev;
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
@@ -1470,8 +1474,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto &md = dynObj.mMeshData[part.mMeshIndex];
 
 				pushc_dii.mDrawIdOffset           = -(mMovingObject.moverId + 1);
-				pushc_dii.mMover_modelMatrix      = dynObj.mMovementMatrix_current * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
-				pushc_dii.mMover_modelMatrix_prev = dynObj.mMovementMatrix_prev    * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_baseModelMatrix  = dynObj.mBaseTransform * part.mMeshTransform;
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
@@ -1496,8 +1499,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto &md = dynObj.mMeshData[part.mMeshIndex];
 
 				pushc_dii.mDrawIdOffset           = -(mMovingObject.moverId + 1);
-				pushc_dii.mMover_modelMatrix      = dynObj.mMovementMatrix_current * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
-				pushc_dii.mMover_modelMatrix_prev = dynObj.mMovementMatrix_prev    * mDynObjects[mMovingObject.moverId].mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_baseModelMatrix  = dynObj.mBaseTransform * part.mMeshTransform;
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 

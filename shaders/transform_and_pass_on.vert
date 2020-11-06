@@ -23,8 +23,7 @@ layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { ui
 layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
 
 layout(push_constant) uniform PushConstantsDII {
-	mat4  mMover_modelMatrix;
-	mat4  mMover_modelMatrix_prev;
+	mat4  mMover_baseModelMatrix;
 	int   mMover_materialIndex;
 	int   mMover_meshIndex;
 
@@ -60,17 +59,20 @@ layout (location = 0) out VertexData {
 // ###### VERTEX SHADER MAIN #############################
 void main()
 {
+	mat4 prev_modelMatrix;
 	if (mDrawIdOffset >= 0) {
 		// static scenery
 		uint meshgroup = gl_DrawID + mDrawIdOffset;
 		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
 		v_out.materialIndex  = materialIndex[meshgroup];
 		v_out.modelMatrix    = attrib[attribIndex].modelMatrix;
+		prev_modelMatrix     = v_out.modelMatrix;
 		v_out.movingObjectId = 0;
 	} else {
 		// moving object
 		v_out.materialIndex = mMover_materialIndex;
-		v_out.modelMatrix   = mMover_modelMatrix;
+		v_out.modelMatrix   = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
+		prev_modelMatrix    = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
 		v_out.movingObjectId = -mDrawIdOffset;
 	}
 
@@ -87,8 +89,6 @@ void main()
 	vec3 normalOS    = normalize(aNormal);
 	vec3 tangentOS   = normalize(aTangent);
 	vec3 bitangentOS = normalize(aBitangent);
-
-	mat4 prev_modelMatrix = (mDrawIdOffset >= 0) ? v_out.modelMatrix : mMover_modelMatrix_prev;
 
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;

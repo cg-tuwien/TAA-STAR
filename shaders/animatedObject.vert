@@ -20,8 +20,7 @@ layout (location = 5) in vec4 aBoneWeights;
 layout (location = 6) in uvec4 aBoneIndices;
 
 layout(push_constant) uniform PushConstantsDII {
-	mat4  mMover_modelMatrix;
-	mat4  mMover_modelMatrix_prev;
+	mat4  mMover_baseModelMatrix;
 	int   mMover_materialIndex;
 	int   mMover_meshIndex;
 
@@ -61,9 +60,10 @@ layout (location = 0) out VertexData {
 void main()
 {
 	// moving object
-	v_out.materialIndex = mMover_materialIndex;
-	v_out.modelMatrix   = mMover_modelMatrix;
-	v_out.movingObjectId = -mDrawIdOffset;
+	v_out.materialIndex   = mMover_materialIndex;
+	v_out.modelMatrix     = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
+	mat4 prev_modelMatrix = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
+	v_out.movingObjectId  = -mDrawIdOffset;
 
 	// "normalize" bone weights - there may be more than four in the model, but we only get the first four here; make sure they add up to one
 	vec4 boneWeights = aBoneWeights;
@@ -96,8 +96,6 @@ void main()
 	vec3 normalOS     = normalize(normalMatrix * normalize(aNormal));	// TODO: (1) first normalize() necessary?   (2) aNormal should be normalized already... (really?)
 	vec3 tangentOS    = normalize(normalMatrix * normalize(aTangent));
 	vec3 bitangentOS  = normalize(normalMatrix * normalize(aBitangent));
-
-	mat4 prev_modelMatrix = mMover_modelMatrix_prev;
 
 	v_out.positionOS  = positionOS.xyz;
 	v_out.positionVS  = positionVS.xyz;

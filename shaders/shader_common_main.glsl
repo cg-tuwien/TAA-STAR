@@ -53,6 +53,9 @@
 	mat4 mPrevFrameProjViewMatrix;																					\
 	vec4 mJitterCurrentPrev;																						\
 																													\
+	mat4 mMover_additionalModelMatrix;																				\
+	mat4 mMover_additionalModelMatrix_prev;																			\
+																													\
 	float mLodBias;																									\
 	float pad1,pad2,pad3;																							\
 }
