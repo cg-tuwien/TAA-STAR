@@ -12,6 +12,8 @@
 #include "IniUtil.h"
 #include "InterpolationCurve.hpp"
 
+#define FIX_BETA_DRIVER_CRASH	0	// requires command_buffer_t:prepare_for_reuse() (not in avk master yet)
+
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
@@ -27,21 +29,12 @@
 // small default window size ?
 #define USE_SMALLER_WINDOW 0
 
-// just for convenience...
-#ifdef _DEBUG
-#define IS_DEBUG_BUILD 1
-#define IF_DEBUG_BUILD(x) x
-#define IF_RELEASE_BUILD(x)
-#define IF_DEBUG_BUILD_ELSE(x,y) x
-#else
-#define IS_DEBUG_BUILD 0
-#define IF_DEBUG_BUILD(x)
-#define IF_RELEASE_BUILD(x) x
-#define IF_DEBUG_BUILD_ELSE(x,y) y
-#endif
-
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
+
+	- cleanup TODO list ;-)   remove obsolete stuff, add notes from scratchpads
+
+	- do on-GPU visibility culling?
 
 	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
 
@@ -119,6 +112,18 @@
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
 
+// convenience macros
+#ifdef _DEBUG
+#define IS_DEBUG_BUILD 1
+#define IF_DEBUG_BUILD(x) x
+#define IF_RELEASE_BUILD(x)
+#define IF_DEBUG_BUILD_ELSE(x,y) x
+#else
+#define IS_DEBUG_BUILD 0
+#define IF_DEBUG_BUILD(x)
+#define IF_RELEASE_BUILD(x) x
+#define IF_DEBUG_BUILD_ELSE(x,y) y
+#endif
 
 #define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
 
@@ -2513,7 +2518,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
 
 #if RECORD_CMDBUFFER_IN_RENDER
-#if 0
+#if !FIX_BETA_DRIVER_CRASH
 		// original - crashes in forward-rendering
 		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
 		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
@@ -2551,7 +2556,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
 		my_queue_submit_with_existing_fence(*mQueue, mModelsCommandBuffer[inFlightIndex], mModelsCommandBufferFence[inFlightIndex]);
-#elif 1
+#elif FIX_BETA_DRIVER_CRASH
 		// no (driver) crash, stack-overflow is now fixed by resetting the command buffer's mPostExecutionHandler
 
 		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
@@ -2832,7 +2837,7 @@ private: // v== Member variables ==v
 	avk::buffer mMaterialBuffer;
 	std::vector<avk::image_sampler> mImageSamplers;
 	std::vector<dynamic_object> mDynObjects;
-#if true || !RECORD_CMDBUFFER_IN_RENDER
+#if FIX_BETA_DRIVER_CRASH || !RECORD_CMDBUFFER_IN_RENDER
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
 #endif
 	std::array<avk::fence, cConcurrentFrames> mModelsCommandBufferFence;
