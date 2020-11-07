@@ -30,6 +30,10 @@ layout(set = 0, binding = 1) uniform sampler2D textures[];
 
 // set 0, binding 2-4 used in vertex shader
 
+#if ENABLE_SHADOWMAP
+layout(set = 0, binding = 5) uniform sampler2D shadowMap;
+#endif
+
 // -------------------------------------------------------
 
 // ###### PIPELINE INPUT DATA ############################
@@ -46,7 +50,7 @@ layout(set = 1, binding = 1) UNIFORMDEF_LightsourceData uboLights;
 // ###### FRAG INPUT #####################################
 layout (location = 0) in VertexData
 {
-	vec3 positionOS;  // not used in this shader
+	vec4 positionWS;  // pos world space
 	vec3 positionVS;  // interpolated vertex position in view-space
 	vec2 texCoords;   // texture coordinates
 	vec3 normalOS;    // interpolated vertex normal in object-space
@@ -232,6 +236,54 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 }
 
 // -------------------------------------------------------
+/*
+float calcPlainShadow(vec3 pNDC) {
+	float shadow = 0.;
+	pNDC.xy = pNDC.xy * .5 + .5; // transform [-1;1] to [0;1] -- NOT for z in Vulkan!
+
+	// Note: no bias here, this is set in main prog via hardware depth bias
+
+#if 0
+	vec2 delta = 1. / textureSize(psm, 0); // texel size of shadow map
+	for (int dx = -1; dx <= 1; ++dx) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			float d = texture(psm, pNDC.xy + vec2(dx,dy) * delta).r;
+			if (d < zMax && d < pNDC.z) shadow += 1.;
+		}
+	}
+	// Note: tried unrolling the loops - no perf. gain
+	shadow /= 9.;
+
+#else
+	float d = texture(psm, pNDC.xy).r;
+	if (d < zMax && d < pNDC.z) shadow = 1.;
+#endif
+
+	return shadow;
+}
+*/
+// -------------------------------------------------------
+
+float shadow_factor() {
+#if ENABLE_SHADOWMAP
+	if (!uboMatUsr.mUseShadowMap) return 1.0;
+
+	float shadow = 0.0;
+
+	vec4 p = uboMatUsr.mShadowmapProjViewMatrix * fs_in.positionWS;
+	p.xyz /= p.w; // no w-division needed if light proj is ortho... but .w could be off due to bone transforms (?)
+	p.xy = p.xy * .5 + .5;
+	float d = texture(shadowMap, p.xy).r;
+	// FIXME - using some manual bias now
+	if (d < 1.0 && d < p.z - uboMatUsr.mShadowBias) shadow = 0.75;
+
+	return 1.0 - shadow;
+#else
+	return 1.0;
+#endif
+}
+
+
 
 // ###### FRAGMENT SHADER MAIN #############################
 void main()
@@ -280,7 +332,7 @@ void main()
 		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
 
 		// Add all together:
-		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, alpha);
+		oFragColor = vec4(shadow_factor() * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
 
 
 	} else if (uboMatUsr.mUserInput.z < 2.f) {

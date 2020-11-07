@@ -55,10 +55,13 @@
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\drawpath.frag" />
     <None Include="shaders\drawpath.vert" />
+    <None Include="shaders\draw_shadowmap.frag" />
+    <None Include="shaders\draw_shadowmap.vert" />
     <None Include="shaders\fwd_geometry.frag" />
     <None Include="shaders\lighting_pass.frag" />
     <None Include="shaders\lighting_pass.vert" />
     <None Include="shaders\post_process.comp" />
+    <None Include="shaders\shadowmap.vert" />
     <None Include="shaders\sharpen.comp" />
     <None Include="shaders\sharpen_cas.comp" />
     <None Include="shaders\sky_gradient.frag" />

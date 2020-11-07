@@ -56,8 +56,12 @@
 	mat4 mMover_additionalModelMatrix;																				\
 	mat4 mMover_additionalModelMatrix_prev;																			\
 																													\
+	mat4 mShadowmapProjViewMatrix;																					\
+																													\
 	float mLodBias;																									\
-	float pad1,pad2,pad3;																							\
+	bool mUseShadowMap;																								\
+	float mShadowBias;																								\
+	float pad1;																										\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

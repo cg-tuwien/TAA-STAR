@@ -41,7 +41,7 @@ layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 // ###### DATA PASSED ON ALONG THE PIPELINE ##############
 // Data from vert -> tesc or frag:
 layout (location = 0) out VertexData {
-	vec3 positionOS;
+	vec4 positionWS;
 	vec3 positionVS;
 	vec2 texCoords;
 	vec3 normalOS;
@@ -90,7 +90,7 @@ void main()
 	vec3 tangentOS   = normalize(aTangent);
 	vec3 bitangentOS = normalize(aBitangent);
 
-	v_out.positionOS  = positionOS.xyz;
+	v_out.positionWS  = mMatrix * positionOS;
 	v_out.positionVS  = positionVS.xyz;
 	v_out.texCoords   = aTexCoords;
 	v_out.normalOS    = normalOS;

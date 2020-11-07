@@ -42,7 +42,7 @@ layout(set = 1, binding = 1) UNIFORMDEF_LightsourceData uboLights;
 // ###### FRAG INPUT #####################################
 layout (location = 0) in VertexData
 {
-	vec3 positionOS;  // not used in this shader
+	vec4 positionWS;  // not used in this shader
 	vec3 positionVS;  // interpolated vertex position in view-space
 	vec2 texCoords;   // texture coordinates
 	vec3 normalOS;    // interpolated vertex normal in object-space

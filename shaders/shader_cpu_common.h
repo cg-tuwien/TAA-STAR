@@ -3,6 +3,11 @@
 #define SPECCONST_VAL_OPAQUE			0u
 #define SPECCONST_VAL_TRANSPARENT		1u
 
+// use a shadowmap?
+#define ENABLE_SHADOWMAP 1
+#define SHADOWMAP_SIZE 2048
+
+// max. bones for animations
 #define MAX_BONES	114
 
 // don't have transparent movers (yet)
@@ -31,6 +36,8 @@
 #define	IMAGE_FORMAT_NORMAL				vk::Format::eR32G32B32A32Sfloat
 #define	IMAGE_FORMAT_MATERIAL			vk::Format::eR32Uint
 #define IMAGE_FORMAT_VELOCITY			vk::Format::eR16G16B16A16Sfloat
+
+#define IMAGE_FORMAT_SHADOWMAP			vk::Format::eD32Sfloat
 
 // for debugging
 #define USE_DEBUG_POSBUFFERS	1

@@ -21,7 +21,7 @@
 #define USE_GVK_UPDATER 1
 
 // re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
-#define RECORD_CMDBUFFER_IN_RENDER 1
+#define RECORD_CMDBUFFER_IN_RENDER 0
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
@@ -112,6 +112,16 @@
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
 
+
+#if ENABLE_SHADOWMAP
+#define SHADOWMAP_DESCRIPTOR_BINDING(fif_) descriptor_binding(0, 5, mShadowmapImageSampler[fif_]),
+#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_) descriptor_binding(0, 5, mShadowmapImageSampler[fif_])
+#else
+#define SHADOWMAP_DESCRIPTOR_BINDING(fif_)
+#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_)
+#endif
+
+
 // convenience macros
 #ifdef _DEBUG
 #define IS_DEBUG_BUILD 1
@@ -168,8 +178,18 @@ class wookiee : public gvk::invokee
 		glm::mat4 mMover_additionalModelMatrix;
 		glm::mat4 mMover_additionalModelMatrix_prev;
 
+		glm::mat4 mShadowmapProjViewMatrix;
+
 		float mLodBias;
-		float pad1,pad2,pad3;
+		VkBool32 mUseShadowMap;
+		float mShadowBias;
+		float pad1;
+	};
+
+	struct shadowmap_matrices
+	{
+		glm::mat4 mProjViewMatrix;
+		glm::mat4 mMover_additionalModelMatrix;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -338,17 +358,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// Prepare a struct containing all the matrices.
 		// This will be updated at the beginning of the render() callback
 		//  (which is when we have the updated camera position available)
-		mMatricesAndUserInput = { glm::mat4(), glm::mat4(), glm::mat4(), glm::vec4() };
+		matrices_and_user_input mMatricesAndUserInput = { glm::mat4(), glm::mat4(), glm::mat4(), glm::vec4() };
+		shadowmap_matrices mShadowmapMatrices = { glm::mat4() };
 
 		auto* wnd = gvk::context().main_window();
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
-			mMatricesUserInputBuffer[i] = gvk::context().create_buffer(
-				avk::memory_usage::host_coherent, {},
-				avk::uniform_buffer_meta::create_from_data(mMatricesAndUserInput)
-			);
+			mMatricesUserInputBuffer[i] = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::uniform_buffer_meta::create_from_data(mMatricesAndUserInput));
 			rdoc::labelBuffer(mMatricesUserInputBuffer[i]->handle(), "mMatricesUserInputBuffer", i);
 			mMatricesUserInputBuffer[i]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
+
+			mShadowmapMatricesBuffer[i] = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::uniform_buffer_meta::create_from_data(mShadowmapMatrices));
+			rdoc::labelBuffer(mShadowmapMatricesBuffer[i]->handle(), "mShadowmapMatricesBuffer", i);
+			mShadowmapMatricesBuffer[i]->fill(&mShadowmapMatrices, 0, avk::sync::not_required());
 		}
 	}
 
@@ -366,6 +388,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mCamPos		= glm::translate(mQuakeCam.translation());
 		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
+		mMatricesAndUserInput.mUseShadowMap = mShadowMap.enable;
+		mMatricesAndUserInput.mShadowBias   = mShadowMap.bias;
 
 		// previous frame info
 		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
@@ -379,10 +403,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mMover_additionalModelMatrix_prev = dynObj.mMovementMatrix_prev;
 
 		const auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
+
+#if ENABLE_SHADOWMAP
+		// shadowmap matrices
+		shadowmap_matrices mShadowmapMatrices;
+		glm::vec3 lookAt   = mShadowMap.focus;
+		glm::vec3 dirNormed = glm::normalize(mDirLight.dir);
+		glm::vec3 up = (glm::abs(glm::dot(dirNormed, glm::vec3(0, 1, 0))) < 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, -1);
+		glm::mat4 proj = glm::ortho(-mShadowMap.proj.width * .5f, mShadowMap.proj.width * .5f, -mShadowMap.proj.height * .5f, mShadowMap.proj.height * .5f, mShadowMap.proj.nearplane, mShadowMap.proj.farplane);
+		glm::mat4 view = glm::lookAt(lookAt - dirNormed * mShadowMap.dist, lookAt, up);
+		mShadowmapMatrices.mProjViewMatrix = proj * view;
+		mShadowmapMatrices.mMover_additionalModelMatrix = mMatricesAndUserInput.mMover_additionalModelMatrix;
+		mShadowmapMatricesBuffer[inFlightIndex]->fill(&mShadowmapMatrices, 0, avk::sync::not_required());
+
+		mMatricesAndUserInput.mShadowmapProjViewMatrix = mShadowmapMatrices.mProjViewMatrix;
+#endif
+
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
-		// The cgb::sync::not_required() means that there will be no command buffer which the lifetime has to be handled of.
-		// However, we have to ensure to properly sync memory dependency. In this application, this is ensured by the renderpass
-		// dependency that is established between VK_SUBPASS_EXTERNAL and subpass 0.
 
 		// store current matrices for use in the next frame
 		prevFrameMatrices = mMatricesAndUserInput;
@@ -705,6 +742,58 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 	}
 
+	void prepare_shadowmap() {
+#if ENABLE_SHADOWMAP
+		using namespace avk;
+		using namespace gvk;
+
+		auto* wnd = gvk::context().main_window();
+
+		// framebuffer & renderpass
+		auto fif = wnd->number_of_frames_in_flight();
+		for (decltype(fif) i = 0; i < fif; ++i) {
+			auto depthAttachment    = context().create_image(SHADOWMAP_SIZE, SHADOWMAP_SIZE, IMAGE_FORMAT_SHADOWMAP, 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::sampled);
+			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it
+			rdoc::labelImage(depthAttachment->handle(), "shadowDepthAttachment", i);
+			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+
+			if (0 == i) {
+				mShadowmapRenderpass = context().create_renderpass(
+					{ attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil(), on_store::store) },
+					[](avk::renderpass_sync& aRpSync){
+						if (aRpSync.is_external_pre_sync()) {
+							aRpSync.mSourceStage                    = avk::pipeline_stage::top_of_pipe;
+							aRpSync.mSourceMemoryDependency         = {};
+							aRpSync.mDestinationStage               = avk::pipeline_stage::early_fragment_tests;
+							aRpSync.mDestinationMemoryDependency    = avk::memory_access::depth_stencil_attachment_write_access;
+						}
+						if (aRpSync.is_external_post_sync()) {
+							// The next pipeline must wait before this pipeline has finished writing its color attachment output
+							aRpSync.mSourceStage                    = avk::pipeline_stage::late_fragment_tests;
+							aRpSync.mDestinationStage               = avk::pipeline_stage::fragment_shader;
+							// It's the same memory access for both, that needs to be synchronized:
+							aRpSync.mSourceMemoryDependency         = avk::memory_access::depth_stencil_attachment_write_access;
+							aRpSync.mDestinationMemoryDependency    = avk::memory_access::shader_buffers_and_images_read_access;
+						}
+					}
+				);
+				mShadowmapRenderpass.enable_shared_ownership();
+			}
+
+			// FIXME - filter, border
+			depthAttachmentView.enable_shared_ownership();
+			mShadowmapImageSampler[i] = context().create_image_sampler(
+				depthAttachmentView,
+				context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
+			);
+			mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
+			mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
+		}
+
+		// pipeline is created in prepare_common_pipelines
+#endif
+	}
+
 	// ac: output info about the scene structure
 	void print_scene_debug_info(gvk::orca_scene_t& aScene, bool withMeshNames = false)
 	{
@@ -963,6 +1052,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
 		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(numMeshgroups));
 		
+		mSceneData.print_stats();
+
 		rdoc::labelBuffer(mSceneData.mIndexBuffer          ->handle(), "scene_IndexBuffer");
 		rdoc::labelBuffer(mSceneData.mPositionsBuffer      ->handle(), "scene_PositionsBuffer");
 		rdoc::labelBuffer(mSceneData.mTexCoordsBuffer      ->handle(), "scene_TexCoordsBuffer");
@@ -1330,6 +1421,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SHADOWMAP_DESCRIPTOR_BINDING(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1360,6 +1452,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SHADOWMAP_DESCRIPTOR_BINDING(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1388,6 +1481,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SHADOWMAP_DESCRIPTOR_BINDING(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1421,6 +1515,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			SHADOWMAP_DESCRIPTOR_BINDING(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
 			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
@@ -1454,6 +1549,37 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 1, mTestImages[0]),
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
 		);
+
+#if ENABLE_SHADOWMAP
+		mShadowmapPipeline = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/shadowmap.vert.spv"),
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
+			mShadowmapRenderpass,
+			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
+			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapFramebuffer[0]),
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			descriptor_binding(1, 0, mShadowmapMatricesBuffer[0])
+		);
+
+		mDrawShadowmapPipeline = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/draw_shadowmap.vert.spv"),
+			fragment_shader("shaders/draw_shadowmap.frag.spv"),
+			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mPosition)->to_location(0),
+			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mTextureCoordinate)->to_location(1),
+			cfg::front_face::define_front_faces_to_be_clockwise(),
+			cfg::culling_mode::disabled,
+			cfg::depth_test::disabled(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, subpass,
+			SHADOWMAP_DESCRIPTOR_BINDING_(0)
+		);
+
+#endif
 	}
 
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
@@ -1569,7 +1695,39 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
+		push_constant_data_for_dii pushc_dii = {};
+
 		commandBuffer->begin_recording();
+
+#if ENABLE_SHADOWMAP
+		if (mShadowMap.enable) {
+			rdoc::beginSection(commandBuffer->handle(), "Shadowmap", fif);
+			// TODO - move shadowmap creation into a subpass?
+
+			// bind descriptors
+			commandBuffer->bind_descriptors(mShadowmapPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(0, 0, mMaterialBuffer),
+				descriptor_binding(0, 1, mImageSamplers),
+				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+				descriptor_binding(1, 0, mShadowmapMatricesBuffer[fif]),
+				}));
+
+			// bind pipeline, start renderpass
+			commandBuffer->bind_pipeline(mShadowmapPipeline);
+			commandBuffer->begin_render_pass_for_framebuffer(mShadowmapPipeline->get_renderpass(), mShadowmapFramebuffer[fif]);
+
+			// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
+			pushc_dii.mDrawIdOffset = 0;
+			commandBuffer->push_constants(mShadowmapPipeline->layout(), pushc_dii);
+			draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
+
+			commandBuffer->end_render_pass();
+			rdoc::endSection(commandBuffer->handle());
+		}
+#endif
+
 		rdoc::beginSection(commandBuffer->handle(), "Render models", fif);
 		helpers::record_timing_interval_start(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
 
@@ -1580,6 +1738,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SHADOWMAP_DESCRIPTOR_BINDING(fif)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif])
 		}));
@@ -1590,7 +1749,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 
 		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
-		push_constant_data_for_dii pushc_dii = {};
 		pushc_dii.mDrawIdOffset = 0;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
 		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
@@ -1657,6 +1815,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::endSection(commandBuffer->handle());
 		}
 
+		// draw shadowmap
+#if ENABLE_SHADOWMAP
+		if (mShadowMap.show) {
+			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
+			commandBuffer->bind_pipeline(mDrawShadowmapPipeline);
+			commandBuffer->bind_descriptors(mDrawShadowmapPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				SHADOWMAP_DESCRIPTOR_BINDING_(fif)
+				}));
+			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
+			commandBuffer->draw_indexed(quadIndices, quadVertices);
+			rdoc::endSection(commandBuffer->handle());
+		}
+#endif
+
 		commandBuffer->end_render_pass();
 		rdoc::endSection(commandBuffer->handle());
 		commandBuffer->end_recording();
@@ -1693,25 +1865,49 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				static auto texIdsAndDescriptions = [&]() {
 
 					// Gather all the framebuffer attachments to display them
+					std::vector<avk::image_view *> pViews;
+					for (size_t i = 0; i < mFramebuffer[0]->image_views().size(); ++i) pViews.push_back(&mFramebuffer[0]->image_view_at(i));
+#if ENABLE_SHADOWMAP
+					//pViews.push_back(&mShadowmapFramebuffer[0]->image_view_at(0));	// doesn't work, since alpha channel = 0, nothing is displayed
+#endif
 					std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
-					const auto n = mFramebuffer[0]->image_views().size();
-					for (size_t i = 0; i < n; ++i) {
-						if (mFramebuffer[0]->image_view_at(i)->get_image().config().samples != vk::SampleCountFlagBits::e1) {
+					for (size_t i = 0; i < pViews.size(); ++i) {
+						if ((*pViews[i])->get_image().config().samples != vk::SampleCountFlagBits::e1) {
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
+							if (!is_norm_format((*pViews[i])->get_image().config().format) && !is_float_format((*pViews[i])->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
 								v.emplace_back(
-									ImGui_ImplVulkan_AddTexture(smplr->handle(), mFramebuffer[0]->image_view_at(i)->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
+									ImGui_ImplVulkan_AddTexture(smplr->handle(), (*pViews[i])->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
 									fmt::format("Attachment #{}", i)
 								);
 							}
 						}
 					}
 					return v;
+
+					//std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
+					//const auto n = mFramebuffer[0]->image_views().size();
+					//for (size_t i = 0; i < n; ++i) {
+					//	if (mFramebuffer[0]->image_view_at(i)->get_image().config().samples != vk::SampleCountFlagBits::e1) {
+					//		LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
+					//		v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
+					//	} else {
+					//		if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
+					//			LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
+					//			v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
+					//		} else {
+					//			v.emplace_back(
+					//				ImGui_ImplVulkan_AddTexture(smplr->handle(), mFramebuffer[0]->image_view_at(i)->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
+					//				fmt::format("Attachment #{}", i)
+					//			);
+					//		}
+					//	}
+					//}
+					//return v;
 
 				}();
 
@@ -1721,6 +1917,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SetWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
 				SetWindowSize(ImVec2(250.0f, 500.0f), ImGuiCond_FirstUseEver);
 
+#if FORWARD_RENDERING
+				if (mUseAlphaBlending) {
+					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "Forward rendering, alpha blending");
+				} else {
+					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "Forward rendering, alpha testing");
+				}
+#else
+				TextColored(ImVec4(0.f, .6f, .8f, 1.f), "Deferred shading, alpha testing");
+#endif
 				if (mUpsampling) {
 					TextColored(ImVec4(0.f, .6f, .8f, 1.f), "%g x upsampling %dx%d->%dx%d", mUpsamplingFactor, mLoResolution.x, mLoResolution.y, mHiResolution.x, mHiResolution.y);
 				} else {
@@ -1907,6 +2112,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 
 					if (Button("Show ImGui demo window")) showImguiDemoWindow = true;
+				}
+
+				if (CollapsingHeader("Shadows")) {
+					PushID("ShadowStuff");
+					if (Checkbox("enable", &mShadowMap.enable)) mReRecordCommandBuffers = true;
+					PushItemWidth(40);
+					InputFloat("w", &mShadowMap.proj.width); SameLine();
+					InputFloat("h", &mShadowMap.proj.height); SameLine();
+					InputFloat("n", &mShadowMap.proj.nearplane); SameLine();
+					InputFloat("f", &mShadowMap.proj.farplane);
+					PopItemWidth();
+					InputFloat3("focus", &mShadowMap.focus.x);
+					InputFloat("dist", &mShadowMap.dist);
+					InputFloat("bias", &mShadowMap.bias);
+					if (Checkbox("show shadowmap", &mShadowMap.show)) mReRecordCommandBuffers = true;
+					PopID();
 				}
 
 				if (CollapsingHeader("Result images")) {
@@ -2134,6 +2355,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_lightsources_ubo();
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
+		prepare_shadowmap();
 
 		// create a buffer for drawing camera path
 		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec4), mMaxCamPathPositions).describe_only_member(glm::vec4(0), avk::content_description::position));
@@ -2816,8 +3038,9 @@ private: // v== Member variables ==v
 	
 	// Data for the matrices UBO
 	float mNormalMappingStrength = 0.7f;
-	matrices_and_user_input mMatricesAndUserInput;
 	std::array<avk::buffer, cConcurrentFrames> mMatricesUserInputBuffer;
+
+	std::array<avk::buffer, cConcurrentFrames> mShadowmapMatricesBuffer;
 
 	std::array<avk::buffer, cConcurrentFrames> mLightsourcesBuffer;
 
@@ -2825,6 +3048,7 @@ private: // v== Member variables ==v
 	avk::renderpass mRenderpass;
 	std::array<avk::framebuffer, cConcurrentFrames> mFramebuffer;
 	std::array<avk::framebuffer, cConcurrentFrames> mSkyboxFramebuffer;
+	std::array<avk::framebuffer, cConcurrentFrames> mShadowmapFramebuffer;
 
 	// Data for rendering the skybox
 	avk::buffer mSphereVertexBuffer;
@@ -2841,6 +3065,12 @@ private: // v== Member variables ==v
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
 #endif
 	std::array<avk::fence, cConcurrentFrames> mModelsCommandBufferFence;
+
+	// shadowmap
+	avk::renderpass mShadowmapRenderpass;
+	avk::graphics_pipeline mShadowmapPipeline, mDrawShadowmapPipeline;
+	std::array<avk::command_buffer, cConcurrentFrames> mShadowmapCommandBuffer;
+	std::array<avk::image_sampler, cConcurrentFrames> mShadowmapImageSampler;
 
 	// Different pipelines used for (deferred) shading:
 	avk::graphics_pipeline mPipelineFirstPass;
@@ -2950,6 +3180,16 @@ private: // v== Member variables ==v
 		std::vector<Meshgroup> mMeshgroups;
 		uint32_t mNumOpaqueMeshgroups;
 		uint32_t mNumTransparentMeshgroups;
+
+		void print_stats() {
+			size_t numIns[2] = { 0, 0 }, numGrp[2] = { 0, 0 };
+			for (auto &mg : mMeshgroups) {
+				numIns[mg.hasTransparency ? 1 : 0] += mg.perInstanceData.size();
+				numGrp[mg.hasTransparency ? 1 : 0] ++;
+			}
+			printf("Scene stats: groups:    opaque %5lld, transparent %5lld, total %5lld\n", numGrp[0], numGrp[1], numGrp[0] + numGrp[1]);
+			printf("             instances: opaque %5lld, transparent %5lld, total %5lld\n", numIns[0], numIns[1], numIns[0] + numIns[1]);
+		}
 	} mSceneData;
 
 	struct {
@@ -2973,6 +3213,21 @@ private: // v== Member variables ==v
 	std::array<avk::buffer, cConcurrentFrames> mBoneMatricesPrevBuffer;
 
 	std::string mNotepad = "";
+
+	struct {
+		struct {
+			float width = 200.f;
+			float height = 200.f;
+			float nearplane = 0.f;
+			float farplane = 100.f;
+		} proj;
+		glm::vec3 focus = glm::vec3(0);
+		float dist = 50.f;
+		float bias = 0.001f;
+
+		bool enable = true;
+		bool show = false;
+	} mShadowMap;
 };
 
 static std::filesystem::path getExecutablePath() {
