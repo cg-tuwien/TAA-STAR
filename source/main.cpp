@@ -784,7 +784,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			depthAttachmentView.enable_shared_ownership();
 			mShadowmapImageSampler[i] = context().create_image_sampler(
 				depthAttachmentView,
-				context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
+				//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
+				context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
+					[](avk::sampler_t & smp) {
+						smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
+					}
+				)
 			);
 			mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
 			mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
@@ -1576,7 +1581,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::depth_test::disabled(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, subpass,
-			SHADOWMAP_DESCRIPTOR_BINDING_(0)
+			SHADOWMAP_DESCRIPTOR_BINDING(0)
+			descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
 		);
 
 #endif
@@ -1821,7 +1827,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
 			commandBuffer->bind_pipeline(mDrawShadowmapPipeline);
 			commandBuffer->bind_descriptors(mDrawShadowmapPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				SHADOWMAP_DESCRIPTOR_BINDING_(fif)
+				SHADOWMAP_DESCRIPTOR_BINDING_(fif),
+				descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
 				}));
 			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
 			commandBuffer->draw_indexed(quadIndices, quadVertices);
@@ -2356,6 +2363,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_framebuffers_and_post_process_images();
 		prepare_skybox();
 		prepare_shadowmap();
+
+		// create an all-purpose nearest neighbour sampler
+		mGenericSamplerNearestNeighbour = gvk::context().create_sampler(avk::filter_mode::nearest_neighbor, avk::border_handling_mode::clamp_to_edge);
 
 		// create a buffer for drawing camera path
 		mDrawCamPathPositionsBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_element_size(sizeof(glm::vec4), mMaxCamPathPositions).describe_only_member(glm::vec4(0), avk::content_description::position));
@@ -3072,6 +3082,8 @@ private: // v== Member variables ==v
 	std::array<avk::command_buffer, cConcurrentFrames> mShadowmapCommandBuffer;
 	std::array<avk::image_sampler, cConcurrentFrames> mShadowmapImageSampler;
 
+	avk::sampler mGenericSamplerNearestNeighbour;
+
 	// Different pipelines used for (deferred) shading:
 	avk::graphics_pipeline mPipelineFirstPass;
 	avk::graphics_pipeline mPipelineLightingPass;
@@ -3223,7 +3235,7 @@ private: // v== Member variables ==v
 		} proj;
 		glm::vec3 focus = glm::vec3(0);
 		float dist = 50.f;
-		float bias = 0.001f;
+		float bias = 0.002f;
 
 		bool enable = true;
 		bool show = false;

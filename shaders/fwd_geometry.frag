@@ -31,7 +31,7 @@ layout(set = 0, binding = 1) uniform sampler2D textures[];
 // set 0, binding 2-4 used in vertex shader
 
 #if ENABLE_SHADOWMAP
-layout(set = 0, binding = 5) uniform sampler2D shadowMap;
+layout(set = 0, binding = 5) uniform sampler2DShadow shadowMap;
 #endif
 
 // -------------------------------------------------------
@@ -268,16 +268,18 @@ float shadow_factor() {
 #if ENABLE_SHADOWMAP
 	if (!uboMatUsr.mUseShadowMap) return 1.0;
 
-	float shadow = 0.0;
+	float light = 1.0;
 
 	vec4 p = uboMatUsr.mShadowmapProjViewMatrix * fs_in.positionWS;
-	p.xyz /= p.w; // no w-division needed if light proj is ortho... but .w could be off due to bone transforms (?)
+	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
 	p.xy = p.xy * .5 + .5;
-	float d = texture(shadowMap, p.xy).r;
-	// FIXME - using some manual bias now
-	if (d < 1.0 && d < p.z - uboMatUsr.mShadowBias) shadow = 0.75;
+	if (all(greaterThanEqual(p.xy, vec2(0))) && all(lessThan(p.xy, vec2(1)))) {
+		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
+		light = texture(shadowMap, p.xyz);
+		light = 1.0 - (1.0 - light) * 0.75;
+	}
 
-	return 1.0 - shadow;
+	return light;
 #else
 	return 1.0;
 #endif
