@@ -11,6 +11,8 @@
 #include "splines.hpp"
 #include "IniUtil.h"
 #include "InterpolationCurve.hpp"
+#include "BoundingBox.hpp"
+#include "ShadowMap.hpp"
 
 #define FIX_BETA_DRIVER_CRASH	0	// requires command_buffer_t:prepare_for_reuse() (not in avk master yet)
 
@@ -179,17 +181,12 @@ class wookiee : public gvk::invokee
 		glm::mat4 mMover_additionalModelMatrix_prev;
 
 		glm::mat4 mShadowmapProjViewMatrix;
+		glm::mat4 mDebugCamProjViewMatrix;
 
 		float mLodBias;
 		VkBool32 mUseShadowMap;
 		float mShadowBias;
 		float pad1;
-	};
-
-	struct shadowmap_matrices
-	{
-		glm::mat4 mProjViewMatrix;
-		glm::mat4 mMover_additionalModelMatrix;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -284,6 +281,8 @@ class wookiee : public gvk::invokee
 		// these are mainly for debugging:
 		uint32_t orcaModelId;
 		uint32_t orcaMeshId;
+
+		BoundingBox boundingBox_untransformed;
 	};
 
 	struct CameraState { char name[80];  glm::vec3 t; glm::quat r; };	// ugly char[80] for easier ImGui access...
@@ -359,7 +358,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// This will be updated at the beginning of the render() callback
 		//  (which is when we have the updated camera position available)
 		matrices_and_user_input mMatricesAndUserInput = { glm::mat4(), glm::mat4(), glm::mat4(), glm::vec4() };
-		shadowmap_matrices mShadowmapMatrices = { glm::mat4() };
 
 		auto* wnd = gvk::context().main_window();
 		auto fif = wnd->number_of_frames_in_flight();
@@ -367,10 +365,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mMatricesUserInputBuffer[i] = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::uniform_buffer_meta::create_from_data(mMatricesAndUserInput));
 			rdoc::labelBuffer(mMatricesUserInputBuffer[i]->handle(), "mMatricesUserInputBuffer", i);
 			mMatricesUserInputBuffer[i]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
-
-			mShadowmapMatricesBuffer[i] = gvk::context().create_buffer(avk::memory_usage::host_coherent, {}, avk::uniform_buffer_meta::create_from_data(mShadowmapMatrices));
-			rdoc::labelBuffer(mShadowmapMatricesBuffer[i]->handle(), "mShadowmapMatricesBuffer", i);
-			mShadowmapMatricesBuffer[i]->fill(&mShadowmapMatrices, 0, avk::sync::not_required());
 		}
 	}
 
@@ -391,6 +385,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mUseShadowMap = mShadowMap.enable;
 		mMatricesAndUserInput.mShadowBias   = mShadowMap.bias;
 
+		mMatricesAndUserInput.mDebugCamProjViewMatrix = effectiveCam_proj_matrix() * effectiveCam_view_matrix(); // for drawing frustum
+
 		// previous frame info
 		if (!prevFrameValid) prevFrameMatrices = mMatricesAndUserInput;	// only copy the partially filled struct for the very first frame
 
@@ -406,17 +402,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if ENABLE_SHADOWMAP
 		// shadowmap matrices
-		shadowmap_matrices mShadowmapMatrices;
-		glm::vec3 lookAt   = mShadowMap.focus;
-		glm::vec3 dirNormed = glm::normalize(mDirLight.dir);
-		glm::vec3 up = (glm::abs(glm::dot(dirNormed, glm::vec3(0, 1, 0))) < 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, -1);
-		glm::mat4 proj = glm::ortho(-mShadowMap.proj.width * .5f, mShadowMap.proj.width * .5f, -mShadowMap.proj.height * .5f, mShadowMap.proj.height * .5f, mShadowMap.proj.nearplane, mShadowMap.proj.farplane);
-		glm::mat4 view = glm::lookAt(lookAt - dirNormed * mShadowMap.dist, lookAt, up);
-		mShadowmapMatrices.mProjViewMatrix = proj * view;
-		mShadowmapMatrices.mMover_additionalModelMatrix = mMatricesAndUserInput.mMover_additionalModelMatrix;
-		mShadowmapMatricesBuffer[inFlightIndex]->fill(&mShadowmapMatrices, 0, avk::sync::not_required());
-
-		mMatricesAndUserInput.mShadowmapProjViewMatrix = mShadowmapMatrices.mProjViewMatrix;
+		if (mShadowMap.autoSet) {
+			mShadowMap.shadowMapUtil.calc(mDirLight.dir, effectiveCam_view_matrix(), effectiveCam_proj_matrix());
+			mMatricesAndUserInput.mShadowmapProjViewMatrix = mShadowMap.shadowMapUtil.projection_matrix() * mShadowMap.shadowMapUtil.view_matrix();
+		} else {
+			glm::vec3 lookAt = mShadowMap.focus;
+			glm::vec3 dirNormed = glm::normalize(mDirLight.dir);
+			glm::vec3 up = (glm::abs(glm::dot(dirNormed, glm::vec3(0, 1, 0))) < 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, -1);
+			glm::mat4 proj = glm::ortho(-mShadowMap.proj.width * .5f, mShadowMap.proj.width * .5f, -mShadowMap.proj.height * .5f, mShadowMap.proj.height * .5f, mShadowMap.proj.nearplane, mShadowMap.proj.farplane);
+			glm::mat4 view = glm::lookAt(lookAt - dirNormed * mShadowMap.dist, lookAt, up);
+			mMatricesAndUserInput.mShadowmapProjViewMatrix = proj * view;
+		}
 #endif
 
 		mMatricesUserInputBuffer[inFlightIndex]->fill(&mMatricesAndUserInput, 0, avk::sync::not_required());
@@ -1008,6 +1004,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						mg.orcaModelId = static_cast<uint32_t>(modelAndMeshIndices.mModelIndex);
 						mg.orcaMeshId  = static_cast<uint32_t>(meshIndex);
 
+						// bounding box (without transformations)
+						mg.boundingBox_untransformed.calcFromPoints(positions.size(), positions.data());
+
 						// append the data of the current mesh(group) to the scene vectors
 						gvk::append_indices_and_vertex_data(
 							gvk::additional_index_data (mSceneData.mIndices,	[&]() { return indices;	 }),
@@ -1041,6 +1040,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// sort meshgroups by transparency (we want to render opaque objects first)
 		std::sort(mSceneData.mMeshgroups.begin(), mSceneData.mMeshgroups.end(), [](Meshgroup a, Meshgroup b) { return static_cast<int>(a.hasTransparency) < static_cast<int>(b.hasTransparency); });
+
+		// calc scene bounding box
+		if (mSceneData.mMeshgroups.size()) {
+			mSceneData.mBoundingBox.min = glm::vec3(std::numeric_limits<float>::max());
+			mSceneData.mBoundingBox.max = glm::vec3(std::numeric_limits<float>::min());
+			for (auto &mg : mSceneData.mMeshgroups) {
+				for (auto &inst : mg.perInstanceData) {
+					mSceneData.mBoundingBox.combineWith(glm::vec3(inst.modelMatrix * glm::vec4(mg.boundingBox_untransformed.min, 1.f)));
+					mSceneData.mBoundingBox.combineWith(glm::vec3(inst.modelMatrix * glm::vec4(mg.boundingBox_untransformed.max, 1.f)));
+				}
+			}
+		}
 
 		// create all the buffers - for details, see upload_materials_and_vertex_data_to_gpu()
 		size_t numMeshgroups = mSceneData.mMeshgroups.size();
@@ -1556,7 +1567,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 #if ENABLE_SHADOWMAP
-		mShadowmapPipeline = context().create_graphics_pipeline_for(
+		mPipelineShadowmap = context().create_graphics_pipeline_for(
 			vertex_shader("shaders/shadowmap.vert.spv"),
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
 			mShadowmapRenderpass,
@@ -1568,10 +1579,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-			descriptor_binding(1, 0, mShadowmapMatricesBuffer[0])
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
 		);
 
-		mDrawShadowmapPipeline = context().create_graphics_pipeline_for(
+		mPipelineDrawShadowmap = context().create_graphics_pipeline_for(
 			vertex_shader("shaders/draw_shadowmap.vert.spv"),
 			fragment_shader("shaders/draw_shadowmap.frag.spv"),
 			from_buffer_binding(0)->stream_per_vertex(&helpers::quad_vertex::mPosition)->to_location(0),
@@ -1585,6 +1596,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
 		);
 
+		mPipelineDrawFrustum = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/draw_frustum.vert.spv"),
+			fragment_shader("shaders/draw_frustum.frag.spv"),
+			cfg::primitive_topology::lines,
+			cfg::culling_mode::disabled,
+			//cfg::depth_test::disabled(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+			mRenderpass, subpass,
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
+		);
 #endif
 	}
 
@@ -1711,22 +1732,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// TODO - move shadowmap creation into a subpass?
 
 			// bind descriptors
-			commandBuffer->bind_descriptors(mShadowmapPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+			commandBuffer->bind_descriptors(mPipelineShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
 				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-				descriptor_binding(1, 0, mShadowmapMatricesBuffer[fif]),
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
 
 			// bind pipeline, start renderpass
-			commandBuffer->bind_pipeline(mShadowmapPipeline);
-			commandBuffer->begin_render_pass_for_framebuffer(mShadowmapPipeline->get_renderpass(), mShadowmapFramebuffer[fif]);
+			commandBuffer->bind_pipeline(mPipelineShadowmap);
+			commandBuffer->begin_render_pass_for_framebuffer(mPipelineShadowmap->get_renderpass(), mShadowmapFramebuffer[fif]);
 
 			// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
 			pushc_dii.mDrawIdOffset = 0;
-			commandBuffer->push_constants(mShadowmapPipeline->layout(), pushc_dii);
+			commandBuffer->push_constants(mPipelineShadowmap->layout(), pushc_dii);
 			draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
 
 			commandBuffer->end_render_pass();
@@ -1821,12 +1842,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::endSection(commandBuffer->handle());
 		}
 
-		// draw shadowmap
 #if ENABLE_SHADOWMAP
+		// draw frustum
+		if (mShadowMap.drawFrustum) {
+			rdoc::beginSection(commandBuffer->handle(), "Draw frustum");
+			commandBuffer->bind_pipeline(mPipelineDrawFrustum);
+			commandBuffer->bind_descriptors(mPipelineDrawFrustum->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+				}));
+			// there is no commandBuffer->draw_vertices without vertex buffer... call vkCmdDraw directly 
+			commandBuffer->handle().draw(12 * 2 * (mEffectiveCamera.detached ? 2 : 1), 1, 0, 0);
+			rdoc::endSection(commandBuffer->handle());
+		}
+
+		// draw shadowmap
 		if (mShadowMap.show) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
-			commandBuffer->bind_pipeline(mDrawShadowmapPipeline);
-			commandBuffer->bind_descriptors(mDrawShadowmapPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+			commandBuffer->bind_pipeline(mPipelineDrawShadowmap);
+			commandBuffer->bind_descriptors(mPipelineDrawShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				SHADOWMAP_DESCRIPTOR_BINDING_(fif),
 				descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
 				}));
@@ -1865,6 +1898,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					savedCamState = { "saved", mQuakeCam.translation(), mQuakeCam.rotation() };
 					mCameraPresets[0].t = savedCamState.t;
 					mCameraPresets[0].r = savedCamState.r;
+					mEffectiveCamera.storeValuesFrom(mQuakeCam);
 				}
 
 
@@ -1989,6 +2023,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
+					if (Button("Re-record commands")) mReRecordCommandBuffers = true;
 				}
 
 				if (CollapsingHeader("Camera")) {
@@ -2040,6 +2075,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("cycle", &mCameraSpline.cyclic);
 					SameLine();
 					Checkbox("look along", &mCameraSpline.lookAlong);
+
+					if (Checkbox("detach", &mEffectiveCamera.detached)) mReRecordCommandBuffers = true;
+					SameLine(); if (Button("set to cam")) mEffectiveCamera.storeValuesFrom(mQuakeCam);
 
 					PopID();
 				}
@@ -2133,7 +2171,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					InputFloat3("focus", &mShadowMap.focus.x);
 					InputFloat("dist", &mShadowMap.dist);
 					InputFloat("bias", &mShadowMap.bias);
+					Checkbox("auto-frustum", &mShadowMap.autoSet);
 					if (Checkbox("show shadowmap", &mShadowMap.show)) mReRecordCommandBuffers = true;
+					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) mReRecordCommandBuffers = true;
 					PopID();
 				}
 
@@ -2386,9 +2426,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// Add the camera to the composition (and let it handle the updates)
 		mQuakeCam.set_translation({ 0.0f, 1.0f, 0.0f });
 		//mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f);
-		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 5000.0f); // ac testing far plane
+		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f); // ac testing far plane
 		mOriginalProjMat = mQuakeCam.projection_matrix();
 		current_composition()->add_element(mQuakeCam);
+
+		// init shadow map util
+		mShadowMap.shadowMapUtil.init(mSceneData.mBoundingBox, mQuakeCam.near_plane_distance(), mQuakeCam.far_plane_distance(), SHADOWMAP_SIZE, 1, true);
 
 		// load default camera path
 		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
@@ -3049,9 +3092,6 @@ private: // v== Member variables ==v
 	// Data for the matrices UBO
 	float mNormalMappingStrength = 0.7f;
 	std::array<avk::buffer, cConcurrentFrames> mMatricesUserInputBuffer;
-
-	std::array<avk::buffer, cConcurrentFrames> mShadowmapMatricesBuffer;
-
 	std::array<avk::buffer, cConcurrentFrames> mLightsourcesBuffer;
 
 	// Framebuffer to render into
@@ -3078,7 +3118,7 @@ private: // v== Member variables ==v
 
 	// shadowmap
 	avk::renderpass mShadowmapRenderpass;
-	avk::graphics_pipeline mShadowmapPipeline, mDrawShadowmapPipeline;
+	avk::graphics_pipeline mPipelineShadowmap, mPipelineDrawShadowmap, mPipelineDrawFrustum;
 	std::array<avk::command_buffer, cConcurrentFrames> mShadowmapCommandBuffer;
 	std::array<avk::image_sampler, cConcurrentFrames> mShadowmapImageSampler;
 
@@ -3193,14 +3233,18 @@ private: // v== Member variables ==v
 		uint32_t mNumOpaqueMeshgroups;
 		uint32_t mNumTransparentMeshgroups;
 
+		// full scene bounding box
+		BoundingBox mBoundingBox;
+
 		void print_stats() {
 			size_t numIns[2] = { 0, 0 }, numGrp[2] = { 0, 0 };
 			for (auto &mg : mMeshgroups) {
 				numIns[mg.hasTransparency ? 1 : 0] += mg.perInstanceData.size();
 				numGrp[mg.hasTransparency ? 1 : 0] ++;
 			}
-			printf("Scene stats: groups:    opaque %5lld, transparent %5lld, total %5lld\n", numGrp[0], numGrp[1], numGrp[0] + numGrp[1]);
-			printf("             instances: opaque %5lld, transparent %5lld, total %5lld\n", numIns[0], numIns[1], numIns[0] + numIns[1]);
+			printf("Scene stats:  groups:    opaque %5lld, transparent %5lld, total %5lld\n", numGrp[0], numGrp[1], numGrp[0] + numGrp[1]);
+			printf("              instances: opaque %5lld, transparent %5lld, total %5lld\n", numIns[0], numIns[1], numIns[0] + numIns[1]);
+			printf("Scene bounds: min %.2f %.2f %.2f,  max %.2f %.2f %.2f\n", mBoundingBox.min.x, mBoundingBox.min.y, mBoundingBox.min.z, mBoundingBox.max.x, mBoundingBox.max.y, mBoundingBox.max.z);
 		}
 	} mSceneData;
 
@@ -3239,7 +3283,28 @@ private: // v== Member variables ==v
 
 		bool enable = true;
 		bool show = false;
+		bool drawFrustum = false;
+		bool autoSet = false;
+		ShadowMap shadowMapUtil;
 	} mShadowMap;
+
+	glm::mat4 effectiveCam_view_matrix() { return mEffectiveCamera.detached ? mEffectiveCamera.mViewMatrix  : mQuakeCam.view_matrix(); }
+	glm::mat4 effectiveCam_proj_matrix() { return mEffectiveCamera.detached ? mEffectiveCamera.mProjMatrix  : mQuakeCam.projection_matrix(); }
+	glm::vec3 effectiveCam_translation() { return mEffectiveCamera.detached ? mEffectiveCamera.mTranslation : mQuakeCam.translation(); }
+	glm::quat effectiveCam_rotation()    { return mEffectiveCamera.detached ? mEffectiveCamera.mRotation    : mQuakeCam.rotation(); }
+	struct {
+		bool detached = false;
+		glm::mat4 mViewMatrix;
+		glm::mat4 mProjMatrix;
+		glm::vec3 mTranslation;
+		glm::quat mRotation;
+		void storeValuesFrom(gvk::quake_camera &cam) {
+			mViewMatrix  = cam.view_matrix();
+			mProjMatrix  = cam.projection_matrix();
+			mTranslation = cam.translation();
+			mRotation    = cam.rotation();
+		}
+	} mEffectiveCamera;
 };
 
 static std::filesystem::path getExecutablePath() {

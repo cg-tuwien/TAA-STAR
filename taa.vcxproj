@@ -20,6 +20,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\BoundingBox.cpp" />
     <ClCompile Include="source\imgui_stdlib.cpp" />
     <ClCompile Include="source\IniUtil.cpp" />
     <ClCompile Include="source\InterpolationCurve.cpp" />
@@ -29,6 +30,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug_Vulkan|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release_Vulkan|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\ShadowMap.cpp" />
     <ClCompile Include="source\splines.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -36,11 +38,13 @@
     <ClInclude Include="shaders\ffx_cas.h" />
     <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="shaders\shader_cpu_common.h" />
+    <ClInclude Include="source\BoundingBox.hpp" />
     <ClInclude Include="source\imgui_stdlib.h" />
     <ClInclude Include="source\IniUtil.h" />
     <ClInclude Include="source\InterpolationCurve.hpp" />
     <ClInclude Include="source\rdoc_helper.hpp" />
     <ClInclude Include="source\imgui_helper.hpp" />
+    <ClInclude Include="source\ShadowMap.hpp" />
     <ClInclude Include="source\splines.hpp" />
     <ClInclude Include="source\taa.hpp" />
     <ClInclude Include="source\cg_stdafx.hpp" />
@@ -55,6 +59,8 @@
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\drawpath.frag" />
     <None Include="shaders\drawpath.vert" />
+    <None Include="shaders\draw_frustum.frag" />
+    <None Include="shaders\draw_frustum.vert" />
     <None Include="shaders\draw_shadowmap.frag" />
     <None Include="shaders\draw_shadowmap.vert" />
     <None Include="shaders\fwd_geometry.frag" />

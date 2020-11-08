@@ -273,7 +273,7 @@ float shadow_factor() {
 	vec4 p = uboMatUsr.mShadowmapProjViewMatrix * fs_in.positionWS;
 	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
 	p.xy = p.xy * .5 + .5;
-	if (all(greaterThanEqual(p.xy, vec2(0))) && all(lessThan(p.xy, vec2(1)))) {
+	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
 		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
 		light = texture(shadowMap, p.xyz);
 		light = 1.0 - (1.0 - light) * 0.75;

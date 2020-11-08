@@ -22,14 +22,8 @@ layout (std430, set = 0, binding = 2) readonly buffer MaterialIndexBuffer   { ui
 layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { uint attrib_base[]; };			// per meshgroup
 layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
 
-layout(push_constant) uniform PushConstantsDII {
-	mat4  mMover_baseModelMatrix;
-	int   mMover_materialIndex;
-	int   mMover_meshIndex;
-
-	int   mDrawIdOffset; // negative numbers -> moving object id
-	float pad1;
-};
+// push constants
+layout(push_constant) PUSHCONSTANTSDEF_DII;
 
 
 // "mMatrices" uniform buffer containing camera matrices:

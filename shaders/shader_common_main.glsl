@@ -38,6 +38,19 @@
 
 // ----- uniform declarations
 
+// Push constants for draw-indexed-indirect draw calls (and also for dynamic object draw-indexed calls)
+#define PUSHCONSTANTSDEF_DII uniform PushConstantsDII {																\
+	/* dynamic objects current mesh properties */																	\
+	mat4  mMover_baseModelMatrix;																					\
+	int   mMover_materialIndex;																						\
+	int   mMover_meshIndex;																							\
+																													\
+	/* current draw call (= mesh group for scenery; negative = moving object id) */									\
+	int   mDrawIdOffset;																							\
+	float pad1;																										\
+}
+
+
 // Uniform buffer containing camera matrices and user input:
 // It is updated every frame.
 #define UNIFORMDEF_MatricesAndUserInput uniform MatricesAndUserInput {												\
@@ -57,6 +70,7 @@
 	mat4 mMover_additionalModelMatrix_prev;																			\
 																													\
 	mat4 mShadowmapProjViewMatrix;																					\
+	mat4 mDebugCamProjViewMatrix;																					\
 																													\
 	float mLodBias;																									\
 	bool mUseShadowMap;																								\

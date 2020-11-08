@@ -30,6 +30,8 @@
     <ClCompile Include="source\IniUtil.cpp" />
     <ClCompile Include="source\InterpolationCurve.cpp" />
     <ClCompile Include="source\imgui_stdlib.cpp" />
+    <ClCompile Include="source\BoundingBox.cpp" />
+    <ClCompile Include="source\ShadowMap.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\cg_stdafx.hpp">
@@ -52,6 +54,8 @@
     <ClInclude Include="shaders\ffx_cas.h" />
     <ClInclude Include="source\InterpolationCurve.hpp" />
     <ClInclude Include="source\imgui_stdlib.h" />
+    <ClInclude Include="source\ShadowMap.hpp" />
+    <ClInclude Include="source\BoundingBox.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">
@@ -127,6 +131,12 @@
       <Filter>shaders</Filter>
     </None>
     <None Include="shaders\draw_shadowmap.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\draw_frustum.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\draw_frustum.vert">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

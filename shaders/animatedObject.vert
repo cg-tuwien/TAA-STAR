@@ -19,14 +19,8 @@ layout (location = 4) in vec3 aBitangent;
 layout (location = 5) in vec4 aBoneWeights;
 layout (location = 6) in uvec4 aBoneIndices;
 
-layout(push_constant) uniform PushConstantsDII {
-	mat4  mMover_baseModelMatrix;
-	int   mMover_materialIndex;
-	int   mMover_meshIndex;
-
-	int   mDrawIdOffset; // negative numbers -> moving object id
-	float pad1;
-};
+// push constants
+layout(push_constant) PUSHCONSTANTSDEF_DII;
 
 
 // "mMatrices" uniform buffer containing camera matrices:
