@@ -14,7 +14,7 @@
 #include "BoundingBox.hpp"
 #include "ShadowMap.hpp"
 
-#define FIX_BETA_DRIVER_CRASH	0	// requires command_buffer_t:prepare_for_reuse() (not in avk master yet)
+#define FIX_BETA_DRIVER_CRASH	1
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -23,7 +23,7 @@
 #define USE_GVK_UPDATER 1
 
 // re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
-#define RECORD_CMDBUFFER_IN_RENDER 0
+#define RECORD_CMDBUFFER_IN_RENDER 1
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
