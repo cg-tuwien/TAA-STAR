@@ -2453,7 +2453,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// Add the camera to the composition (and let it handle the updates)
 		mQuakeCam.set_translation({ 0.0f, 1.0f, 0.0f });
 		//mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f);
-		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, 500.0f); // ac testing far plane
+		// set far plane to ~diagonal of scene bounding box
+		float diagonal = glm::distance(mSceneData.mBoundingBox.min, mSceneData.mBoundingBox.max);
+		mQuakeCam.set_perspective_projection(glm::radians(60.0f), context().main_window()->aspect_ratio(), 0.1f, diagonal);
 		mOriginalProjMat = mQuakeCam.projection_matrix();
 		current_composition()->add_element(mQuakeCam);
 
@@ -3275,7 +3277,7 @@ private: // v== Member variables ==v
 			}
 			printf("Scene stats:  groups:    opaque %5lld, transparent %5lld, total %5lld\n", numGrp[0], numGrp[1], numGrp[0] + numGrp[1]);
 			printf("              instances: opaque %5lld, transparent %5lld, total %5lld\n", numIns[0], numIns[1], numIns[0] + numIns[1]);
-			printf("Scene bounds: min %.2f %.2f %.2f,  max %.2f %.2f %.2f\n", mBoundingBox.min.x, mBoundingBox.min.y, mBoundingBox.min.z, mBoundingBox.max.x, mBoundingBox.max.y, mBoundingBox.max.z);
+			printf("Scene bounds: min %.2f %.2f %.2f,  max %.2f %.2f %.2f,  diag %.2f\n", mBoundingBox.min.x, mBoundingBox.min.y, mBoundingBox.min.z, mBoundingBox.max.x, mBoundingBox.max.y, mBoundingBox.max.z, glm::distance(mBoundingBox.min, mBoundingBox.max));
 		}
 	} mSceneData;
 
