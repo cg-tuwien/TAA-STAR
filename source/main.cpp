@@ -129,8 +129,10 @@
 //#error "Only 3 cascades defined"
 //#endif
 #define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapImageSamplers[fif_]),
+#define SHADOWMAP_DESCRIPTOR_BINDINGS_(fif_) descriptor_binding(4, 0, mShadowmapImageSamplers[fif_])
 #else
 #define SHADOWMAP_DESCRIPTOR_BINDING(fif_)
+#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_)
 #endif
 
 
@@ -413,22 +415,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if ENABLE_SHADOWMAP
 		// shadowmap matrices
-		if (mShadowMap.autoSet) {
-			mShadowMap.shadowMapUtil.calc(mDirLight.dir, effectiveCam_view_matrix(), effectiveCam_proj_matrix());
-			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
-				mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = mShadowMap.shadowMapUtil.projection_matrix(cascade) * mShadowMap.shadowMapUtil.view_matrix();
-				mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = mShadowMap.shadowMapUtil.max_depth(cascade);
-			}
-		} else {
-			glm::vec3 lookAt = mShadowMap.focus;
-			glm::vec3 dirNormed = glm::normalize(mDirLight.dir);
-			glm::vec3 up = (glm::abs(glm::dot(dirNormed, glm::vec3(0, 1, 0))) < 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, -1);
-			glm::mat4 proj = glm::ortho(-mShadowMap.proj.width * .5f, mShadowMap.proj.width * .5f, -mShadowMap.proj.height * .5f, mShadowMap.proj.height * .5f, mShadowMap.proj.nearplane, mShadowMap.proj.farplane);
-			glm::mat4 view = glm::lookAt(lookAt - dirNormed * mShadowMap.dist, lookAt, up);
-			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
-				mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = proj * view;
-				mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = 1.0;
-			}
+		mShadowMap.shadowMapUtil.calc(mDirLight.dir, effectiveCam_view_matrix(), effectiveCam_proj_matrix());
+		for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+			mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = mShadowMap.shadowMapUtil.projection_matrix(cascade) * mShadowMap.shadowMapUtil.view_matrix();
+			mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = mShadowMap.shadowMapUtil.max_depth(cascade);
 		}
 #endif
 
@@ -1590,9 +1580,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 #if ENABLE_SHADOWMAP
-		mPipelineShadowmap = context().create_graphics_pipeline_for(
-			vertex_shader("shaders/shadowmap.vert.spv"),
+		mPipelineShadowmapOpaque = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/shadowmap.vert.spv"), // no fragment shader
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
+			mShadowmapRenderpass,
+			//cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
+			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha (not here, but maintain layout compatibility)
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
+		);
+
+		mPipelineShadowmapTransparent = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/shadowmap_transparent.vert.spv"),
+			fragment_shader("shaders/shadowmap_transparent.frag.spv"),
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
 			mShadowmapRenderpass,
 			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
@@ -1604,6 +1612,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0])
 		);
+
+		mPipelineShadowmapAnimObject = context().create_graphics_pipeline_for(
+			vertex_shader("shaders/shadowmap_animated.vert.spv"),	// no frag shader
+			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
+			from_buffer_binding(1) -> stream_per_vertex<glm::vec4>() -> to_location(1),		// aBoneWeights
+			from_buffer_binding(2) -> stream_per_vertex<glm::uvec4>()-> to_location(2),		// aBoneIndices
+			mShadowmapRenderpass,
+			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
+			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+			descriptor_binding(0, 0, mMaterialBuffer),
+			descriptor_binding(0, 1, mImageSamplers),
+			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
+			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
+			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+			descriptor_binding(3, 0, mBoneMatricesBuffer[0])
+		);
+
+
 
 		mPipelineDrawShadowmap = context().create_graphics_pipeline_for(
 			vertex_shader("shaders/draw_shadowmap.vert.spv"),
@@ -1648,19 +1676,31 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 	}
 
-	void draw_dynamic_objects(avk::command_buffer &cmd, gvk::window::frame_id_t fif) {
+	void draw_dynamic_objects(avk::command_buffer &cmd, gvk::window::frame_id_t fif, int shadowCascade = -1) {
 		if (!mMovingObject.enabled) return;
 
+		bool shadowPass = shadowCascade >= 0;
+
 		push_constant_data_for_dii pushc_dii = {};
+		if (shadowPass) pushc_dii.mShadowMapCascadeToBuild = shadowCascade;
+
 		if (mDynObjects[mMovingObject.moverId].mIsAnimated) {
 			// animated
 			rdoc::beginSection(cmd->handle(), "render dynamic object (animated)");
-			cmd->bind_pipeline(mPipelineAnimObject);
+			auto &pipe = shadowPass ? mPipelineShadowmapAnimObject : mPipelineAnimObject;
 
-			cmd->bind_descriptors(mPipelineAnimObject->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
-				descriptor_binding(3, 1, mBoneMatricesPrevBuffer[fif])
-				}));
+			cmd->bind_pipeline(pipe);
+			if (shadowPass) {
+				cmd->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
+					}));
+			} else {
+				cmd->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
+					descriptor_binding(3, 1, mBoneMatricesPrevBuffer[fif]),
+					SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
+					}));
+			}
 
 			auto &dynObj = mDynObjects[mMovingObject.moverId];
 			for (auto &part : dynObj.mParts) {
@@ -1671,17 +1711,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
-				cmd->push_constants(mPipelineAnimObject->layout(), pushc_dii);
-				cmd->draw_indexed(
-					*md.mIndexBuffer,
-					*md.mPositionsBuffer,
-					*md.mTexCoordsBuffer,
-					*md.mNormalsBuffer,
-					*md.mTangentsBuffer,
-					*md.mBitangentsBuffer,
-					*md.mBoneWeightsBuffer,
-					*md.mBoneIndicesBuffer
-				);
+				cmd->push_constants(pipe->layout(), pushc_dii);
+				if (shadowPass) {
+					cmd->draw_indexed(
+						*md.mIndexBuffer,
+						*md.mPositionsBuffer,
+						*md.mBoneWeightsBuffer,
+						*md.mBoneIndicesBuffer
+					);
+				} else {
+					cmd->draw_indexed(
+						*md.mIndexBuffer,
+						*md.mPositionsBuffer,
+						*md.mTexCoordsBuffer,
+						*md.mNormalsBuffer,
+						*md.mTangentsBuffer,
+						*md.mBitangentsBuffer,
+						*md.mBoneWeightsBuffer,
+						*md.mBoneIndicesBuffer
+					);
+				}
 			}
 			rdoc::endSection(cmd->handle());
 		} else {
@@ -1696,16 +1745,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
-				const auto &firstPipe  = FORWARD_RENDERING ? mPipelineFwdOpaque : mPipelineFirstPass;
-				cmd->push_constants(firstPipe->layout(), pushc_dii);
-				cmd->draw_indexed(
-					*md.mIndexBuffer,
-					*md.mPositionsBuffer,
-					*md.mTexCoordsBuffer,
-					*md.mNormalsBuffer,
-					*md.mTangentsBuffer,
-					*md.mBitangentsBuffer
-				);
+				if (shadowPass) {
+					cmd->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
+					cmd->draw_indexed(
+						*md.mIndexBuffer,
+						*md.mPositionsBuffer
+					);
+				} else {
+					const auto &pipe = FORWARD_RENDERING ? mPipelineFwdOpaque : mPipelineFirstPass;
+					cmd->push_constants(pipe->layout(), pushc_dii);
+					cmd->draw_indexed(
+						*md.mIndexBuffer,
+						*md.mPositionsBuffer,
+						*md.mTexCoordsBuffer,
+						*md.mNormalsBuffer,
+						*md.mTangentsBuffer,
+						*md.mBitangentsBuffer
+					);
+				}
 			}
 			rdoc::endSection(cmd->handle());
 		}
@@ -1755,7 +1812,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// TODO - move shadowmap creation into a subpass?
 
 			// bind descriptors
-			commandBuffer->bind_descriptors(mPipelineShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+			commandBuffer->bind_descriptors(mPipelineShadowmapOpaque->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
 				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
@@ -1765,16 +1822,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}));
 
 			// bind pipeline, start renderpass
-			commandBuffer->bind_pipeline(mPipelineShadowmap);
+			commandBuffer->bind_pipeline(mPipelineShadowmapOpaque);
 			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
-				commandBuffer->begin_render_pass_for_framebuffer(mPipelineShadowmap->get_renderpass(), mShadowmapPerCascade[cascade].mShadowmapFramebuffer[fif]);
+				commandBuffer->begin_render_pass_for_framebuffer(mShadowmapRenderpass, mShadowmapPerCascade[cascade].mShadowmapFramebuffer[fif]);
 
-				// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
+				// draw the opaque parts of the scene
 				pushc_dii.mDrawIdOffset = 0;
-				commandBuffer->push_constants(mPipelineShadowmap->layout(), pushc_dii);
-				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
+				commandBuffer->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
+				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups);
+
+				// draw dynamic objects
+				draw_dynamic_objects(commandBuffer, fif, cascade);
+
+				if (mShadowMap.enableForTransparency) {
+					// // draw the transparent parts of the scene
+					commandBuffer->bind_pipeline(mPipelineShadowmapTransparent);
+					pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
+					commandBuffer->push_constants(mPipelineShadowmapTransparent->layout(), pushc_dii);
+					draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
+				}
 
 				commandBuffer->end_render_pass();
 			}
@@ -1815,7 +1883,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->bind_pipeline(secondPipe);
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
-		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups); // FIXME -> wrong gl_DrawId !
+		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
 #else
 		// Move on to next subpass, synchronizing all data to be written to memory,
 		// and to be made visible to the next subpass, which uses it as input.
@@ -2189,18 +2257,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (CollapsingHeader("Shadows")) {
 					PushID("ShadowStuff");
 					if (Checkbox("enable", &mShadowMap.enable)) mReRecordCommandBuffers = true;
-					PushItemWidth(40);
-					InputFloat("w", &mShadowMap.proj.width); SameLine();
-					InputFloat("h", &mShadowMap.proj.height); SameLine();
-					InputFloat("n", &mShadowMap.proj.nearplane); SameLine();
-					InputFloat("f", &mShadowMap.proj.farplane);
-					PopItemWidth();
-					InputFloat3("focus", &mShadowMap.focus.x);
-					InputFloat("dist", &mShadowMap.dist);
-					InputFloat("bias", &mShadowMap.bias);
-					Checkbox("auto-frustum", &mShadowMap.autoSet);
+					SameLine();
+					if (Checkbox("transp.", &mShadowMap.enableForTransparency)) mReRecordCommandBuffers = true;
+
 					if (Checkbox("show shadowmap", &mShadowMap.show)) mReRecordCommandBuffers = true;
 					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) mReRecordCommandBuffers = true;
+
+					InputFloat("bias", &mShadowMap.bias);
+					PushItemWidth(40);
+					Text("Casc:");
+					for (int i = 0; i < SHADOWMAP_NUM_CASCADES; ++i) {
+						PushID(i);
+						SameLine(); InputFloat("##cascend", &mShadowMap.shadowMapUtil.cascadeEnd[i], .0f, .0f, "%.2f");
+						PopID();
+					}
+					PopItemWidth();
+					Checkbox("restrict to scene", &mShadowMap.shadowMapUtil.restrictLightViewToScene);
 					PopID();
 				}
 
@@ -3146,7 +3218,7 @@ private: // v== Member variables ==v
 
 	// shadowmap
 	avk::renderpass mShadowmapRenderpass;
-	avk::graphics_pipeline mPipelineShadowmap, mPipelineDrawShadowmap, mPipelineDrawFrustum;
+	avk::graphics_pipeline mPipelineShadowmapOpaque, mPipelineShadowmapTransparent, mPipelineShadowmapAnimObject, mPipelineDrawShadowmap, mPipelineDrawFrustum;
 	std::array<avk::command_buffer, cConcurrentFrames> mShadowmapCommandBuffer;
 	struct ShadowMapPerCascadeResources {
 		std::array<avk::framebuffer, cConcurrentFrames> mShadowmapFramebuffer;
@@ -3304,20 +3376,12 @@ private: // v== Member variables ==v
 	std::string mNotepad = "";
 
 	struct {
-		struct {
-			float width = 200.f;
-			float height = 200.f;
-			float nearplane = 0.f;
-			float farplane = 100.f;
-		} proj;
-		glm::vec3 focus = glm::vec3(0);
-		float dist = 50.f;
 		float bias = 0.002f;
 
 		bool enable = true;
+		bool enableForTransparency = true;
 		bool show = false;
 		bool drawFrustum = false;
-		bool autoSet = false;
 		ShadowMap shadowMapUtil;
 	} mShadowMap;
 

@@ -68,6 +68,9 @@
     <None Include="shaders\lighting_pass.vert" />
     <None Include="shaders\post_process.comp" />
     <None Include="shaders\shadowmap.vert" />
+    <None Include="shaders\shadowmap_animated.vert" />
+    <None Include="shaders\shadowmap_transparent.frag" />
+    <None Include="shaders\shadowmap_transparent.vert" />
     <None Include="shaders\sharpen.comp" />
     <None Include="shaders\sharpen_cas.comp" />
     <None Include="shaders\sky_gradient.frag" />

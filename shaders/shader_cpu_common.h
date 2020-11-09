@@ -6,7 +6,7 @@
 // use a shadowmap?
 #define ENABLE_SHADOWMAP 1
 #define SHADOWMAP_SIZE 2048
-#define SHADOWMAP_NUM_CASCADES 4	// max 4
+#define SHADOWMAP_NUM_CASCADES 2	// max 4
 
 // max. bones for animations
 #define MAX_BONES	114
