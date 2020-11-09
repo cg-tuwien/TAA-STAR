@@ -800,7 +800,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				depthAttachmentView.enable_shared_ownership();
 				mShadowmapImageSamplers[i].push_back(
 					context().create_image_sampler(
-						depthAttachmentView,
+						avk::shared(depthAttachmentView),
 						//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
 						context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
 							[](avk::sampler_t & smp) {
@@ -809,7 +809,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						)
 					)
 				);
-				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
+				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(avk::shared(mShadowmapRenderpass), avk::shared(depthAttachmentView));
 				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 			}
 		}
@@ -1765,7 +1765,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}));
 
 			// bind pipeline, start renderpass
-			commandBuffer->bind_pipeline(mPipelineShadowmap);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmap));
 			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
@@ -1873,7 +1873,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw frustum
 		if (mShadowMap.drawFrustum) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw frustum");
-			commandBuffer->bind_pipeline(mPipelineDrawFrustum);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawFrustum));
 			commandBuffer->bind_descriptors(mPipelineDrawFrustum->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
@@ -1885,7 +1885,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw shadowmap
 		if (mShadowMap.show) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
-			commandBuffer->bind_pipeline(mPipelineDrawShadowmap);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawShadowmap));
 			commandBuffer->bind_descriptors(mPipelineDrawShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 				descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
@@ -1933,23 +1933,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				static auto texIdsAndDescriptions = [&]() {
 
 					// Gather all the framebuffer attachments to display them
-					std::vector<avk::image_view *> pViews;
-					for (size_t i = 0; i < mFramebuffer[0]->image_views().size(); ++i) pViews.push_back(&mFramebuffer[0]->image_view_at(i));
+					std::vector<avk::resource_reference<image_view_t>> pViews;
+					for (size_t i = 0; i < mFramebuffer[0]->image_views().size(); ++i) pViews.emplace_back(mFramebuffer[0]->image_view_at(i));
 #if ENABLE_SHADOWMAP
 					//pViews.push_back(&mShadowmapFramebuffer[0]->image_view_at(0));	// doesn't work, since alpha channel = 0, nothing is displayed
 #endif
 					std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
 					for (size_t i = 0; i < pViews.size(); ++i) {
-						if ((*pViews[i])->get_image().config().samples != vk::SampleCountFlagBits::e1) {
+						if (pViews[i]->get_image().config().samples != vk::SampleCountFlagBits::e1) {
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (!is_norm_format((*pViews[i])->get_image().config().format) && !is_float_format((*pViews[i])->get_image().config().format)) {
+							if (!is_norm_format(pViews[i]->get_image().config().format) && !is_float_format(pViews[i]->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
 								v.emplace_back(
-									ImGui_ImplVulkan_AddTexture(smplr->handle(), (*pViews[i])->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
+									ImGui_ImplVulkan_AddTexture(smplr->handle(), pViews[i]->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
 									fmt::format("Attachment #{}", i)
 								);
 							}
