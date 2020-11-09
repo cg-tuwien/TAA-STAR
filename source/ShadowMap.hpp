@@ -34,7 +34,7 @@ public:
 	// params
 	float cascadeEnd[MAX_CASCADES] = {0.005f, 0.02f, 0.10f, 1.0f};	// only used if autoCalcCascades is false in init()
 	CascadeFitMode cascadeFitMode = CascadeFitMode::fitCascade;
-	bool restrictLightViewToScene = true; // false; // clip frustum to scene? tighter bound, but other problems... not generally recommended by resources
+	bool restrictLightViewToScene = false; // clip frustum to scene? tighter bound, but other problems... not generally recommended by resources
 	NearFarFitMode nearfarFitMode = NearFarFitMode::nffIntersect;
 	bool texelSnapping = true;
 
@@ -42,4 +42,5 @@ public:
 	void calc(const glm::vec3 &aLightDirection, const glm::mat4 &aCamViewMatrix, const glm::mat4 &aCamProjMatrix, std::optional<glm::vec3> aIncludeThisPoint = std::nullopt);
 	glm::mat4 view_matrix() { return mViewMatrix; }
 	glm::mat4 projection_matrix(int cascade = 0) { return mCascadeProjMatrix[cascade]; }
+	float max_depth(int cascade) { return mCascadeDepthBounds[cascade]; }
 };

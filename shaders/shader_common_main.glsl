@@ -47,7 +47,7 @@
 																													\
 	/* current draw call (= mesh group for scenery; negative = moving object id) */									\
 	int   mDrawIdOffset;																							\
-	float pad1;																										\
+	int   mShadowMapCascadeToBuild;																					\
 }
 
 
@@ -69,8 +69,9 @@
 	mat4 mMover_additionalModelMatrix;																				\
 	mat4 mMover_additionalModelMatrix_prev;																			\
 																													\
-	mat4 mShadowmapProjViewMatrix;																					\
+	mat4 mShadowmapProjViewMatrix[4];																				\
 	mat4 mDebugCamProjViewMatrix;																					\
+	vec4 mShadowMapMaxDepth;	/* for up to 4 cascades */															\
 																													\
 	float mLodBias;																									\
 	bool mUseShadowMap;																								\

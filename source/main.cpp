@@ -116,11 +116,21 @@
 
 
 #if ENABLE_SHADOWMAP
-#define SHADOWMAP_DESCRIPTOR_BINDING(fif_) descriptor_binding(0, 5, mShadowmapImageSampler[fif_]),
-#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_) descriptor_binding(0, 5, mShadowmapImageSampler[fif_])
+//#if SHADOWMAP_NUM_CASCADES == 1
+//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]),
+//#elif SHADOWMAP_NUM_CASCADES == 2
+//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]), \
+//                                            descriptor_binding(4, 1, mShadowmapPerCascade[1].mShadowmapImageSampler[fif_]),
+//#elif SHADOWMAP_NUM_CASCADES == 3
+//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]), \
+//                                            descriptor_binding(4, 1, mShadowmapPerCascade[1].mShadowmapImageSampler[fif_]), \
+//                                            descriptor_binding(4, 2, mShadowmapPerCascade[2].mShadowmapImageSampler[fif_]),
+//#else
+//#error "Only 3 cascades defined"
+//#endif
+#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapImageSamplers[fif_]),
 #else
 #define SHADOWMAP_DESCRIPTOR_BINDING(fif_)
-#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_)
 #endif
 
 
@@ -180,8 +190,9 @@ class wookiee : public gvk::invokee
 		glm::mat4 mMover_additionalModelMatrix;
 		glm::mat4 mMover_additionalModelMatrix_prev;
 
-		glm::mat4 mShadowmapProjViewMatrix;
+		glm::mat4 mShadowmapProjViewMatrix[4];
 		glm::mat4 mDebugCamProjViewMatrix;
+		glm::vec4 mShadowMapMaxDepth;	// for up to 4 cascades
 
 		float mLodBias;
 		VkBool32 mUseShadowMap;
@@ -263,7 +274,7 @@ class wookiee : public gvk::invokee
 		int       mMover_meshIndex;
 
 		int       mDrawIdOffset; // negative numbers -> moving object id
-		float     pad1;
+		int       mShadowMapCascadeToBuild;
 	};
 
 	struct MeshgroupPerInstanceData {
@@ -404,14 +415,20 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// shadowmap matrices
 		if (mShadowMap.autoSet) {
 			mShadowMap.shadowMapUtil.calc(mDirLight.dir, effectiveCam_view_matrix(), effectiveCam_proj_matrix());
-			mMatricesAndUserInput.mShadowmapProjViewMatrix = mShadowMap.shadowMapUtil.projection_matrix() * mShadowMap.shadowMapUtil.view_matrix();
+			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+				mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = mShadowMap.shadowMapUtil.projection_matrix(cascade) * mShadowMap.shadowMapUtil.view_matrix();
+				mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = mShadowMap.shadowMapUtil.max_depth(cascade);
+			}
 		} else {
 			glm::vec3 lookAt = mShadowMap.focus;
 			glm::vec3 dirNormed = glm::normalize(mDirLight.dir);
 			glm::vec3 up = (glm::abs(glm::dot(dirNormed, glm::vec3(0, 1, 0))) < 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, -1);
 			glm::mat4 proj = glm::ortho(-mShadowMap.proj.width * .5f, mShadowMap.proj.width * .5f, -mShadowMap.proj.height * .5f, mShadowMap.proj.height * .5f, mShadowMap.proj.nearplane, mShadowMap.proj.farplane);
 			glm::mat4 view = glm::lookAt(lookAt - dirNormed * mShadowMap.dist, lookAt, up);
-			mMatricesAndUserInput.mShadowmapProjViewMatrix = proj * view;
+			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+				mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = proj * view;
+				mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = 1.0;
+			}
 		}
 #endif
 
@@ -745,50 +762,56 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto* wnd = gvk::context().main_window();
 
-		// framebuffer & renderpass
 		auto fif = wnd->number_of_frames_in_flight();
-		for (decltype(fif) i = 0; i < fif; ++i) {
-			auto depthAttachment    = context().create_image(SHADOWMAP_SIZE, SHADOWMAP_SIZE, IMAGE_FORMAT_SHADOWMAP, 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::sampled);
-			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it
-			rdoc::labelImage(depthAttachment->handle(), "shadowDepthAttachment", i);
-			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+		for (decltype(fif) i = 0; i < fif; ++i) mShadowmapImageSamplers[i].clear();
 
-			if (0 == i) {
-				mShadowmapRenderpass = context().create_renderpass(
-					{ attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil(), on_store::store) },
-					[](avk::renderpass_sync& aRpSync){
-						if (aRpSync.is_external_pre_sync()) {
-							aRpSync.mSourceStage                    = avk::pipeline_stage::top_of_pipe;
-							aRpSync.mSourceMemoryDependency         = {};
-							aRpSync.mDestinationStage               = avk::pipeline_stage::early_fragment_tests;
-							aRpSync.mDestinationMemoryDependency    = avk::memory_access::depth_stencil_attachment_write_access;
+		// create framebuffers & (one) renderpass
+		for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+			for (decltype(fif) i = 0; i < fif; ++i) {
+				auto depthAttachment = context().create_image(SHADOWMAP_SIZE, SHADOWMAP_SIZE, IMAGE_FORMAT_SHADOWMAP, 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::sampled);
+				depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it
+				rdoc::labelImage(depthAttachment->handle(), std::string("shadowDepthAttachment_C" + std::to_string(cascade)).c_str(), i);
+				auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+
+				if (0 == i && 0 == cascade) {
+					mShadowmapRenderpass = context().create_renderpass(
+						{ attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil(), on_store::store) },
+						[](avk::renderpass_sync& aRpSync) {
+							if (aRpSync.is_external_pre_sync()) {
+								aRpSync.mSourceStage = avk::pipeline_stage::top_of_pipe;
+								aRpSync.mSourceMemoryDependency = {};
+								aRpSync.mDestinationStage = avk::pipeline_stage::early_fragment_tests;
+								aRpSync.mDestinationMemoryDependency = avk::memory_access::depth_stencil_attachment_write_access;
+							}
+							if (aRpSync.is_external_post_sync()) {
+								// The next pipeline must wait before this pipeline has finished writing its color attachment output
+								aRpSync.mSourceStage = avk::pipeline_stage::late_fragment_tests;
+								aRpSync.mDestinationStage = avk::pipeline_stage::fragment_shader;
+								// It's the same memory access for both, that needs to be synchronized:
+								aRpSync.mSourceMemoryDependency = avk::memory_access::depth_stencil_attachment_write_access;
+								aRpSync.mDestinationMemoryDependency = avk::memory_access::shader_buffers_and_images_read_access;
+							}
 						}
-						if (aRpSync.is_external_post_sync()) {
-							// The next pipeline must wait before this pipeline has finished writing its color attachment output
-							aRpSync.mSourceStage                    = avk::pipeline_stage::late_fragment_tests;
-							aRpSync.mDestinationStage               = avk::pipeline_stage::fragment_shader;
-							// It's the same memory access for both, that needs to be synchronized:
-							aRpSync.mSourceMemoryDependency         = avk::memory_access::depth_stencil_attachment_write_access;
-							aRpSync.mDestinationMemoryDependency    = avk::memory_access::shader_buffers_and_images_read_access;
-						}
-					}
+					);
+					mShadowmapRenderpass.enable_shared_ownership();
+				}
+
+				// FIXME - filter, border
+				depthAttachmentView.enable_shared_ownership();
+				mShadowmapImageSamplers[i].push_back(
+					context().create_image_sampler(
+						depthAttachmentView,
+						//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
+						context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
+							[](avk::sampler_t & smp) {
+								smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
+							}
+						)
+					)
 				);
-				mShadowmapRenderpass.enable_shared_ownership();
+				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
+				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 			}
-
-			// FIXME - filter, border
-			depthAttachmentView.enable_shared_ownership();
-			mShadowmapImageSampler[i] = context().create_image_sampler(
-				depthAttachmentView,
-				//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
-				context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
-					[](avk::sampler_t & smp) {
-						smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
-					}
-				)
-			);
-			mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
-			mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 		}
 
 		// pipeline is created in prepare_common_pipelines
@@ -1437,7 +1460,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-			SHADOWMAP_DESCRIPTOR_BINDING(0)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1468,7 +1491,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-			SHADOWMAP_DESCRIPTOR_BINDING(0)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1497,7 +1520,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
-			SHADOWMAP_DESCRIPTOR_BINDING(0)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
 		);
@@ -1531,7 +1554,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
-			SHADOWMAP_DESCRIPTOR_BINDING(0)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
 			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
@@ -1572,7 +1595,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
 			mShadowmapRenderpass,
 			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
-			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapFramebuffer[0]),
+			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha
@@ -1592,8 +1615,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::depth_test::disabled(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, subpass,
-			SHADOWMAP_DESCRIPTOR_BINDING(0)
-			descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
+			descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
 		);
 
 		mPipelineDrawFrustum = context().create_graphics_pipeline_for(
@@ -1743,14 +1766,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// bind pipeline, start renderpass
 			commandBuffer->bind_pipeline(mPipelineShadowmap);
-			commandBuffer->begin_render_pass_for_framebuffer(mPipelineShadowmap->get_renderpass(), mShadowmapFramebuffer[fif]);
+			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
-			// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
-			pushc_dii.mDrawIdOffset = 0;
-			commandBuffer->push_constants(mPipelineShadowmap->layout(), pushc_dii);
-			draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
+				commandBuffer->begin_render_pass_for_framebuffer(mPipelineShadowmap->get_renderpass(), mShadowmapPerCascade[cascade].mShadowmapFramebuffer[fif]);
 
-			commandBuffer->end_render_pass();
+				// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
+				pushc_dii.mDrawIdOffset = 0;
+				commandBuffer->push_constants(mPipelineShadowmap->layout(), pushc_dii);
+				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
+
+				commandBuffer->end_render_pass();
+			}
 			rdoc::endSection(commandBuffer->handle());
 		}
 #endif
@@ -1765,7 +1792,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
-			SHADOWMAP_DESCRIPTOR_BINDING(fif)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif])
 		}));
@@ -1851,7 +1878,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
 			// there is no commandBuffer->draw_vertices without vertex buffer... call vkCmdDraw directly 
-			commandBuffer->handle().draw(12 * 2 * (mEffectiveCamera.detached ? 2 : 1), 1, 0, 0);
+			commandBuffer->handle().draw(12 * 2 * (mEffectiveCamera.detached ? 5 : 4), 1, 0, 0);
 			rdoc::endSection(commandBuffer->handle());
 		}
 
@@ -1860,8 +1887,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
 			commandBuffer->bind_pipeline(mPipelineDrawShadowmap);
 			commandBuffer->bind_descriptors(mPipelineDrawShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				SHADOWMAP_DESCRIPTOR_BINDING_(fif),
-				descriptor_binding(4, 0, mGenericSamplerNearestNeighbour)
+				SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
+				descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
 				}));
 			const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
 			commandBuffer->draw_indexed(quadIndices, quadVertices);
@@ -2010,7 +2037,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
 					SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
 
-					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0Debug\0Debug 2\0");
+					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0SM cascade\0Debug\0Debug 2\0");
 				}
 
 				if (CollapsingHeader("Rendering")) {
@@ -2431,7 +2458,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		current_composition()->add_element(mQuakeCam);
 
 		// init shadow map util
-		mShadowMap.shadowMapUtil.init(mSceneData.mBoundingBox, mQuakeCam.near_plane_distance(), mQuakeCam.far_plane_distance(), SHADOWMAP_SIZE, 1, true);
+		mShadowMap.shadowMapUtil.init(mSceneData.mBoundingBox, mQuakeCam.near_plane_distance(), mQuakeCam.far_plane_distance(), SHADOWMAP_SIZE, SHADOWMAP_NUM_CASCADES, true);
 
 		// load default camera path
 		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
@@ -3098,7 +3125,6 @@ private: // v== Member variables ==v
 	avk::renderpass mRenderpass;
 	std::array<avk::framebuffer, cConcurrentFrames> mFramebuffer;
 	std::array<avk::framebuffer, cConcurrentFrames> mSkyboxFramebuffer;
-	std::array<avk::framebuffer, cConcurrentFrames> mShadowmapFramebuffer;
 
 	// Data for rendering the skybox
 	avk::buffer mSphereVertexBuffer;
@@ -3120,7 +3146,12 @@ private: // v== Member variables ==v
 	avk::renderpass mShadowmapRenderpass;
 	avk::graphics_pipeline mPipelineShadowmap, mPipelineDrawShadowmap, mPipelineDrawFrustum;
 	std::array<avk::command_buffer, cConcurrentFrames> mShadowmapCommandBuffer;
-	std::array<avk::image_sampler, cConcurrentFrames> mShadowmapImageSampler;
+	struct ShadowMapPerCascadeResources {
+		std::array<avk::framebuffer, cConcurrentFrames> mShadowmapFramebuffer;
+	};
+	std::array<ShadowMapPerCascadeResources, SHADOWMAP_NUM_CASCADES> mShadowmapPerCascade;
+	std::array<std::vector<avk::image_sampler>, cConcurrentFrames> mShadowmapImageSamplers;
+
 
 	avk::sampler mGenericSamplerNearestNeighbour;
 

@@ -31,7 +31,7 @@ layout(set = 0, binding = 1) uniform sampler2D textures[];
 // set 0, binding 2-4 used in vertex shader
 
 #if ENABLE_SHADOWMAP
-layout(set = 0, binding = 5) uniform sampler2DShadow shadowMap;
+layout(set = 4, binding = 0) uniform sampler2DShadow shadowMap[];
 #endif
 
 // -------------------------------------------------------
@@ -264,18 +264,51 @@ float calcPlainShadow(vec3 pNDC) {
 */
 // -------------------------------------------------------
 
+//float shadow_factor() {
+//#if ENABLE_SHADOWMAP
+//	if (!uboMatUsr.mUseShadowMap) return 1.0;
+//
+//	float light = 1.0;
+//
+//	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[0] * fs_in.positionWS;
+//	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
+//	p.xy = p.xy * .5 + .5;
+//	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
+//		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
+//		light = texture(shadowMap[0], p.xyz);
+//		light = 1.0 - (1.0 - light) * 0.75;
+//	}
+//
+//	return light;
+//#else
+//	return 1.0;
+//#endif
+//}
+
+int gDebugShadowCascade = -1;
 float shadow_factor() {
 #if ENABLE_SHADOWMAP
 	if (!uboMatUsr.mUseShadowMap) return 1.0;
 
+	// find cascade to use // TODO - optimize
+	int cascade = SHADOWMAP_NUM_CASCADES-1;
+	for (int i = 0; i < SHADOWMAP_NUM_CASCADES-1; ++i) {
+		if (gl_FragCoord.z < uboMatUsr.mShadowMapMaxDepth[i]) {
+			cascade = i;
+			break;
+		}
+	}
+	gDebugShadowCascade = cascade;
+
+
 	float light = 1.0;
 
-	vec4 p = uboMatUsr.mShadowmapProjViewMatrix * fs_in.positionWS;
+	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[cascade] * fs_in.positionWS;
 	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
 	p.xy = p.xy * .5 + .5;
 	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
 		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
-		light = texture(shadowMap, p.xyz);
+		light = texture(shadowMap[cascade], p.xyz);
 		light = 1.0 - (1.0 - light) * 0.75;
 	}
 
@@ -323,24 +356,34 @@ void main()
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
 	bool twoSided   = materialsBuffer.materials[matIndex].mCustomData[3] > 0.5;
 
+
+	// Calculate ambient illumination:
+	vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
+	for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
+		ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
+	}
+
+	// Calculate diffuse and specular illumination from all light sources:
+	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
+
+	// Add all together:
+	vec4 blinnPhongColor = vec4(shadow_factor() * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
+
 	if (uboMatUsr.mUserInput.z < 1.f) {
-		// Calculate ambient illumination:
-		vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
-		for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
-			ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
-		}
-
-		// Calculate diffuse and specular illumination from all light sources:
-		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
-
-		// Add all together:
-		oFragColor = vec4(shadow_factor() * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
-
-
+		oFragColor = blinnPhongColor;
 	} else if (uboMatUsr.mUserInput.z < 2.f) {
 		// don't use lights
 		oFragColor = vec4(diff, alpha);
 	} else if (uboMatUsr.mUserInput.z < 3.f) {
+		// Debug: SM cascade
+		vec3 cascCol;
+		if      (gDebugShadowCascade <  0) cascCol = vec3(1);
+		else if (gDebugShadowCascade == 0) cascCol = vec3(0, 1, 0);
+		else if (gDebugShadowCascade == 1) cascCol = vec3(1, 1, 0);
+		else if (gDebugShadowCascade == 2) cascCol = vec3(0.6, 0.6, 1);
+		else                               cascCol = vec3(1, 0.6, 1);
+		oFragColor = vec4(cascCol,1) * blinnPhongColor;
+	} else if (uboMatUsr.mUserInput.z < 4.f) {
 		// Debug: show normals
 		vec3 normalWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
 		oFragColor = vec4(normalWS.xyz, 1.0);

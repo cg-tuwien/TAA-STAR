@@ -37,7 +37,7 @@ void main()
 		modelMatrix   = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
 	}
 
-	gl_Position = uboMatUsr.mShadowmapProjViewMatrix * modelMatrix * vec4(aPosition, 1.0);
+	gl_Position = uboMatUsr.mShadowmapProjViewMatrix[mShadowMapCascadeToBuild] * modelMatrix * vec4(aPosition, 1.0);
 }
 // -------------------------------------------------------
 

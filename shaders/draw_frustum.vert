@@ -3,10 +3,10 @@
 // -------------------------------------------------------
 
 #include "shader_common_main.glsl"
+#include "shader_cpu_common.h"
 
 // no vertex input
-// shader is called with vertex count 12 * 2; to be rendered as line list (light camera only), or
-//                                    24 * 2  for light camera + debug camera
+// shader is called with vertex count 12 * 2 * 5; to be rendered as line list (4 light cameras + debug camera)
 
 
 layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
@@ -25,17 +25,31 @@ void main() {
 		{4,5}, {5,6}, {6,7}, {7,4},	// far plane
 		{0,4}, {1,5}, {2,6}, {3,7}  // sides
 	};
+	vec3 cascCol[5] = {
+		{0, 1, 0},
+		{1, 1, 0},
+		{0.6, 0.6, 1},
+		{1, 0.6, 1},
+		{1, 0, 1}
+	};
 
 	int vertId = gl_VertexIndex;
-	mat4 invPV;
-	if (vertId < 24) {
-		invPV = inverse(uboMatUsr.mShadowmapProjViewMatrix);
-		out_color = vec3(1,1,0);
-	} else {
-		vertId -= 24;
-		invPV = inverse(uboMatUsr.mDebugCamProjViewMatrix);
-		out_color = vec3(0,1,0);
+	int cascade = vertId / 24;
+	vertId %= 24;
+
+	if (cascade < 4 && cascade >= SHADOWMAP_NUM_CASCADES) {
+		out_color = vec3(0);
+		gl_Position = vec4(2,2,2,1);
+		return;
 	}
+
+	mat4 invPV;
+	if (cascade < 4) {
+		invPV = inverse(uboMatUsr.mShadowmapProjViewMatrix[cascade]);
+	} else {
+		invPV = inverse(uboMatUsr.mDebugCamProjViewMatrix);
+	}
+
 
 	int lineId  = vertId / 2;
 	int pointId = vertId % 2;
@@ -43,5 +57,6 @@ void main() {
 
 	vec4 world = invPV * vec4(ndc, 1.);
 	gl_Position = uboMatUsr.mProjMatrix * uboMatUsr.mViewMatrix * world;
+	out_color = cascCol[cascade];
 }
 

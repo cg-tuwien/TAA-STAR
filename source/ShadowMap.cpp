@@ -121,8 +121,12 @@ void ShadowMap::calcLightView()
 		// calc cascade depth bounds	- TODO: move this out further (init?); when does cam proj change? on screen resize for instance..
 		// TODO: improve performance!
 		// ATTN: after projection z (when inside near/far) is also in NDC (-1..1), NOT in (0..1) !	// TODO - recheck for Vulkan!
-		glm::vec4 p = mCamProjMatrix * glm::vec4(0.0f, 0.0f, -mCamNear - cascadeEnd[iCasc] * (mCamFar - mCamNear), 1.0f);
-		mCascadeDepthBounds[iCasc] = (p.z / p.w) * .5f + .5f;
+		//glm::vec4 p = mCamProjMatrix * glm::vec4(0.0f, 0.0f, -mCamNear - cascadeEnd[iCasc] * (mCamFar - mCamNear), 1.0f);
+		//mCascadeDepthBounds[iCasc] = (p.z / p.w) * .5f + .5f;
+
+		// Vulkan:
+		glm::vec4 p = mCamProjMatrix * glm::vec4(0.0f, 0.0f, mCamNear + cascadeEnd[iCasc] * (mCamFar - mCamNear), 1.0f);
+		mCascadeDepthBounds[iCasc] = (p.z / p.w);
 	}
 
 
