@@ -5,18 +5,18 @@
 
 namespace helpers
 {
-	static void exclude_a_curtain(std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>>& aSelectedModelsAndMeshes)
+	static void exclude_a_curtain(std::vector<std::tuple<avk::resource_reference<const gvk::model_t>, std::vector<size_t>>>& aSelectedModelsAndMeshes)
 	{
 		size_t a = 0;
 		for (; a < aSelectedModelsAndMeshes.size(); ++a) {
 			auto& tpl = aSelectedModelsAndMeshes[a];
-			const gvk::model_t& model = std::get<std::reference_wrapper<const gvk::model_t>>(tpl);
-			if (model.path().find("fabric") == std::string::npos) {
+			auto model = std::get<avk::resource_reference<const gvk::model_t>>(tpl);
+			if (model->path().find("fabric") == std::string::npos) {
 				continue;
 			}
 			std::vector<size_t>& meshIndices = std::get<std::vector<size_t>>(tpl);
 			for (size_t i = 0; i < meshIndices.size(); ++i) {
-				auto meshName = model.name_of_mesh(meshIndices[i]);
+				auto meshName = model->name_of_mesh(meshIndices[i]);
 				if (meshName == "sponza_320") {
 					meshIndices.erase(meshIndices.begin() + i);
 
@@ -30,7 +30,7 @@ namespace helpers
 		}
 	}
 
-	static void set_terrain_material_config(gvk::orca_scene_t& aScene)
+	static void set_terrain_material_config(avk::resource_reference<gvk::orca_scene_t> aScene)
 	{
 		auto m = gvk::material_config{};
 		m.mAmbientReflectivity	= glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f };
@@ -44,13 +44,13 @@ namespace helpers
 
 
 		// Select the terrain models/meshes
-		auto terrainModelIndices = aScene.select_models([](size_t index, const gvk::model_data& modelData){
+		auto terrainModelIndices = aScene->select_models([](size_t index, const gvk::model_data& modelData){
 			return std::string::npos != modelData.mName.find("terrain") || std::string::npos != modelData.mName.find("debris");
 		});
 
 		// Assign the material config to all meshes
 		for (auto i : terrainModelIndices) {
-			if (std::string::npos != aScene.model_at_index(i).mName.find("terrain")) {
+			if (std::string::npos != aScene->model_at_index(i).mName.find("terrain")) {
 				m.mDiffuseTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
 				m.mSpecularTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
 				m.mNormalsTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
@@ -63,9 +63,9 @@ namespace helpers
 				m.mHeightTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 10.0f, 10.0f };
 			}
 
-			auto meshes = aScene.model_at_index(i).mLoadedModel->select_all_meshes();
+			auto meshes = aScene->model_at_index(i).mLoadedModel->select_all_meshes();
 			for (auto j : meshes) {
-				aScene.model_at_index(i).mLoadedModel->set_material_config_for_mesh(j, m);
+				aScene->model_at_index(i).mLoadedModel->set_material_config_for_mesh(j, m);
 			}
 		}
 	}
@@ -163,7 +163,7 @@ namespace helpers
 		glm::vec2 mTextureCoordinate;
 	};
 
-	static std::tuple<const avk::buffer_t&, const avk::buffer_t&> get_quad_vertices_and_indices()
+	static std::tuple<avk::resource_reference<const avk::buffer_t>, avk::resource_reference<const avk::buffer_t>> get_quad_vertices_and_indices()
 	{
 		// Vertex data for a quad:
 		static const std::vector<quad_vertex> sQuadVertices = {
@@ -200,7 +200,7 @@ namespace helpers
 
 		assert (sQuadVertexBuffer->has_meta<avk::vertex_buffer_meta>());
 		assert (sQuadIndexBuffer->has_meta<avk::index_buffer_meta>());
-		return std::forward_as_tuple(static_cast<const avk::buffer_t&>(sQuadVertexBuffer), static_cast<const avk::buffer_t&>(sQuadIndexBuffer));
+		return std::forward_as_tuple(avk::const_referenced(sQuadVertexBuffer), avk::const_referenced(sQuadIndexBuffer));
 	}
 
 	static std::vector<gvk::lightsource>& get_lights()

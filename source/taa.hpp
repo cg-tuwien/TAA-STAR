@@ -249,23 +249,23 @@ public:
 		for (size_t i = 0; i < CF; ++i) {
 			// Store pointers to the source color result images
 			if constexpr (std::is_pointer<typename SRCCOLOR::value_type>::value) {
-				mSrcColor[i] = &static_cast<avk::image_view_t&>(*aSourceColorImageViews[i]);
+				mSrcColor[i] = aSourceColorImageViews[i];
 			} else {
-				mSrcColor[i] = &static_cast<avk::image_view_t&>(aSourceColorImageViews[i]);
+				mSrcColor[i] = aSourceColorImageViews[i];
 			}
 
 			// Store pointers to the source depth images
 			if constexpr (std::is_pointer<typename SRCD::value_type>::value) {
-				mSrcDepth[i] = &static_cast<avk::image_view_t&>(*aSourceDepthImageViews[i]);
+				mSrcDepth[i] = aSourceDepthImageViews[i];
 			} else {
-				mSrcDepth[i] = &static_cast<avk::image_view_t&>(aSourceDepthImageViews[i]);
+				mSrcDepth[i] = aSourceDepthImageViews[i];
 			}
 
 			// Store pointers to the source velocity result images
 			if constexpr (std::is_pointer<typename SRCVELOCITY::value_type>::value) {
-				mSrcVelocity[i] = &static_cast<avk::image_view_t&>(*aSourceVelocityImageViews[i]);
+				mSrcVelocity[i] = aSourceVelocityImageViews[i];
 			} else {
-				mSrcVelocity[i] = &static_cast<avk::image_view_t&>(aSourceVelocityImageViews[i]);
+				mSrcVelocity[i] = aSourceVelocityImageViews[i];
 			}
 
 
@@ -312,8 +312,8 @@ public:
 			mOutputResolution = targetResolution;
 		}
 
-		std::vector<std::reference_wrapper<avk::command_buffer_t>> commandBufferReferences;
-		std::transform(std::begin(layoutTransitions), std::end(layoutTransitions), std::back_inserter(commandBufferReferences), [](avk::command_buffer& cb) { return std::ref(*cb); });
+		std::vector<avk::resource_reference<avk::command_buffer_t>> commandBufferReferences;
+		std::transform(std::begin(layoutTransitions), std::end(layoutTransitions), std::back_inserter(commandBufferReferences), [](avk::command_buffer& cb) { return avk::referenced(*cb); });
 		auto fen = mQueue->submit_with_fence(commandBufferReferences);
 		fen->wait_until_signalled();
 
@@ -848,7 +848,7 @@ public:
 			static_assert(CF > 1);
 
 			// Apply Temporal Anti-Aliasing:
-			cmdbfr->bind_pipeline(mTaaPipeline);
+			cmdbfr->bind_pipeline(const_referenced(mTaaPipeline));
 			cmdbfr->bind_descriptors(mTaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mSampler),
 				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),							// -> shader: uCurrentFrame
@@ -874,7 +874,7 @@ public:
 				);
 
 				if (mSharpener == 1) {
-					cmdbfr->bind_pipeline(mSharpenerPipeline);
+					cmdbfr->bind_pipeline(const_referenced(mSharpenerPipeline));
 					cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 						descriptor_binding(0, 1, *mResultImages[inFlightIndex]),
 						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
@@ -883,7 +883,7 @@ public:
 					cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
 					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 				} else {
-					cmdbfr->bind_pipeline(mCasPipeline);
+					cmdbfr->bind_pipeline(const_referenced(mCasPipeline));
 					cmdbfr->bind_descriptors(mCasPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 						descriptor_binding(0, 1, mResultImages[inFlightIndex]->as_storage_image()),
 						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
@@ -905,7 +905,7 @@ public:
 					memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_any_access
 				);
 
-				cmdbfr->bind_pipeline(mPostProcessPipeline);
+				cmdbfr->bind_pipeline(const_referenced(mPostProcessPipeline));
 				cmdbfr->bind_descriptors(mPostProcessPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 					descriptor_binding(0, 1, **pLastProducedImageView),
 					descriptor_binding(0, 2, mPostProcessImages[inFlightIndex]->as_storage_image())
@@ -927,15 +927,15 @@ public:
 				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::transfer_read_access
 			);
 
-			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			blit_image(image_to_show, mainWnd->backbuffer_at_index(inFlightIndex)->image_at(0), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
 
 			helpers::record_timing_interval_end(cmdbfr->handle(), fmt::format("TAA {}", inFlightIndex));
 		}
 		// -------------------------- If Anti-Aliasing is disabled, do nothing but blit/copy ------------------------------
 		else {
 			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
-			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
-			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex).image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(cmdbfr));
+			blit_image(mSrcColor[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
+			blit_image(mSrcColor[inFlightIndex]->get_image(), mainWnd->backbuffer_at_index(inFlightIndex)->image_at(0), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
 		}
 
 		rdoc::endSection(cmdbfr->handle());
@@ -945,7 +945,7 @@ public:
 
 		// The swap chain provides us with an "image available semaphore" for the current frame.
 		// Only after the swapchain image has become available, we may start rendering into it.
-		auto& imageAvailableSemaphore = mainWnd->consume_current_image_available_semaphore();
+		auto imageAvailableSemaphore = mainWnd->consume_current_image_available_semaphore();
 
 		// Submit the draw call and take care of the command buffer's lifetime:
 		mQueue->submit(cmdbfr, imageAvailableSemaphore);

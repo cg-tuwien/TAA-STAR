@@ -20,7 +20,7 @@
 #define FORWARD_RENDERING 1
 
 // use the gvk updater for shader hot reloading and window resizing ?
-#define USE_GVK_UPDATER 1
+#define USE_GVK_UPDATER 0
 
 // re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
 #define RECORD_CMDBUFFER_IN_RENDER 1
@@ -649,21 +649,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// ... but one framebuffer per frame in flight
 			mFramebuffer[i] = context().create_framebuffer(
-				mRenderpass,
-				          colorAttachmentView,
-				std::move(depthAttachmentView),
+				shared(mRenderpass),
+				shared(   colorAttachmentView),
+				owned(    depthAttachmentView),
 #if (!FORWARD_RENDERING)
-				std::move(uvNrmAttachmentView),
+				owned(    uvNrmAttachmentView),
 #endif
-				std::move(matIdAttachmentView),
-				std::move(velocityAttachmentView)
+				owned(    matIdAttachmentView),
+				owned(    velocityAttachmentView)
 			);
 			mFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 
 			// Create the framebuffer for the skybox:
 			mSkyboxFramebuffer[i] = context().create_framebuffer(
 				{ attachment::declare_for(colorAttachmentView, on_load::dont_care, color(0), on_store::store) }, 
-				colorAttachmentView
+				shared(   colorAttachmentView)
 			);
 			mSkyboxFramebuffer[i]->initialize_attachments(avk::sync::wait_idle(true));
 		}
@@ -715,7 +715,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::culling_mode::disabled,	// No backface culling required
 			cfg::depth_test::disabled(),	// No depth test required
 			cfg::depth_write::disabled(),	// Don't write depth values
-			cfg::viewport_depth_scissors_config::from_framebuffer(wnd->backbuffer_at_index(0)), // Set to the dimensions of the main window
+					cfg::viewport_depth_scissors_config::from_framebuffer(avk::const_referenced(wnd->backbuffer_at_index(0))), // Set to the dimensions of the main window
 			descriptor_binding(0, 0, mMatricesUserInputBuffer[0])
 		);
 
@@ -729,7 +729,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSkyboxCommandBuffer[i]->begin_recording(); // Start recording commands into the command buffer
 			rdoc::beginSection(mSkyboxCommandBuffer[i]->handle(), "Skybox", i);
 			helpers::record_timing_interval_start(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
-			mSkyboxCommandBuffer[i]->bind_pipeline(mSkyboxPipeline);
+			mSkyboxCommandBuffer[i]->bind_pipeline(const_referenced(mSkyboxPipeline));
 			mSkyboxCommandBuffer[i]->begin_render_pass_for_framebuffer( // Start the renderpass defined for the attachments (in fact, the renderpass is created FROM the attachments, see renderpass_t::create)
 				mSkyboxPipeline->get_renderpass(),                   // <-- We'll use the pipeline's renderpass, where we have defined load/store operations.
 				mSkyboxFramebuffer[i]
@@ -737,7 +737,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSkyboxCommandBuffer[i]->bind_descriptors(mSkyboxPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({  // Bind the descriptors which describe resources used by shaders.
 				descriptor_binding(0, 0, mMatricesUserInputBuffer[i])                                  // In this case, we have one uniform buffer as resource (we have also declared that during mSkyboxPipeline creation).
 			}));
-			mSkyboxCommandBuffer[i]->draw_indexed(*mSphereIndexBuffer, *mSphereVertexBuffer); // Record the draw call
+			mSkyboxCommandBuffer[i]->draw_indexed(avk::const_referenced(mSphereIndexBuffer), avk::const_referenced(mSphereVertexBuffer)); // Record the draw call
 			mSkyboxCommandBuffer[i]->end_render_pass();
 			helpers::record_timing_interval_end(mSkyboxCommandBuffer[i]->handle(), fmt::format("mSkyboxCommandBuffer{} time", i));
 			rdoc::endSection(mSkyboxCommandBuffer[i]->handle());
@@ -790,7 +790,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				depthAttachmentView.enable_shared_ownership();
 				mShadowmapImageSamplers[i].push_back(
 					context().create_image_sampler(
-						depthAttachmentView,
+						avk::shared(depthAttachmentView),
 						//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
 						context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
 							[](avk::sampler_t & smp) {
@@ -799,7 +799,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						)
 					)
 				);
-				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(mShadowmapRenderpass, std::move(depthAttachmentView));
+				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(avk::shared(mShadowmapRenderpass), avk::shared(depthAttachmentView));
 				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 			}
 		}
@@ -982,7 +982,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			for (const auto& modelAndMeshIndices : pair.second) {
 				// Gather the model reference and the mesh indices of the same material in a vector:
 				auto& modelData = scene->model_at_index(modelAndMeshIndices.mModelIndex);
-				std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> modelRefAndMeshIndices = { std::make_tuple(std::cref(modelData.mLoadedModel), modelAndMeshIndices.mMeshIndices) };
+				std::vector<std::tuple<avk::resource_reference<const gvk::model_t>, std::vector<size_t>>> modelRefAndMeshIndices = { std::make_tuple(avk::const_referenced(modelData.mLoadedModel), modelAndMeshIndices.mMeshIndices) };
 				helpers::exclude_a_curtain(modelRefAndMeshIndices);
 				if (modelRefAndMeshIndices.empty()) continue;
 
@@ -993,7 +993,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						std::cout << "Parsing scene " << counter << "\r"; std::cout.flush();
 
 						std::vector<size_t> tmpMeshIndexVector = { meshIndex };
-						std::vector<std::tuple<std::reference_wrapper<const gvk::model_t>, std::vector<size_t>>> selection = { std::make_tuple(std::cref(modelData.mLoadedModel), tmpMeshIndexVector) };
+						std::vector<std::tuple<avk::resource_reference<const gvk::model_t>, std::vector<size_t>>> selection = { std::make_tuple(avk::const_referenced(modelData.mLoadedModel), tmpMeshIndexVector) };
 
 
 						// build a meshgroup, covering ALL orca-instances
@@ -1663,16 +1663,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
 		if (numDraws == 0) return; // no point in wasting a drawcall that draws nothing (though it would work just fine)
 		cmd->draw_indexed_indirect(
-			*mSceneData.mDrawCommandsBuffer,
-			*mSceneData.mIndexBuffer,
+			const_referenced(mSceneData.mDrawCommandsBuffer),
+			const_referenced(mSceneData.mIndexBuffer),
 			numDraws,
 			vk::DeviceSize{ firstDraw * sizeof(VkDrawIndexedIndirectCommand) },
 			static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)),	// cast is critical, won't compile without; draw_indexed suffers from the same problem btw.
-			*mSceneData.mPositionsBuffer,
-			*mSceneData.mTexCoordsBuffer,
-			*mSceneData.mNormalsBuffer,
-			*mSceneData.mTangentsBuffer,
-			*mSceneData.mBitangentsBuffer
+			const_referenced(mSceneData.mPositionsBuffer),
+			const_referenced(mSceneData.mTexCoordsBuffer),
+			const_referenced(mSceneData.mNormalsBuffer),
+			const_referenced(mSceneData.mTangentsBuffer),
+			const_referenced(mSceneData.mBitangentsBuffer)
 		);
 	}
 
@@ -1689,7 +1689,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::beginSection(cmd->handle(), "render dynamic object (animated)");
 			auto &pipe = shadowPass ? mPipelineShadowmapAnimObject : mPipelineAnimObject;
 
-			cmd->bind_pipeline(pipe);
+			cmd->bind_pipeline(const_referenced(pipe));	// MERGE!
 			if (shadowPass) {
 				cmd->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 					descriptor_binding(3, 0, mBoneMatricesBuffer[fif]),
@@ -1712,23 +1712,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
 				cmd->push_constants(pipe->layout(), pushc_dii);
-				if (shadowPass) {
+				if (shadowPass) {	// MERGE!
 					cmd->draw_indexed(
-						*md.mIndexBuffer,
-						*md.mPositionsBuffer,
-						*md.mBoneWeightsBuffer,
-						*md.mBoneIndicesBuffer
+						avk::const_referenced(md.mIndexBuffer),
+						avk::const_referenced(md.mPositionsBuffer),
+						avk::const_referenced(md.mBoneWeightsBuffer),
+						avk::const_referenced(md.mBoneIndicesBuffer)
 					);
 				} else {
 					cmd->draw_indexed(
-						*md.mIndexBuffer,
-						*md.mPositionsBuffer,
-						*md.mTexCoordsBuffer,
-						*md.mNormalsBuffer,
-						*md.mTangentsBuffer,
-						*md.mBitangentsBuffer,
-						*md.mBoneWeightsBuffer,
-						*md.mBoneIndicesBuffer
+						avk::const_referenced(md.mIndexBuffer),
+						avk::const_referenced(md.mPositionsBuffer),
+						avk::const_referenced(md.mTexCoordsBuffer),
+						avk::const_referenced(md.mNormalsBuffer),
+						avk::const_referenced(md.mTangentsBuffer),
+						avk::const_referenced(md.mBitangentsBuffer),
+						avk::const_referenced(md.mBoneWeightsBuffer),
+						avk::const_referenced(md.mBoneIndicesBuffer)
 					);
 				}
 			}
@@ -1745,22 +1745,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
-				if (shadowPass) {
+				if (shadowPass) {	// MERGE!
 					cmd->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
 					cmd->draw_indexed(
-						*md.mIndexBuffer,
-						*md.mPositionsBuffer
+						avk::const_referenced(md.mIndexBuffer),
+						avk::const_referenced(md.mPositionsBuffer)
 					);
 				} else {
 					const auto &pipe = FORWARD_RENDERING ? mPipelineFwdOpaque : mPipelineFirstPass;
 					cmd->push_constants(pipe->layout(), pushc_dii);
 					cmd->draw_indexed(
-						*md.mIndexBuffer,
-						*md.mPositionsBuffer,
-						*md.mTexCoordsBuffer,
-						*md.mNormalsBuffer,
-						*md.mTangentsBuffer,
-						*md.mBitangentsBuffer
+						avk::const_referenced(md.mIndexBuffer),
+						avk::const_referenced(md.mPositionsBuffer),
+						avk::const_referenced(md.mTexCoordsBuffer),
+						avk::const_referenced(md.mNormalsBuffer),
+						avk::const_referenced(md.mTangentsBuffer),
+						avk::const_referenced(md.mBitangentsBuffer)
 					);
 				}
 			}
@@ -1822,7 +1822,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}));
 
 			// bind pipeline, start renderpass
-			commandBuffer->bind_pipeline(mPipelineShadowmapOpaque);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));	// MERGE
 			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
@@ -1864,10 +1864,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif])
 		}));
-
+//
 		// Draw using our pipeline for the first pass (Initially this is the only
 		//   pass. After task 2 has been implemented, this is the G-Buffer pass):
-		commandBuffer->bind_pipeline(firstPipe);
+		commandBuffer->bind_pipeline(const_referenced(firstPipe));
 		commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 
 		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
@@ -1880,7 +1880,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if FORWARD_RENDERING
 		// draw the transparent parts of the scene
-		commandBuffer->bind_pipeline(secondPipe);
+		commandBuffer->bind_pipeline(const_referenced(secondPipe));
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
 		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
@@ -1890,7 +1890,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->next_subpass();
 
 		// TODO - is it necessary to rebind descriptors (pipes are compatible) ??
-		commandBuffer->bind_pipeline(secondPipe);
+		commandBuffer->bind_pipeline(const_referenced(secondPipe));
 		commandBuffer->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
@@ -1904,7 +1904,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(2, 2, mFramebuffer[fif]->image_view_at(3)->as_input_attachment(), shader_type::fragment)
 		}));
 
-		const auto& [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
+		auto [quadVertices, quadIndices] = helpers::get_quad_vertices_and_indices();
 		commandBuffer->draw_indexed(quadIndices, quadVertices);
 #endif
 
@@ -1915,7 +1915,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw test image
 		if (mTestImageSettings.enabled) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw test image");
-			commandBuffer->bind_pipeline(mPipelineTestImage);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineTestImage));
 			commandBuffer->bind_descriptors(mPipelineTestImage->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mTestImageSettings.bilinear ? mTestImageSampler_bilinear : mTestImageSampler_nearest),
 				descriptor_binding(0, 1, mTestImages[mTestImageSettings.imageId]),
@@ -1929,7 +1929,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw camera path
 		if (mCameraSpline.draw && mDrawCamPathPositions_valid) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw camera path");
-			commandBuffer->bind_pipeline(mPipelineDrawCamPath);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawCamPath));
 			commandBuffer->bind_descriptors(mPipelineDrawCamPath->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
@@ -1941,7 +1941,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw frustum
 		if (mShadowMap.drawFrustum) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw frustum");
-			commandBuffer->bind_pipeline(mPipelineDrawFrustum);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawFrustum));
 			commandBuffer->bind_descriptors(mPipelineDrawFrustum->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				}));
@@ -1953,7 +1953,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw shadowmap
 		if (mShadowMap.show) {
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
-			commandBuffer->bind_pipeline(mPipelineDrawShadowmap);
+			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawShadowmap));
 			commandBuffer->bind_descriptors(mPipelineDrawShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 				descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
@@ -2001,23 +2001,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				static auto texIdsAndDescriptions = [&]() {
 
 					// Gather all the framebuffer attachments to display them
-					std::vector<avk::image_view *> pViews;
-					for (size_t i = 0; i < mFramebuffer[0]->image_views().size(); ++i) pViews.push_back(&mFramebuffer[0]->image_view_at(i));
+					std::vector<avk::resource_reference<image_view_t>> pViews;
+					for (size_t i = 0; i < mFramebuffer[0]->image_views().size(); ++i) pViews.emplace_back(mFramebuffer[0]->image_view_at(i));
 #if ENABLE_SHADOWMAP
 					//pViews.push_back(&mShadowmapFramebuffer[0]->image_view_at(0));	// doesn't work, since alpha channel = 0, nothing is displayed
 #endif
 					std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
 					for (size_t i = 0; i < pViews.size(); ++i) {
-						if ((*pViews[i])->get_image().config().samples != vk::SampleCountFlagBits::e1) {
+						if (pViews[i]->get_image().config().samples != vk::SampleCountFlagBits::e1) {
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (!is_norm_format((*pViews[i])->get_image().config().format) && !is_float_format((*pViews[i])->get_image().config().format)) {
+							if (!is_norm_format(pViews[i]->get_image().config().format) && !is_float_format(pViews[i]->get_image().config().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
 								v.emplace_back(
-									ImGui_ImplVulkan_AddTexture(smplr->handle(), (*pViews[i])->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
+									ImGui_ImplVulkan_AddTexture(smplr->handle(), pViews[i]->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
 									fmt::format("Attachment #{}", i)
 								);
 							}
@@ -2110,13 +2110,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (CollapsingHeader("Rendering")) {
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
-					if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
-					HelpMarker("When disabled, simple alpha-testing is used.");
-					PushItemWidth(60);
-					InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
-					PopItemWidth();
-					SameLine();
-					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
+				if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
+				HelpMarker("When disabled, simple alpha-testing is used.");
+				PushItemWidth(60);
+				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
+				PopItemWidth();
+				SameLine();
+				Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
 					if (Button("Re-record commands")) mReRecordCommandBuffers = true;
 				}
@@ -2541,18 +2541,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		upload_materials_and_vertex_data_to_gpu();
 
-		std::array<image_view*, cConcurrentFrames> srcDepthImages;
-//		std::array<image_view*, cConcurrentFrames> srcUvNrmImages;
-//		std::array<image_view*, cConcurrentFrames> srcMatIdImages;
-		std::array<image_view, cConcurrentFrames> srcColorImages;
-		std::array<image_view*, cConcurrentFrames> srcVelocityImages;
+		std::array<image_view_t*, cConcurrentFrames> srcDepthImages;
+//		std::array<image_view_t*, cConcurrentFrames> srcUvNrmImages;
+//		std::array<image_view_t*, cConcurrentFrames> srcMatIdImages;
+		std::array<image_view_t*, cConcurrentFrames> srcColorImages;
+		std::array<image_view_t*, cConcurrentFrames> srcVelocityImages;
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
-			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1);
+			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1).get();
 //			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2);
 //			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(3);
-			srcColorImages[i]    = mFramebuffer[i]->image_view_at(0);
-			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4);
+			srcColorImages[i]    = &mFramebuffer[i]->image_view_at(0).get();
+			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4).get();
 		}
 
 		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages);
@@ -2891,7 +2891,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		update_camera_path_draw_buffer();
 
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
-		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
 
 #if RECORD_CMDBUFFER_IN_RENDER
 #if !FIX_BETA_DRIVER_CRASH
@@ -2899,8 +2899,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
 		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
-		mQueue->submit(cmdbfr, std::optional<std::reference_wrapper<avk::semaphore_t>> {});
-		mainWnd->handle_lifetime(std::move(cmdbfr));
+		mQueue->submit(cmdbfr, std::optional<avk::resource_reference<avk::semaphore_t>>{});
+		mainWnd->handle_lifetime(avk::owned(cmdbfr));
 
 #elif 0
 		// still crashes in forward-rendering, but no stack-overflow
@@ -2951,7 +2951,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
 #endif
 #else
-		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<std::reference_wrapper<avk::semaphore_t>> {});
+		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
 #endif
 
 		// anti_asiasing::render() will be invoked after this
