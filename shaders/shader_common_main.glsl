@@ -1,6 +1,9 @@
 //? #version 460
 // above line is just for the VS GLSL language integration plugin
 
+#ifndef SHADER_COMMON_MAIN_INCLUDED
+#define SHADER_COMMON_MAIN_INCLUDED 1
+
 #define TAU 6.28318530718 // TAU = 2 * PI
 
 // ----- helper functions
@@ -166,3 +169,5 @@ struct MaterialGpuData {
 	vec4 mLightmapTexOffsetTiling;
 	vec4 mExtraTexOffsetTiling;
 };
+
+#endif

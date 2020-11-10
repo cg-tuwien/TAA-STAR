@@ -1,3 +1,6 @@
+#ifndef SHADER_CPU_COMMON_INCLUDED
+#define SHADER_CPU_COMMON_INCLUDED 1
+
 // specialization constants
 #define SPECCONST_ID_TRANSPARENCY	    1u
 #define SPECCONST_VAL_OPAQUE			0u
@@ -45,3 +48,5 @@
 // for debugging
 #define USE_DEBUG_POSBUFFERS	1
 #define IMAGE_FORMAT_POSITION			vk::Format::eR16G16B16A16Sfloat
+
+#endif

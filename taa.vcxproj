@@ -57,6 +57,7 @@
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
     <None Include="shaders\animatedObject.vert" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
+    <None Include="shaders\calc_shadows.glsl" />
     <None Include="shaders\drawpath.frag" />
     <None Include="shaders\drawpath.vert" />
     <None Include="shaders\draw_frustum.frag" />

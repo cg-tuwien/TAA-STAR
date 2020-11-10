@@ -4,6 +4,7 @@
 // -------------------------------------------------------
 
 #include "shader_common_main.glsl"
+#include "shader_cpu_common.h"
 
 // ###### MATERIAL DATA ##################################
 // The actual material buffer (of type MaterialGpuData):
@@ -25,6 +26,15 @@ layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 
 // "mLightsources" uniform buffer containing all the light source data:
 layout(set = 1, binding = 1) UNIFORMDEF_LightsourceData uboLights;
+
+#if ENABLE_SHADOWMAP
+layout(set = SHADOWMAP_BINDING_SET, binding = SHADOWMAP_BINDING_SLOT) uniform sampler2DShadow shadowMap[];
+#endif
+
+// -------------------------------------------------------
+
+// include shadow calculation after uniforms are defined
+#include "calc_shadows.glsl"
 
 // -------------------------------------------------------
 
@@ -170,6 +180,14 @@ void main()
 	vec4 viewSpace = inverse(uboMatUsr.mProjMatrix) * clipSpace;
 	vec3 positionVS = viewSpace.xyz / viewSpace.w;
 
+	#if ENABLE_SHADOWMAP
+		vec4 worldSpace = inverse(uboMatUsr.mViewMatrix) * viewSpace;
+		worldSpace /= worldSpace.w;
+		float shadowFactor = calc_shadow_factor(worldSpace);
+	#else
+		float shadowFactor = 1.0;
+	#endif
+
 	vec3  diffTexColor = sample_from_diffuse_texture(matIndex, uv).rgb;
 	float specTexValue = sample_from_specular_texture(matIndex, uv).r;
 	vec3  emissiveTexColor = sample_from_emissive_texture(matIndex, uv).rgb; // ac
@@ -186,23 +204,27 @@ void main()
 	vec3 spec       = materialsBuffer.materials[matIndex].mSpecularReflectivity.rgb * specTexValue;
 	float shininess = materialsBuffer.materials[matIndex].mShininess;
 
+	// Calculate ambient illumination:
+	vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
+	for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
+		ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
+	}
+
+	// Calculate diffuse and specular illumination from all light sources:
+	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
+
+	// Add all together:
+	vec4 blinnPhongColor = vec4(shadowFactor * vec3(ambientIllumination + emissive + diffAndSpecIllumination), 1.0);
+
+
 	if (uboMatUsr.mUserInput.z < 1.f) {
-		// Calculate ambient illumination:
-		vec3 ambientIllumination = vec3(0.0, 0.0, 0.0);
-		for (uint i = uboLights.mRangesAmbientDirectional[0]; i < uboLights.mRangesAmbientDirectional[1]; ++i) {
-			ambientIllumination += uboLights.mLightData[i].mColor.rgb * ambient;
-		}
-
-		// Calculate diffuse and specular illumination from all light sources:
-		vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
-
-		// Add all together:
-		oFragColor = vec4(ambientIllumination + emissive + diffAndSpecIllumination, 1.0);
-
+		oFragColor = blinnPhongColor;
 	} else if (uboMatUsr.mUserInput.z < 2.f) {
 		// don't use lights
 		oFragColor = vec4(diff, 1.0);
-
+	} else if (uboMatUsr.mUserInput.z < 3.f) {
+		// Debug: SM cascade
+		oFragColor = debug_shadow_cascade_color() * blinnPhongColor;
 	} else {
 		// other debug modes not used here
 		oFragColor = vec4(1,0,1,1);

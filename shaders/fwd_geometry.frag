@@ -47,6 +47,11 @@ layout(set = 1, binding = 1) UNIFORMDEF_LightsourceData uboLights;
 
 // -------------------------------------------------------
 
+// include shadow calculation after uniforms are defined
+#include "calc_shadows.glsl"
+
+// -------------------------------------------------------
+
 // ###### FRAG INPUT #####################################
 layout (location = 0) in VertexData
 {
@@ -236,46 +241,31 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 }
 
 // -------------------------------------------------------
-/*
-float calcPlainShadow(vec3 pNDC) {
-	float shadow = 0.;
-	pNDC.xy = pNDC.xy * .5 + .5; // transform [-1;1] to [0;1] -- NOT for z in Vulkan!
 
-	// Note: no bias here, this is set in main prog via hardware depth bias
-
-#if 0
-	vec2 delta = 1. / textureSize(psm, 0); // texel size of shadow map
-	for (int dx = -1; dx <= 1; ++dx) {
-		for (int dy = -1; dy <= 1; ++dy) {
-			float d = texture(psm, pNDC.xy + vec2(dx,dy) * delta).r;
-			if (d < zMax && d < pNDC.z) shadow += 1.;
-		}
-	}
-	// Note: tried unrolling the loops - no perf. gain
-	shadow /= 9.;
-
-#else
-	float d = texture(psm, pNDC.xy).r;
-	if (d < zMax && d < pNDC.z) shadow = 1.;
-#endif
-
-	return shadow;
-}
-*/
-// -------------------------------------------------------
-
+//int gDebugShadowCascade = -1;
 //float shadow_factor() {
 //#if ENABLE_SHADOWMAP
 //	if (!uboMatUsr.mUseShadowMap) return 1.0;
 //
+//	// find cascade to use // TODO - optimize
+//	int cascade = SHADOWMAP_NUM_CASCADES-1;
+//	for (int i = 0; i < SHADOWMAP_NUM_CASCADES-1; ++i) {
+//		if (gl_FragCoord.z < uboMatUsr.mShadowMapMaxDepth[i]) {
+//			cascade = i;
+//			break;
+//		}
+//	}
+//	gDebugShadowCascade = cascade;
+//
+//
 //	float light = 1.0;
 //
-//	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[0] * fs_in.positionWS;
+//	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[cascade] * fs_in.positionWS;
 //	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
 //	p.xy = p.xy * .5 + .5;
 //	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
 //		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
-//		light = texture(shadowMap[0], p.xyz);
+//		light = texture(shadowMap[cascade], p.xyz);
 //		light = 1.0 - (1.0 - light) * 0.75;
 //	}
 //
@@ -284,39 +274,6 @@ float calcPlainShadow(vec3 pNDC) {
 //	return 1.0;
 //#endif
 //}
-
-int gDebugShadowCascade = -1;
-float shadow_factor() {
-#if ENABLE_SHADOWMAP
-	if (!uboMatUsr.mUseShadowMap) return 1.0;
-
-	// find cascade to use // TODO - optimize
-	int cascade = SHADOWMAP_NUM_CASCADES-1;
-	for (int i = 0; i < SHADOWMAP_NUM_CASCADES-1; ++i) {
-		if (gl_FragCoord.z < uboMatUsr.mShadowMapMaxDepth[i]) {
-			cascade = i;
-			break;
-		}
-	}
-	gDebugShadowCascade = cascade;
-
-
-	float light = 1.0;
-
-	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[cascade] * fs_in.positionWS;
-	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
-	p.xy = p.xy * .5 + .5;
-	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
-		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
-		light = texture(shadowMap[cascade], p.xyz);
-		light = 1.0 - (1.0 - light) * 0.75;
-	}
-
-	return light;
-#else
-	return 1.0;
-#endif
-}
 
 
 
@@ -367,7 +324,7 @@ void main()
 	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
 
 	// Add all together:
-	vec4 blinnPhongColor = vec4(shadow_factor() * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
+	vec4 blinnPhongColor = vec4(calc_shadow_factor(fs_in.positionWS) * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
 
 	if (uboMatUsr.mUserInput.z < 1.f) {
 		oFragColor = blinnPhongColor;
@@ -376,13 +333,7 @@ void main()
 		oFragColor = vec4(diff, alpha);
 	} else if (uboMatUsr.mUserInput.z < 3.f) {
 		// Debug: SM cascade
-		vec3 cascCol;
-		if      (gDebugShadowCascade <  0) cascCol = vec3(1);
-		else if (gDebugShadowCascade == 0) cascCol = vec3(0, 1, 0);
-		else if (gDebugShadowCascade == 1) cascCol = vec3(1, 1, 0);
-		else if (gDebugShadowCascade == 2) cascCol = vec3(0.6, 0.6, 1);
-		else                               cascCol = vec3(1, 0.6, 1);
-		oFragColor = vec4(cascCol,1) * blinnPhongColor;
+		oFragColor = debug_shadow_cascade_color() * blinnPhongColor;
 	} else if (uboMatUsr.mUserInput.z < 4.f) {
 		// Debug: show normals
 		vec3 normalWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);

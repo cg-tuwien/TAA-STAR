@@ -17,7 +17,7 @@
 #define FIX_BETA_DRIVER_CRASH	1
 
 // use forward rendering? (if 0: use deferred shading)
-#define FORWARD_RENDERING 0
+#define FORWARD_RENDERING 1
 
 // use the gvk updater for shader hot reloading and window resizing ?
 #define USE_GVK_UPDATER 0
@@ -1402,6 +1402,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
 			descriptor_binding(2, 0, mFramebuffer[0]->image_view_at(1)->as_input_attachment(), shader_type::fragment),
@@ -1887,10 +1888,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		rdoc::beginSection(commandBuffer->handle(), "Render models", fif);
 		helpers::record_timing_interval_start(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
 
-		auto pipe = const_referenced(firstPipe);
-
 		// Bind the descriptors for descriptor sets 0 and 1 before starting to render with a pipeline
-		commandBuffer->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
+		commandBuffer->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
@@ -1903,12 +1902,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Draw using our pipeline for the first pass (Initially this is the only
 		//   pass. After task 2 has been implemented, this is the G-Buffer pass):
-		commandBuffer->bind_pipeline(const_referenced(pipe));
-		commandBuffer->begin_render_pass_for_framebuffer(pipe->get_renderpass(), mFramebuffer[fif]);
+		commandBuffer->bind_pipeline(const_referenced(firstPipe));
+		commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 
 		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
 		pushc_dii.mDrawIdOffset = 0;
-		commandBuffer->push_constants(pipe->layout(), pushc_dii);
+		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
 		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
 
 		// draw dynamic objects
@@ -1916,10 +1915,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if FORWARD_RENDERING
 		// draw the transparent parts of the scene
-		pipe = secondPipe;
-		commandBuffer->bind_pipeline(const_referenced(pipe));
+		commandBuffer->bind_pipeline(const_referenced(secondPipe));
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
-		commandBuffer->push_constants(pipe->layout(), pushc_dii);
+		commandBuffer->push_constants(secondPipe->layout(), pushc_dii);
 		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
 #else
 		// Move on to next subpass, synchronizing all data to be written to memory,
@@ -1934,6 +1932,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
 			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
 			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif]),
 			descriptor_binding(2, 0, mFramebuffer[fif]->image_view_at(1)->as_input_attachment(), shader_type::fragment),
