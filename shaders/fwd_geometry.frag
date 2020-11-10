@@ -31,7 +31,7 @@ layout(set = 0, binding = 1) uniform sampler2D textures[];
 // set 0, binding 2-4 used in vertex shader
 
 #if ENABLE_SHADOWMAP
-layout(set = 4, binding = 0) uniform sampler2DShadow shadowMap[];
+layout(set = SHADOWMAP_BINDING_SET, binding = SHADOWMAP_BINDING_SLOT) uniform sampler2DShadow shadowMap[];
 #endif
 
 // -------------------------------------------------------

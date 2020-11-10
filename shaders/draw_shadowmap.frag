@@ -5,7 +5,7 @@
 
 #include "shader_cpu_common.h"
 
-layout(set = 4, binding = 0) uniform texture2D texShadowMap[];
+layout(set = SHADOWMAP_BINDING_SET, binding = SHADOWMAP_BINDING_SLOT) uniform texture2D texShadowMap[];
 layout(set = 5, binding = 0) uniform sampler uSampler;
 
 layout (location = 0) out vec4 oFragColor;

@@ -39,6 +39,8 @@
 #define IMAGE_FORMAT_VELOCITY			vk::Format::eR16G16B16A16Sfloat
 
 #define IMAGE_FORMAT_SHADOWMAP			vk::Format::eD32Sfloat
+#define SHADOWMAP_BINDING_SET			0
+#define SHADOWMAP_BINDING_SLOT			5
 
 // for debugging
 #define USE_DEBUG_POSBUFFERS	1
