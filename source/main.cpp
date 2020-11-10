@@ -116,23 +116,11 @@
 
 
 #if ENABLE_SHADOWMAP
-//#if SHADOWMAP_NUM_CASCADES == 1
-//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]),
-//#elif SHADOWMAP_NUM_CASCADES == 2
-//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]), \
-//                                            descriptor_binding(4, 1, mShadowmapPerCascade[1].mShadowmapImageSampler[fif_]),
-//#elif SHADOWMAP_NUM_CASCADES == 3
-//#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapPerCascade[0].mShadowmapImageSampler[fif_]), \
-//                                            descriptor_binding(4, 1, mShadowmapPerCascade[1].mShadowmapImageSampler[fif_]), \
-//                                            descriptor_binding(4, 2, mShadowmapPerCascade[2].mShadowmapImageSampler[fif_]),
-//#else
-//#error "Only 3 cascades defined"
-//#endif
 #define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_) descriptor_binding(4, 0, mShadowmapImageSamplers[fif_]),
 #define SHADOWMAP_DESCRIPTOR_BINDINGS_(fif_) descriptor_binding(4, 0, mShadowmapImageSamplers[fif_])
 #else
-#define SHADOWMAP_DESCRIPTOR_BINDING(fif_)
-#define SHADOWMAP_DESCRIPTOR_BINDING_(fif_)
+#define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_)
+#define SHADOWMAP_DESCRIPTOR_BINDINGS_(fif_)
 #endif
 
 
