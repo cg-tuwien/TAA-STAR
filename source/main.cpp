@@ -1838,7 +1838,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (mShadowMap.enableForTransparency) {
 					// // draw the transparent parts of the scene
-					commandBuffer->bind_pipeline(mPipelineShadowmapTransparent);
+					commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapTransparent));
 					pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 					commandBuffer->push_constants(mPipelineShadowmapTransparent->layout(), pushc_dii);
 					draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
