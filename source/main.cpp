@@ -1617,6 +1617,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 #if ENABLE_SHADOWMAP
+		cfg::depth_clamp_bias depthClampBiasDynamicAndEnabled = cfg::depth_clamp_bias::dynamic();	// .dynamic() does NOT automatically enable depth bias!
+		depthClampBiasDynamicAndEnabled.mEnableDepthBias = true;
+
 		mPipelineShadowmapOpaque = context().create_graphics_pipeline_for(
 			vertex_shader("shaders/shadowmap.vert.spv"), // no fragment shader
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
@@ -1624,6 +1627,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
+			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha (not here, but maintain layout compatibility)
@@ -1642,6 +1646,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mShadowmapRenderpass,
 			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
+			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha
@@ -1660,6 +1665,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mShadowmapRenderpass,
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
+			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
@@ -1725,8 +1731,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		print_pipeline_info(&mSkyboxPipeline,					"mSkyboxPipeline");
 	}
 
-	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws) {
+	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws, int shadowCascade = -1) {
 		if (numDraws == 0) return; // no point in wasting a drawcall that draws nothing (though it would work just fine)
+
+		// set depth bias in shadow pass
+		if (shadowCascade >= 0) {
+			// TODO: is there no avk-method to set depth bias?
+			if (mShadowMap.depthBias[shadowCascade].enable) {
+				cmd->handle().setDepthBias(mShadowMap.depthBias[shadowCascade].constant, mShadowMap.depthBias[shadowCascade].clamp, mShadowMap.depthBias[shadowCascade].slope);
+			} else {
+				cmd->handle().setDepthBias(0.f, 0.f, 0.f);
+			}
+		}
+
 		cmd->draw_indexed_indirect(
 			const_referenced(mSceneData.mDrawCommandsBuffer),
 			const_referenced(mSceneData.mIndexBuffer),
@@ -1914,7 +1931,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));
 				pushc_dii.mDrawIdOffset = 0;
 				commandBuffer->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
-				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups);
+				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups, cascade);
 
 				// draw dynamic objects
 				draw_dynamic_objects(commandBuffer, fif, cascade);
@@ -1924,7 +1941,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapTransparent));
 					pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 					commandBuffer->push_constants(mPipelineShadowmapTransparent->layout(), pushc_dii);
-					draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
+					draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups, cascade);
 				}
 
 				commandBuffer->end_render_pass();
@@ -2348,7 +2365,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (Checkbox("show shadowmap", &mShadowMap.show)) mReRecordCommandBuffers = true;
 					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) mReRecordCommandBuffers = true;
 
-					InputFloat("bias", &mShadowMap.bias);
+					Checkbox("restrict to scene", &mShadowMap.shadowMapUtil.restrictLightViewToScene);
 					SliderInt("num cascades", &mShadowMap.desiredNumCascades, 1, SHADOWMAP_MAX_CASCADES);
 					PushItemWidth(40);
 					Text("Casc:");
@@ -2360,7 +2377,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					if (Checkbox("auto##autocascade", &mShadowMap.autoCalcCascadeEnds) && mShadowMap.autoCalcCascadeEnds) mShadowMap.shadowMapUtil.calc_cascade_ends();
 					PopItemWidth();
-					Checkbox("restrict to scene", &mShadowMap.shadowMapUtil.restrictLightViewToScene);
+
+					InputFloat("manual bias", &mShadowMap.bias);
+					Text("Depth bias (constant, slope, clamp):");
+					bool mod = false;
+					for (int i = 0; i < mShadowMap.numCascades; ++i) {
+						PushID(i);
+						PushItemWidth(60);
+						Text("%d", i); SameLine();
+						mod = mod || Checkbox("##dbenable", &mShadowMap.depthBias[i].enable);						SameLine();
+						mod = mod || InputFloat("##dbconst", &mShadowMap.depthBias[i].constant, .0f, .0f, "%.2f");	SameLine();
+						mod = mod || InputFloat("##dbslope", &mShadowMap.depthBias[i].slope,    .0f, .0f, "%.2f");	SameLine();
+						mod = mod || InputFloat("##dbclamp", &mShadowMap.depthBias[i].clamp,    .0f, .0f, "%.2f");
+						PopItemWidth();
+						PopID();
+					}
+					if (mod) mReRecordCommandBuffers = true;
+
 					PopID();
 				}
 
@@ -3475,10 +3508,21 @@ private: // v== Member variables ==v
 	std::string mNotepad = "";
 
 	struct {
-		float bias = 0.002f;
+		float bias = 0.f; //0.002f;
 		int numCascades = SHADOWMAP_INITIAL_CASCADES;
 		int desiredNumCascades = numCascades;
 		bool autoCalcCascadeEnds = true;
+
+		struct ShadowMapDepthBias {
+			bool enable;
+			float constant, clamp, slope;
+		};
+		ShadowMapDepthBias depthBias[SHADOWMAP_MAX_CASCADES] = {
+			{ true, 0.0f, 0.0f, 1.0f},
+			{ true, 0.0f, 0.0f, 1.0f},
+			{ true, 0.0f, 0.0f, 1.0f},
+			{ true, 0.0f, 0.0f, 1.0f},
+		};
 
 		bool enable = false; // true;
 		bool enableForTransparency = false;// true;
