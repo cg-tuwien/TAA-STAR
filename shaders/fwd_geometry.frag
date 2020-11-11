@@ -242,41 +242,6 @@ vec3 calc_illumination_in_vs(vec3 posVS, vec3 normalVS, vec3 diff, vec3 spec, fl
 
 // -------------------------------------------------------
 
-//int gDebugShadowCascade = -1;
-//float shadow_factor() {
-//#if ENABLE_SHADOWMAP
-//	if (!uboMatUsr.mUseShadowMap) return 1.0;
-//
-//	// find cascade to use // TODO - optimize
-//	int cascade = SHADOWMAP_NUM_CASCADES-1;
-//	for (int i = 0; i < SHADOWMAP_NUM_CASCADES-1; ++i) {
-//		if (gl_FragCoord.z < uboMatUsr.mShadowMapMaxDepth[i]) {
-//			cascade = i;
-//			break;
-//		}
-//	}
-//	gDebugShadowCascade = cascade;
-//
-//
-//	float light = 1.0;
-//
-//	vec4 p = uboMatUsr.mShadowmapProjViewMatrix[cascade] * fs_in.positionWS;
-//	p /= p.w; // no w-division should be needed if light proj is ortho... but .w could be off due to bone transforms (?), so do it anyway
-//	p.xy = p.xy * .5 + .5;
-//	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
-//		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
-//		light = texture(shadowMap[cascade], p.xyz);
-//		light = 1.0 - (1.0 - light) * 0.75;
-//	}
-//
-//	return light;
-//#else
-//	return 1.0;
-//#endif
-//}
-
-
-
 // ###### FRAGMENT SHADER MAIN #############################
 void main()
 {

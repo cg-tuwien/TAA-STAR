@@ -40,6 +40,7 @@ public:
 
 	void init(const BoundingBox &aSceneBoundingBox, float camNear, float camFar, int aShadowMapTextureSize, int numCascades, bool autoCalcCascades);
 	void calc(const glm::vec3 &aLightDirection, const glm::mat4 &aCamViewMatrix, const glm::mat4 &aCamProjMatrix, std::optional<glm::vec3> aIncludeThisPoint = std::nullopt);
+	void calc_cascade_ends();
 	glm::mat4 view_matrix() { return mViewMatrix; }
 	glm::mat4 projection_matrix(int cascade = 0) { return mCascadeProjMatrix[cascade]; }
 	float max_depth(int cascade) { return mCascadeDepthBounds[cascade]; }

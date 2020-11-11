@@ -19,8 +19,8 @@ float calc_shadow_factor(in vec4 positionWS) {
 	if (!uboMatUsr.mUseShadowMap) return 1.0;
 
 	// find cascade to use // TODO - optimize
-	int cascade = SHADOWMAP_NUM_CASCADES-1;
-	for (int i = 0; i < SHADOWMAP_NUM_CASCADES-1; ++i) {
+	int cascade = uboMatUsr.mShadowNumCascades-1;
+	for (int i = 0; i < uboMatUsr.mShadowNumCascades-1; ++i) {
 		if (gl_FragCoord.z < uboMatUsr.mShadowMapMaxDepth[i]) {
 			cascade = i;
 			break;

@@ -37,7 +37,7 @@ void main() {
 	int cascade = vertId / 24;
 	vertId %= 24;
 
-	if (cascade < 4 && cascade >= SHADOWMAP_NUM_CASCADES) {
+	if (cascade < 4 && cascade >= uboMatUsr.mShadowNumCascades) {
 		out_color = vec3(0);
 		gl_Position = vec4(2,2,2,1);
 		return;

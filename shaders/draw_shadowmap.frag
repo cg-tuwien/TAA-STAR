@@ -3,8 +3,10 @@
 #extension GL_GOOGLE_include_directive : enable
 // -------------------------------------------------------
 
+#include "shader_common_main.glsl"
 #include "shader_cpu_common.h"
 
+layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 layout(set = SHADOWMAP_BINDING_SET, binding = SHADOWMAP_BINDING_SLOT) uniform texture2D texShadowMap[];
 layout(set = 5, binding = 0) uniform sampler uSampler;
 
@@ -31,7 +33,7 @@ void main() {
 		cascade = 3;
 		uv = (f_in.texCoords - vec2(0.5, 0.5)) * 2.0;
 	}
-	if (cascade < SHADOWMAP_NUM_CASCADES) {
+	if (cascade < uboMatUsr.mShadowNumCascades) {
 		oFragColor = vec4(vec3(texture(sampler2D(texShadowMap[cascade], uSampler), uv).r), 1.0);
 	} else {
 		oFragColor = vec4(0,0,0,1);

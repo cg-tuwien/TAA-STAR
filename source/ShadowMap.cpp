@@ -14,18 +14,19 @@ void ShadowMap::init(const BoundingBox & aSceneBoundingBox, float camNear, float
 		mCascadeProjMatrix[i] = mCascadeVPMatrix[i] = glm::mat4(1);
 	}
 
-	if (autoCalcCascades) {
-		// see article "Cascaded Shadow Maps" by Rouslan Dimitrov for NVIDIA OpenGL SDK sample about CSM
-		float lambda = .75f;
-		float ratio = mCamFar / mCamNear;
-		for (int i = 1; i < mNumCascades; i++) {
-			float z = lambda * mCamNear * powf(mCamFar / mCamNear, (float)i / mNumCascades) + (1.0f - lambda)*(mCamNear + ((float)i / mNumCascades)*(mCamFar - mCamNear));
-			cascadeEnd[i - 1] = (z - mCamNear) / (mCamFar - mCamNear);
-			//PRINTOUT("z(" << i << ")=" << z << ", cascadeEnd[" << i-1 << "]=" << cascadeEnd[i-1]);
-		}
-		cascadeEnd[mNumCascades - 1] = 1.0f;
-	}
+	if (autoCalcCascades) calc_cascade_ends();
+}
 
+void ShadowMap::calc_cascade_ends() {
+	// see article "Cascaded Shadow Maps" by Rouslan Dimitrov for NVIDIA OpenGL SDK sample about CSM
+	float lambda = .75f;
+	float ratio = mCamFar / mCamNear;
+	for (int i = 1; i < mNumCascades; i++) {
+		float z = lambda * mCamNear * powf(mCamFar / mCamNear, (float)i / mNumCascades) + (1.0f - lambda)*(mCamNear + ((float)i / mNumCascades)*(mCamFar - mCamNear));
+		cascadeEnd[i - 1] = (z - mCamNear) / (mCamFar - mCamNear);
+		//PRINTOUT("z(" << i << ")=" << z << ", cascadeEnd[" << i-1 << "]=" << cascadeEnd[i-1]);
+	}
+	cascadeEnd[mNumCascades - 1] = 1.0f;
 }
 
 void ShadowMap::calc(const glm::vec3 & aLightDirection, const glm::mat4 & aCamViewMatrix, const glm::mat4 & aCamProjMatrix, std::optional<glm::vec3> aIncludeThisPoint)

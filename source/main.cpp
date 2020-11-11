@@ -34,6 +34,10 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
+	- Performance! Esp. w/ shadows!
+
+	- Shadows: remove manual bias, add polygon offsets
+
 	- cleanup TODO list ;-)   remove obsolete stuff, add notes from scratchpads
 
 	- do on-GPU visibility culling?
@@ -187,7 +191,9 @@ class wookiee : public gvk::invokee
 		float mLodBias;
 		VkBool32 mUseShadowMap;
 		float mShadowBias;
-		float pad1;
+		int mShadowNumCascades;
+
+		// float pad when necessary
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -378,13 +384,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		static bool prevFrameValid = false;
 
 		matrices_and_user_input mMatricesAndUserInput = {};
-		mMatricesAndUserInput.mViewMatrix	= mQuakeCam.view_matrix();
-		mMatricesAndUserInput.mProjMatrix	= mQuakeCam.projection_matrix();
-		mMatricesAndUserInput.mCamPos		= glm::translate(mQuakeCam.translation());
-		mMatricesAndUserInput.mUserInput	= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
-		mMatricesAndUserInput.mLodBias		= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
-		mMatricesAndUserInput.mUseShadowMap = mShadowMap.enable;
-		mMatricesAndUserInput.mShadowBias   = mShadowMap.bias;
+		mMatricesAndUserInput.mViewMatrix			= mQuakeCam.view_matrix();
+		mMatricesAndUserInput.mProjMatrix			= mQuakeCam.projection_matrix();
+		mMatricesAndUserInput.mCamPos				= glm::translate(mQuakeCam.translation());
+		mMatricesAndUserInput.mUserInput			= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
+		mMatricesAndUserInput.mLodBias				= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
+		mMatricesAndUserInput.mUseShadowMap			= mShadowMap.enable;
+		mMatricesAndUserInput.mShadowBias			= mShadowMap.bias;
+		mMatricesAndUserInput.mShadowNumCascades	= mShadowMap.numCascades;
 
 		mMatricesAndUserInput.mDebugCamProjViewMatrix = effectiveCam_proj_matrix() * effectiveCam_view_matrix(); // for drawing frustum
 
@@ -404,7 +411,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if ENABLE_SHADOWMAP
 		// shadowmap matrices
 		mShadowMap.shadowMapUtil.calc(mDirLight.dir, effectiveCam_view_matrix(), effectiveCam_proj_matrix());
-		for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+		for (int cascade = 0; cascade < mShadowMap.numCascades; ++cascade) {
 			mMatricesAndUserInput.mShadowmapProjViewMatrix[cascade] = mShadowMap.shadowMapUtil.projection_matrix(cascade) * mShadowMap.shadowMapUtil.view_matrix();
 			mMatricesAndUserInput.mShadowMapMaxDepth[cascade] = mShadowMap.shadowMapUtil.max_depth(cascade);
 		}
@@ -740,20 +747,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto* wnd = gvk::context().main_window();
 
-		auto fif = wnd->number_of_frames_in_flight();
-		for (decltype(fif) i = 0; i < fif; ++i) mShadowmapImageSamplers[i].clear();
+		auto numFif = wnd->number_of_frames_in_flight();
+		//for (decltype(fif) i = 0; i < fif; ++i) mShadowmapImageSamplers[i].clear();
+
+		std::vector<std::array<avk::image_view, SHADOWMAP_MAX_CASCADES>> depthViews(numFif);
 
 		// create framebuffers & (one) renderpass
-		for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
-			for (decltype(fif) i = 0; i < fif; ++i) {
+		for (int cascade = 0; cascade < mShadowMap.numCascades; ++cascade) {
+			if (mShadowmapPerCascade[cascade].mShadowmapFramebuffer[0].has_value()) continue; // already alloced framebuffers for this cascade
+			for (decltype(numFif) i = 0; i < numFif; ++i) {
 				auto depthAttachment = context().create_image(SHADOWMAP_SIZE, SHADOWMAP_SIZE, IMAGE_FORMAT_SHADOWMAP, 1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::sampled);
 				depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it
 				rdoc::labelImage(depthAttachment->handle(), std::string("shadowDepthAttachment_C" + std::to_string(cascade)).c_str(), i);
-				auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+				depthViews[i][cascade] = context().create_depth_image_view(std::move(depthAttachment));
+				
 
-				if (0 == i && 0 == cascade) {
+				if (!mShadowmapRenderpass.has_value()) {
 					mShadowmapRenderpass = context().create_renderpass(
-						{ attachment::declare_for(depthAttachmentView, on_load::clear, depth_stencil(), on_store::store) },
+						{ attachment::declare_for(depthViews[i][cascade], on_load::clear, depth_stencil(), on_store::store) },
 						[](avk::renderpass_sync& aRpSync) {
 							if (aRpSync.is_external_pre_sync()) {
 								aRpSync.mSourceStage = avk::pipeline_stage::top_of_pipe;
@@ -775,25 +786,61 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				// FIXME - filter, border
-				depthAttachmentView.enable_shared_ownership();
-				mShadowmapImageSamplers[i].push_back(
+				depthViews[i][cascade].enable_shared_ownership();
+				//mShadowmapImageSamplers[i].push_back(
+				(mShadowmapImageSamplers[i])[cascade] =
 					context().create_image_sampler(
-						avk::shared(depthAttachmentView),
+						avk::shared(depthViews[i][cascade]),
 						//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
 						context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
 							[](avk::sampler_t & smp) {
 								smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
 							}
 						)
-					)
-				);
-				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(avk::shared(mShadowmapRenderpass), avk::shared(depthAttachmentView));
+					);
+				
+				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i] = context().create_framebuffer(avk::shared(mShadowmapRenderpass), avk::shared(depthViews[i][cascade]));
 				mShadowmapPerCascade[cascade].mShadowmapFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 			}
 		}
 
+		static bool first_time_here = true;
+		if (first_time_here) {
+			// fill in image samplers for (so far) unused cascades (need those valid for pipeline creation); first-time init only
+			for (int cascade = mShadowMap.numCascades; cascade < SHADOWMAP_MAX_CASCADES; ++cascade) {
+				for (decltype(numFif) i = 0; i < numFif; ++i) {
+					if (!(mShadowmapImageSamplers[i])[cascade].has_value()) {
+						(mShadowmapImageSamplers[i])[cascade] =
+							context().create_image_sampler(
+								avk::shared(depthViews[i][0]), // set to cascade #0
+								context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
+									[](avk::sampler_t & smp) {
+										smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
+									}
+								)
+							);
+					}
+				}
+			}
+		}
+		first_time_here = false;
+
 		// pipeline is created in prepare_common_pipelines
 #endif
+	}
+
+	void re_init_shadowmap() {
+		// if the user selected more cascades than were originally set, we may need to alloc more framebuffers
+		if (mShadowMap.desiredNumCascades > mShadowMap.numCascades) {
+			gvk::context().device().waitIdle();
+			mShadowMap.numCascades = mShadowMap.desiredNumCascades;
+			prepare_shadowmap();
+		} else {
+			mShadowMap.numCascades = mShadowMap.desiredNumCascades;
+		}
+
+		mShadowMap.shadowMapUtil.init(mSceneData.mBoundingBox, mQuakeCam.near_plane_distance(), mQuakeCam.far_plane_distance(), SHADOWMAP_SIZE, mShadowMap.numCascades, mShadowMap.autoCalcCascadeEnds);
+
 	}
 
 	// ac: output info about the scene structure
@@ -1637,6 +1684,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			cfg::depth_test::disabled(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
 			mRenderpass, subpass,
+			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
 		);
@@ -1858,7 +1906,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// bind pipeline, start renderpass
 			commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));
-			for (int cascade = 0; cascade < SHADOWMAP_NUM_CASCADES; ++cascade) {
+			for (int cascade = 0; cascade < mShadowMap.numCascades; ++cascade) {
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
 				commandBuffer->begin_render_pass_for_framebuffer(mShadowmapRenderpass, mShadowmapPerCascade[cascade].mShadowmapFramebuffer[fif]);
@@ -1991,6 +2039,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::beginSection(commandBuffer->handle(), "Draw shadow map");
 			commandBuffer->bind_pipeline(const_referenced(mPipelineDrawShadowmap));
 			commandBuffer->bind_descriptors(mPipelineDrawShadowmap->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 				descriptor_binding(5, 0, mGenericSamplerNearestNeighbour)
 				}));
@@ -2300,13 +2349,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) mReRecordCommandBuffers = true;
 
 					InputFloat("bias", &mShadowMap.bias);
+					SliderInt("num cascades", &mShadowMap.desiredNumCascades, 1, SHADOWMAP_MAX_CASCADES);
 					PushItemWidth(40);
 					Text("Casc:");
-					for (int i = 0; i < SHADOWMAP_NUM_CASCADES; ++i) {
+					for (int i = 0; i < mShadowMap.numCascades; ++i) {
 						PushID(i);
 						SameLine(); InputFloat("##cascend", &mShadowMap.shadowMapUtil.cascadeEnd[i], .0f, .0f, "%.2f");
 						PopID();
 					}
+					SameLine();
+					if (Checkbox("auto##autocascade", &mShadowMap.autoCalcCascadeEnds) && mShadowMap.autoCalcCascadeEnds) mShadowMap.shadowMapUtil.calc_cascade_ends();
 					PopItemWidth();
 					Checkbox("restrict to scene", &mShadowMap.shadowMapUtil.restrictLightViewToScene);
 					PopID();
@@ -2569,8 +2621,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mOriginalProjMat = mQuakeCam.projection_matrix();
 		current_composition()->add_element(mQuakeCam);
 
-		// init shadow map util
-		mShadowMap.shadowMapUtil.init(mSceneData.mBoundingBox, mQuakeCam.near_plane_distance(), mQuakeCam.far_plane_distance(), SHADOWMAP_SIZE, SHADOWMAP_NUM_CASCADES, true);
+		// re-init shadow map (and calc cascades), after we have camera near/far plane
+		re_init_shadowmap();
 
 		// load default camera path
 		if (!loadCamPath("assets/defaults/camera_path.cam")) LOG_WARNING("Failed to load default camera path");
@@ -2889,6 +2941,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (nullptr != imguiManager) { imguiManager->enable_user_interaction(false); }
 			}
 		}
+
+
+#if ENABLE_SHADOWMAP
+		// re-init shadowmap if numCascades changed
+		if (mShadowMap.numCascades != mShadowMap.desiredNumCascades) {
+			re_init_shadowmap();
+			mReRecordCommandBuffers = true;
+		}
+#endif
 
 #if !RECORD_CMDBUFFER_IN_RENDER
 		// re-record command buffers if necessary (this is only in response to gui selections)
@@ -3261,8 +3322,8 @@ private: // v== Member variables ==v
 	struct ShadowMapPerCascadeResources {
 		std::array<avk::framebuffer, cConcurrentFrames> mShadowmapFramebuffer;
 	};
-	std::array<ShadowMapPerCascadeResources, SHADOWMAP_NUM_CASCADES> mShadowmapPerCascade;
-	std::array<std::vector<avk::image_sampler>, cConcurrentFrames> mShadowmapImageSamplers;
+	std::array<ShadowMapPerCascadeResources, SHADOWMAP_MAX_CASCADES> mShadowmapPerCascade;
+	std::array<std::array<avk::image_sampler, SHADOWMAP_MAX_CASCADES>, cConcurrentFrames> mShadowmapImageSamplers;
 
 
 	avk::sampler mGenericSamplerNearestNeighbour;
@@ -3415,6 +3476,9 @@ private: // v== Member variables ==v
 
 	struct {
 		float bias = 0.002f;
+		int numCascades = SHADOWMAP_INITIAL_CASCADES;
+		int desiredNumCascades = numCascades;
+		bool autoCalcCascadeEnds = true;
 
 		bool enable = false; // true;
 		bool enableForTransparency = false;// true;

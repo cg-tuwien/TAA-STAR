@@ -9,7 +9,13 @@
 // use a shadowmap?
 #define ENABLE_SHADOWMAP 1
 #define SHADOWMAP_SIZE 2048
-#define SHADOWMAP_NUM_CASCADES 2	// max 4
+#define SHADOWMAP_INITIAL_CASCADES 2
+
+#define SHADOWMAP_MAX_CASCADES 4	// don't touch! Need to change uniform buffers and shaders too to increase that beyond 4
+
+#if SHADOWMAP_INITIAL_CASCADES > SHADOWMAP_MAX_CASCADES
+#error "SHADOWMAP_INITIAL_CASCADES > SHADOWMAP_MAX_CASCADES"
+#endif
 
 // max. bones for animations
 #define MAX_BONES	114
