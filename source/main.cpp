@@ -1904,14 +1904,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				descriptor_binding(1, 1, mLightsourcesBuffer[fif])
 				}));
 
-			// bind pipeline, start renderpass
-			commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));
 			for (int cascade = 0; cascade < mShadowMap.numCascades; ++cascade) {
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
+				// start renderpass
 				commandBuffer->begin_render_pass_for_framebuffer(mShadowmapRenderpass, mShadowmapPerCascade[cascade].mShadowmapFramebuffer[fif]);
 
 				// draw the opaque parts of the scene
+				commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));
 				pushc_dii.mDrawIdOffset = 0;
 				commandBuffer->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
 				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups);
