@@ -1617,9 +1617,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		);
 
 #if ENABLE_SHADOWMAP
-		cfg::depth_clamp_bias depthClampBiasDynamicAndEnabled = cfg::depth_clamp_bias::dynamic();	// .dynamic() does NOT automatically enable depth bias!
-		depthClampBiasDynamicAndEnabled.mEnableDepthBias = true;
-
 		mPipelineShadowmapOpaque = context().create_graphics_pipeline_for(
 			vertex_shader("shaders/shadowmap.vert.spv"), // no fragment shader
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
@@ -1627,7 +1624,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
-			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
+			cfg::depth_clamp_bias::dynamic(), // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha (not here, but maintain layout compatibility)
@@ -1646,7 +1643,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mShadowmapRenderpass,
 			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
-			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
+			cfg::depth_clamp_bias::dynamic(), // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha
@@ -1665,7 +1662,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mShadowmapRenderpass,
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
-			depthClampBiasDynamicAndEnabled, // allow dynamic setting of depth bias AND enable it
+			cfg::depth_clamp_bias::dynamic(), // allow dynamic setting of depth bias AND enable it
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
@@ -2639,7 +2636,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 		prepare_common_pipelines();
 
-		print_pipelines_info();
+		// print_pipelines_info();
 
 #if !RECORD_CMDBUFFER_IN_RENDER
 		record_command_buffer_for_models();
