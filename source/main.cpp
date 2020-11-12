@@ -13,6 +13,7 @@
 #include "InterpolationCurve.hpp"
 #include "BoundingBox.hpp"
 #include "ShadowMap.hpp"
+#include "FrustumCulling.hpp"
 
 #define FIX_BETA_DRIVER_CRASH	1
 
@@ -33,6 +34,12 @@
 
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
+
+	- before separate scene data:			29/42 ms
+		per-fif buffers: same
+		host_coherent instead of device:	31/45
+	- with first version cpu culling:		10.5/35		(dev buffers)
+		host coherent buffers -> broken???
 
 	- Performance! Esp. w/ shadows!
 
@@ -117,6 +124,13 @@
 
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
+
+#define SCENE_DATA_BUFFER_ON_DEVICE 1
+
+// descriptor binding shortcuts
+#define SCENE_DRAW_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer[fif_]),	/* per meshgroup: material index */				\
+												descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer[fif_]),	/* per meshgroup: attributes base index */		\
+												descriptor_binding(0, 4, mSceneData.mAttributesBuffer[fif_]),		/* per mesh:      attributes (model matrix) */
 
 
 #if ENABLE_SHADOWMAP
@@ -542,6 +556,83 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		mDrawCamPathPositions_valid = true;
 		mReRecordCommandBuffers = true;
+	}
+
+	void rebuild_scene_buffers(gvk::window::frame_id_t fif) {
+		rebuild_scene_buffers(fif, fif);
+	}
+
+	void rebuild_scene_buffers(gvk::window::frame_id_t from_fif, gvk::window::frame_id_t to_fif) {
+		mSceneData.mNumOpaqueMeshgroups = 0;
+		mSceneData.mNumTransparentMeshgroups = 0;
+
+		FrustumCulling frustumCulling(effectiveCam_proj_matrix() * effectiveCam_view_matrix());
+
+		// build materialIndexBuffer (materialIndexBuffer[i] holds the material index for meshgroup i), attributes / attrib base index buffers, and draw commands buffer
+		std::vector<uint32_t> matIdxData;
+		std::vector<uint32_t> attribBaseData;
+		std::vector<MeshgroupPerInstanceData> attributesData;
+		std::vector<VkDrawIndexedIndirectCommand> drawcommandsData;
+		matIdxData.      reserve(mSceneData.mMeshgroups.size());
+		attribBaseData.  reserve(mSceneData.mMeshgroups.size());
+		drawcommandsData.reserve(mSceneData.mMeshgroups.size());
+		for (auto i = 0; i < mSceneData.mMeshgroups.size(); ++i) {
+			auto &mg = mSceneData.mMeshgroups[i];
+
+			size_t numInstances;
+			if (mSceneData.mCullViewFrustum) {
+				std::vector<MeshgroupPerInstanceData> attribs;
+				for (auto &insDat : mg.perInstanceData) {
+					//TODO, FIXME - culling is wrong, I know...
+					glm::vec4 p[8];
+					mg.boundingBox_untransformed.getTransformedPointsV4(insDat.modelMatrix, p);
+					BoundingBox bb;
+					bb.calcFromPoints(8, p);
+					if (FrustumCulling::TestResult::outside != frustumCulling.FrustumAABBIntersect(bb.min, bb.max)) {
+						attribs.push_back(insDat);
+					}
+				}
+				numInstances = attribs.size();
+				if (numInstances == 0) continue; // with next mesh group
+
+				matIdxData.push_back(mg.materialIndex);
+				attribBaseData.push_back(static_cast<uint32_t>(attributesData.size()));
+				gvk::insert_into(attributesData, attribs);
+
+			} else {
+				numInstances = mg.perInstanceData.size();
+				matIdxData.push_back(mg.materialIndex);
+				attribBaseData.push_back(static_cast<uint32_t>(attributesData.size()));
+				gvk::insert_into(attributesData, mg.perInstanceData);
+			}
+			
+
+			VkDrawIndexedIndirectCommand dc;
+			dc.indexCount    = mg.numIndices;
+			dc.instanceCount = static_cast<uint32_t>(numInstances);
+			dc.firstIndex    = mg.baseIndex;
+			dc.vertexOffset  = 0;	// already taken care of
+			dc.firstInstance = 0;
+			drawcommandsData.push_back(dc);
+			if (mg.hasTransparency) mSceneData.mNumTransparentMeshgroups++; else mSceneData.mNumOpaqueMeshgroups++;
+		}
+
+		// and upload
+		for (decltype(from_fif) i = from_fif; i <= to_fif; ++i) {
+#if SCENE_DATA_BUFFER_ON_DEVICE
+			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+#else
+			// This flickers badly! WHY? (buffers are host coherent)
+			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::not_required());
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
+			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::not_required());
+			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
+#endif
+		}
+		// FIXME! TODO: synch!!
 	}
 
 	void prepare_framebuffers_and_post_process_images()
@@ -1111,23 +1202,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mNormalsBuffer         = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mNormals));
 		mSceneData.mTangentsBuffer        = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mTangents));
 		mSceneData.mBitangentsBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mBitangents));
-		mSceneData.mMaterialIndexBuffer   = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-		mSceneData.mAttribBaseIndexBuffer = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
-		mSceneData.mDrawCommandsBuffer    = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(numMeshgroups));
-		
-		mSceneData.print_stats();
-
 		rdoc::labelBuffer(mSceneData.mIndexBuffer          ->handle(), "scene_IndexBuffer");
 		rdoc::labelBuffer(mSceneData.mPositionsBuffer      ->handle(), "scene_PositionsBuffer");
 		rdoc::labelBuffer(mSceneData.mTexCoordsBuffer      ->handle(), "scene_TexCoordsBuffer");
 		rdoc::labelBuffer(mSceneData.mNormalsBuffer        ->handle(), "scene_NormalsBuffer");
 		rdoc::labelBuffer(mSceneData.mTangentsBuffer       ->handle(), "scene_TangentsBuffer");
 		rdoc::labelBuffer(mSceneData.mBitangentsBuffer     ->handle(), "scene_BitangentsBuffer");
-		rdoc::labelBuffer(mSceneData.mMaterialIndexBuffer  ->handle(), "scene_MaterialIndexBuffer");
-		rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer->handle(), "scene_AttribBaseIndexBuffer");
-		rdoc::labelBuffer(mSceneData.mAttributesBuffer     ->handle(), "scene_AttributesBuffer");
-		rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   ->handle(), "scene_DrawCommandsBuffer");
+
+		auto numFif = gvk::context().main_window()->number_of_frames_in_flight();
+		avk::memory_usage memoryUsage = (SCENE_DATA_BUFFER_ON_DEVICE ? avk::memory_usage::device : avk::memory_usage::host_coherent);
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			mSceneData.mMaterialIndexBuffer  [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+			mSceneData.mAttributesBuffer     [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
+			mSceneData.mAttribBaseIndexBuffer[i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+			mSceneData.mDrawCommandsBuffer   [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(numMeshgroups));
+			rdoc::labelBuffer(mSceneData.mMaterialIndexBuffer  [i]->handle(), "scene_MaterialIndexBuffer", i);
+			rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer[i]->handle(), "scene_AttribBaseIndexBuffer", i);
+			rdoc::labelBuffer(mSceneData.mAttributesBuffer     [i]->handle(), "scene_AttributesBuffer", i);
+			rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   [i]->handle(), "scene_DrawCommandsBuffer", i);
+		}
+
+		mSceneData.print_stats();
 
 		double tParse = glfwGetTime();
 
@@ -1356,10 +1451,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			drawcommandsData[i] = dc;
 		}
 		// and upload
-		mSceneData.mMaterialIndexBuffer  ->fill(matIdxData.data(),        0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-		mSceneData.mAttribBaseIndexBuffer->fill(attribBaseData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-		mSceneData.mAttributesBuffer     ->fill(attributesData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-		mSceneData.mDrawCommandsBuffer   ->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		auto numFif = gvk::context().main_window()->number_of_frames_in_flight();
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+		}
 
 		// upload data for other models
 		for (auto& dynObj : mDynObjects) {
@@ -1417,9 +1515,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),	// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),		// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
@@ -1446,9 +1542,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//   Descriptor sets 0 and 1 are exactly the same as in mPipelineFirstPass
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
@@ -1484,9 +1578,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
@@ -1515,9 +1607,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
@@ -1544,9 +1634,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
 			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// per meshgroup: material index
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// per meshgroup: attributes base index
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// per mesh:      attributes (model matrix)
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])
@@ -1578,9 +1666,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
@@ -1628,9 +1714,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha (not here, but maintain layout compatibility)
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])				// compat
 		);
@@ -1647,9 +1731,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),						// need to sample alpha
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0])				// compat
 		);
@@ -1666,9 +1748,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),		// for layout compatibility
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),	// for layout compatibility
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),			// for layout compatibility
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[0]),				// compat
 			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
@@ -1728,7 +1808,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		print_pipeline_info(&mSkyboxPipeline,					"mSkyboxPipeline");
 	}
 
-	void draw_scene_indexed_indirect(avk::command_buffer &cmd, uint32_t firstDraw, uint32_t numDraws, int shadowCascade = -1) {
+	void draw_scene_indexed_indirect(avk::command_buffer &cmd, gvk::window::frame_id_t fif, uint32_t firstDraw, uint32_t numDraws, int shadowCascade = -1) {
 		if (numDraws == 0) return; // no point in wasting a drawcall that draws nothing (though it would work just fine)
 
 		// set depth bias in shadow pass
@@ -1742,7 +1822,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		cmd->draw_indexed_indirect(
-			const_referenced(mSceneData.mDrawCommandsBuffer),
+			const_referenced(mSceneData.mDrawCommandsBuffer[fif]),
 			const_referenced(mSceneData.mIndexBuffer),
 			numDraws,
 			vk::DeviceSize{ firstDraw * sizeof(VkDrawIndexedIndirectCommand) },
@@ -1774,9 +1854,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				cmd->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 					descriptor_binding(0, 0, mMaterialBuffer),
 					descriptor_binding(0, 1, mImageSamplers),
-					descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-					descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-					descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+					SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
 					//SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 					descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 					descriptor_binding(1, 1, mLightsourcesBuffer[fif]),
@@ -1787,9 +1865,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				cmd->bind_descriptors(pipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 					descriptor_binding(0, 0, mMaterialBuffer),
 					descriptor_binding(0, 1, mImageSamplers),
-					descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-					descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-					descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+					SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
 					SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 					descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 					descriptor_binding(1, 1, mLightsourcesBuffer[fif]),
@@ -1902,6 +1978,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->begin_recording();
 
+
 #if ENABLE_SHADOWMAP
 		if (mShadowMap.enable) {
 			rdoc::beginSection(commandBuffer->handle(), "Shadowmap", fif);
@@ -1911,9 +1988,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			commandBuffer->bind_descriptors(mPipelineShadowmapOpaque->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 				descriptor_binding(0, 0, mMaterialBuffer),
 				descriptor_binding(0, 1, mImageSamplers),
-				descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-				descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-				descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+				SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
 				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 				descriptor_binding(1, 1, mLightsourcesBuffer[fif])
 				}));
@@ -1928,7 +2003,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapOpaque));
 				pushc_dii.mDrawIdOffset = 0;
 				commandBuffer->push_constants(mPipelineShadowmapOpaque->layout(), pushc_dii);
-				draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups, cascade);
+				draw_scene_indexed_indirect(commandBuffer, fif, 0, mSceneData.mNumOpaqueMeshgroups, cascade);
 
 				// draw dynamic objects
 				draw_dynamic_objects(commandBuffer, fif, cascade);
@@ -1938,7 +2013,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					commandBuffer->bind_pipeline(const_referenced(mPipelineShadowmapTransparent));
 					pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 					commandBuffer->push_constants(mPipelineShadowmapTransparent->layout(), pushc_dii);
-					draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups, cascade);
+					draw_scene_indexed_indirect(commandBuffer, fif, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups, cascade);
 				}
 
 				commandBuffer->end_render_pass();
@@ -1954,9 +2029,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->bind_descriptors(firstPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ // They must match the pipeline's layout (per set!) exactly.
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif])
@@ -1970,7 +2043,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// draw the opaque parts of the scene (in deferred shading: draw transparent parts too, we don't use blending there anyway)
 		pushc_dii.mDrawIdOffset = 0;
 		commandBuffer->push_constants(firstPipe->layout(), pushc_dii);
-		draw_scene_indexed_indirect(commandBuffer, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
+		draw_scene_indexed_indirect(commandBuffer, fif, 0, mSceneData.mNumOpaqueMeshgroups + (FORWARD_RENDERING ? 0u : mSceneData.mNumTransparentMeshgroups));
 
 		// draw dynamic objects
 		draw_dynamic_objects(commandBuffer, fif);
@@ -1980,7 +2053,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->bind_pipeline(const_referenced(secondPipe));
 		pushc_dii.mDrawIdOffset = mSceneData.mNumOpaqueMeshgroups;
 		commandBuffer->push_constants(secondPipe->layout(), pushc_dii);
-		draw_scene_indexed_indirect(commandBuffer, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
+		draw_scene_indexed_indirect(commandBuffer, fif, mSceneData.mNumOpaqueMeshgroups, mSceneData.mNumTransparentMeshgroups);
 #else
 		// Move on to next subpass, synchronizing all data to be written to memory,
 		// and to be made visible to the next subpass, which uses it as input.
@@ -1991,9 +2064,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->bind_descriptors(secondPipe->layout(), mDescriptorCache.get_or_create_descriptor_sets({ 
 			descriptor_binding(0, 0, mMaterialBuffer),
 			descriptor_binding(0, 1, mImageSamplers),
-			descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer),
-			descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer),
-			descriptor_binding(0, 4, mSceneData.mAttributesBuffer),
+			SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
 			SHADOWMAP_DESCRIPTOR_BINDINGS(fif)
 			descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
 			descriptor_binding(1, 1, mLightsourcesBuffer[fif]),
@@ -2340,6 +2411,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					};
 					if (Combo("##image id", &mTestImageSettings.imageId, &FuncHolder::ImgGetter, this, static_cast<int>(mImageDefs.size()))) mReRecordCommandBuffers = true;
 					if (Checkbox("bilinear sampling", &mTestImageSettings.bilinear)) mReRecordCommandBuffers = true;
+
+					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
+					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
 
 					if (rdoc::active()) {
 						Separator();
@@ -2981,6 +3055,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 #endif
 
+		// rebuild scene buffers
+		if (mSceneData.mRegeneratePerFrame) {
+			rebuild_scene_buffers(inFlightIndex);
+			mReRecordCommandBuffers = true;
+		}
+
+
 #if !RECORD_CMDBUFFER_IN_RENDER
 		// re-record command buffers if necessary (this is only in response to gui selections)
 		if (mReRecordCommandBuffers) {
@@ -3013,13 +3094,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 
 		auto mainWnd = gvk::context().main_window();
+		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
+
 		//PRINT_DEBUGMARK("begin render()");
 		update_matrices_and_user_input();
 		update_lightsources();
 		update_bone_matrices();
 		update_camera_path_draw_buffer();
 
-		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
 
 #if RECORD_CMDBUFFER_IN_RENDER
@@ -3445,14 +3527,14 @@ private: // v== Member variables ==v
 		avk::buffer mBitangentsBuffer;
 
 		// per-meshgroup buffers
-		avk::buffer mMaterialIndexBuffer;
-		avk::buffer mAttribBaseIndexBuffer;		// [x] holds the index for mAttributesBuffer, so that mAttributesBuffer[x] is the attributes of the first instance of mesh group x
+		std::array<avk::buffer, cConcurrentFrames> mMaterialIndexBuffer;
+		std::array<avk::buffer, cConcurrentFrames> mAttribBaseIndexBuffer;		// [x] holds the index for mAttributesBuffer, so that mAttributesBuffer[x] is the attributes of the first instance of mesh group x
 
 		// buffers with entries for every mesh-instance
-		avk::buffer mAttributesBuffer;
+		std::array<avk::buffer, cConcurrentFrames> mAttributesBuffer;
 
 		// buffer holding draw parameters (VkDrawIndexedIndirectCommand)
-		avk::buffer mDrawCommandsBuffer;
+		std::array<avk::buffer, cConcurrentFrames> mDrawCommandsBuffer;
 
 		// temporary vectors, holding data to be uploaded to the GPU
 		std::vector<uint32_t> mIndices;
@@ -3469,6 +3551,9 @@ private: // v== Member variables ==v
 
 		// full scene bounding box
 		BoundingBox mBoundingBox;
+
+		bool mRegeneratePerFrame = true;
+		bool mCullViewFrustum = true;
 
 		void print_stats() {
 			size_t numIns[2] = { 0, 0 }, numGrp[2] = { 0, 0 };
@@ -3545,6 +3630,7 @@ private: // v== Member variables ==v
 			mRotation    = cam.rotation();
 		}
 	} mEffectiveCamera;
+
 };
 
 static std::filesystem::path getExecutablePath() {

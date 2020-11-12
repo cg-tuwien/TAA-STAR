@@ -56,6 +56,7 @@
     <ClInclude Include="source\imgui_stdlib.h" />
     <ClInclude Include="source\ShadowMap.hpp" />
     <ClInclude Include="source\BoundingBox.hpp" />
+    <ClInclude Include="source\FrustumCulling.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">
