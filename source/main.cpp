@@ -39,7 +39,7 @@
 		per-fif buffers: same
 		host_coherent instead of device:	31/45
 	- with first version cpu culling:		10.5/35		(dev buffers)
-		host coherent buffers -> broken???
+		w/ host coherent buffers -> broken??? flickers badly!
 
 	- Performance! Esp. w/ shadows!
 
@@ -620,19 +620,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// and upload
 		for (decltype(from_fif) i = from_fif; i <= to_fif; ++i) {
 #if SCENE_DATA_BUFFER_ON_DEVICE
-			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
-			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+			// FIXME! TODO: synch!!
+			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 #else
-			// This flickers badly! WHY? (buffers are host coherent)
+			// FIXME - This flickers badly! WHY? (buffers are host coherent)
 			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::not_required());
-			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
 			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::not_required());
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
 			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
+			//gvk::context().device().waitIdle(); // <- NO flickering
+			vkSetEvent(gvk::context().device(), mSceneData.mUpdateEvent[i]);
+			//PRINT_DEBUGMARK("scene updated");
+			mSceneData.mUpdated = true; // set this only for host-buffers for now -> enabled waitEvent in command buffer
 #endif
 		}
-		// FIXME! TODO: synch!!
+
 	}
 
 	void prepare_framebuffers_and_post_process_images()
@@ -1220,6 +1225,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer[i]->handle(), "scene_AttribBaseIndexBuffer", i);
 			rdoc::labelBuffer(mSceneData.mAttributesBuffer     [i]->handle(), "scene_AttributesBuffer", i);
 			rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   [i]->handle(), "scene_DrawCommandsBuffer", i);
+		}
+
+		// create events (experimental)
+		mSceneData.mUpdated = false;
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			auto ci = vk::EventCreateInfo{};
+			mSceneData.mUpdateEvent[i] = gvk::context().device().createEvent(ci);
 		}
 
 		mSceneData.print_stats();
@@ -1978,6 +1990,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->begin_recording();
 
+		// experimental - wait for event that scene buffers have been updated - see https://stackoverflow.com/questions/48667439/should-i-syncronize-an-access-to-a-memory-with-host-visible-bit-host-coherent
+		if (mSceneData.mUpdated) {
+			vk::AccessFlags dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eMemoryRead;
+			commandBuffer->handle().waitEvents({ mSceneData.mUpdateEvent[fif] },
+				vk::PipelineStageFlagBits::eHost,
+				vk::PipelineStageFlagBits::eDrawIndirect | vk::PipelineStageFlagBits::eVertexShader,
+				{},
+				{
+					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mMaterialIndexBuffer  [fif]->handle(), 0, VK_WHOLE_SIZE },
+					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttribBaseIndexBuffer[fif]->handle(), 0, VK_WHOLE_SIZE },
+					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttributesBuffer     [fif]->handle(), 0, VK_WHOLE_SIZE },
+					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mDrawCommandsBuffer   [fif]->handle(), 0, VK_WHOLE_SIZE },
+					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mMaterialIndexBuffer  [fif]->handle(), 0, VK_WHOLE_SIZE },
+					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttribBaseIndexBuffer[fif]->handle(), 0, VK_WHOLE_SIZE },
+					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttributesBuffer     [fif]->handle(), 0, VK_WHOLE_SIZE },
+					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eIndirectCommandRead, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mDrawCommandsBuffer   [fif]->handle(), 0, VK_WHOLE_SIZE },
+				},
+				{}
+			);
+		}
+		mSceneData.mUpdated = false;
+		commandBuffer->handle().resetEvent(mSceneData.mUpdateEvent[fif], vk::PipelineStageFlagBits::eBottomOfPipe);
 
 #if ENABLE_SHADOWMAP
 		if (mShadowMap.enable) {
@@ -3172,6 +3206,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	{
 		helpers::clean_up_timing_resources();
 		gvk::current_composition()->remove_element(mQuakeCam);
+
+		for (auto ev : mSceneData.mUpdateEvent) {
+			gvk::context().device().destroyEvent(ev);
+		}
 	}
 
 	bool saveCamPath(std::string fullFilename, bool overwrite) {
@@ -3552,8 +3590,11 @@ private: // v== Member variables ==v
 		// full scene bounding box
 		BoundingBox mBoundingBox;
 
+		std::array<vk::Event, cConcurrentFrames> mUpdateEvent;
+
 		bool mRegeneratePerFrame = true;
 		bool mCullViewFrustum = true;
+		bool mUpdated = false;
 
 		void print_stats() {
 			size_t numIns[2] = { 0, 0 }, numGrp[2] = { 0, 0 };
