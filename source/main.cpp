@@ -15,17 +15,14 @@
 #include "ShadowMap.hpp"
 #include "FrustumCulling.hpp"
 
-// use fences to avoid processing a frame-in-flight that is still executing
-#define SYNC_FRAMES_WITH_FENCES	1
-
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
 // use the gvk updater for shader hot reloading and window resizing ?
-#define USE_GVK_UPDATER 0
+#define USE_GVK_UPDATER 1
 
-// re-record (model) command buffer in render() instead of pre-recording once? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
-#define RECORD_CMDBUFFER_IN_RENDER 1
+// re-record (model) command buffer for frame-in-flight always, instead of pre-recording (for all frame-in-flights) only when necessary? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
+#define RERECORD_CMDBUFFERS_ALWAYS 1
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
@@ -36,14 +33,20 @@
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
-	- before separate scene data:			29/42 ms
-		per-fif buffers: same
-		host_coherent instead of device:	31/45
-	- with first version cpu culling:		10.5/35		(dev buffers)
-		w/ host coherent buffers -> broken??? flickers badly!	(with beta drivers 457.17 and also with official drivers 457.30)
-		-> flicker does NOT occur with RECORD_CMDBUFFER_IN_RENDER == 0 (-> implicitly uses a waitidle)
-		 -> same problem as "beta driver crash", i.e. cmd buffer for fif still in use when re-recording? -> YES IT IS!!
-		    how can this happen? not synched in framework?
+	- move any buffer updates from update() to render()! Update can be called for fif, if previous (same) fif is still executing!
+
+	- frustum culling notes:					startup view/view at park (Emerald Square, no shadows, taa on)
+		- before separate scene data:			29/42 ms
+			per-fif buffers: same
+			host_coherent instead of device:	31/45
+		- with first version cpu culling:		10.5/35		(dev buffers)
+												10.8/37		(host-coherent buffers)
+
+	- make sure all draw buffers are valid when initially recording command buffers for all fif!
+
+	- avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
+
+	- FIXME: shadows are wrong with culling enabled (because we cull just for the main cam frustum now!)
 
 	- Performance! Esp. w/ shadows!
 
@@ -129,7 +132,10 @@
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
 
-#define SCENE_DATA_BUFFER_ON_DEVICE 0
+#define SCENE_DATA_BUFFER_ON_DEVICE 1
+
+// use fences to avoid processing a frame-in-flight that is still executing - note: this shouldn't be necessary! if it is: is there perhaps a GPU resource update in update()
+#define ADDITIONAL_FRAME_SYNC_WITH_FENCES 0
 
 // descriptor binding shortcuts
 #define SCENE_DRAW_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer[fif_]),	/* per meshgroup: material index */				\
@@ -587,7 +593,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (mSceneData.mCullViewFrustum) {
 				std::vector<MeshgroupPerInstanceData> attribs;
 				for (auto &insDat : mg.perInstanceData) {
-					//TODO, FIXME - culling is wrong, I know...
 					glm::vec4 p[8];
 					mg.boundingBox_untransformed.getTransformedPointsV4(insDat.modelMatrix, p);
 					BoundingBox bb;
@@ -624,11 +629,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// and upload
 		for (decltype(from_fif) i = from_fif; i <= to_fif; ++i) {
 #if SCENE_DATA_BUFFER_ON_DEVICE
-			// TODO: is sync ok? probably not!
-			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
-			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
-			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
-			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+			// Note: it's not necessary to have a separate memory barrier for each fill, one combined barrier at the last fill is sufficient!
+			auto makeSyncNone = []() {
+				return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {}, {});
+			};
+			auto makeSyncAll = []() {
+				return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {},
+					[](avk::command_buffer_t& cb, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
+						// data buffers are read in vertex shader, draw command buffer is used for indirect draw
+						cb.establish_global_memory_barrier_rw(srcStage,  avk::pipeline_stage::draw_indirect | avk::pipeline_stage::vertex_shader,
+							                                  srcAccess, avk::memory_access::indirect_command_data_read_access | avk::memory_access::shader_buffers_and_images_read_access);
+					});
+			};
+
+			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     makeSyncNone());
+			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     makeSyncNone());
+			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     makeSyncNone());
+			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), makeSyncAll());
 #else
 			// (buffers are host coherent)
 			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::not_required());
@@ -1945,25 +1962,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 	}
 
-	// Record actual draw calls for all the drawcall-data that we have
-	// gathered in load_and_prepare_scene() into a command buffer
-	void record_command_buffer_for_models() {
-#if !RECORD_CMDBUFFER_IN_RENDER
-		using namespace avk;
-		using namespace gvk;
+	void invalidate_command_buffers() {
+		mReRecordCommandBuffers = true;
+	}
 
-		auto* wnd = gvk::context().main_window();
-		//auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
-		auto& commandPool = context().get_command_pool_for_resettable_command_buffers(*mQueue); // ac: we may need to re-record
-
-		auto fif = wnd->number_of_frames_in_flight();
+	void alloc_command_buffers_for_models() {
+		auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue); // resettable: we may need to re-record them or re-use them
+		auto fif = gvk::context().main_window()->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
 			if (!(mModelsCommandBuffer[i].has_value())) mModelsCommandBuffer[i] = commandPool->alloc_command_buffer();
+		}
+	}
+
+	void record_all_command_buffers_for_models() {
+		auto fif = gvk::context().main_window()->number_of_frames_in_flight();
+		for (decltype(fif) i=0; i < fif; ++i) {
 			record_single_command_buffer_for_models(mModelsCommandBuffer[i], i);
 		}
-#else
-		assert(false && "Don't call record_command_buffer_for_models() when RECORD_CMDBUFFER_IN_RENDER is true!");
-#endif
 	}
 
 	void record_single_command_buffer_for_models(avk::command_buffer &commandBuffer, gvk::window::frame_id_t fif)
@@ -2284,7 +2299,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (CollapsingHeader("Rendering")) {
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
-				if (Checkbox("alpha blending", &mUseAlphaBlending)) mReRecordCommandBuffers = true;
+				if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
 				HelpMarker("When disabled, simple alpha-testing is used.");
 				PushItemWidth(60);
 				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
@@ -2292,7 +2307,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				SameLine();
 				Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
-					if (Button("Re-record commands")) mReRecordCommandBuffers = true;
+					if (Button("Re-record commands")) invalidate_command_buffers();
 				}
 
 				if (CollapsingHeader("Camera")) {
@@ -2345,7 +2360,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Checkbox("look along", &mCameraSpline.lookAlong);
 
-					if (Checkbox("detach", &mEffectiveCamera.detached)) mReRecordCommandBuffers = true;
+					if (Checkbox("detach", &mEffectiveCamera.detached)) invalidate_command_buffers();
 					SameLine(); if (Button("set to cam")) mEffectiveCamera.storeValuesFrom(mQuakeCam);
 
 					PopID();
@@ -2401,11 +2416,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 					PopID();
 
-					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) mReRecordCommandBuffers = true;
+					if (old_enabled != mMovingObject.enabled || old_moverId != mMovingObject.moverId) invalidate_command_buffers();
 				}
 
 				if (CollapsingHeader("Debug")) {
-					if (Checkbox("image", &mTestImageSettings.enabled)) mReRecordCommandBuffers = true;	// requires permanent re-recording anyway due to push constants ... FIXME
+					if (Checkbox("image", &mTestImageSettings.enabled)) invalidate_command_buffers();	// requires permanent re-recording anyway due to push constants ... FIXME
 					SameLine();
 					struct FuncHolder {
 						static bool ImgGetter(void* data, int idx, const char** out_str) {
@@ -2413,8 +2428,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							return true;
 						}
 					};
-					if (Combo("##image id", &mTestImageSettings.imageId, &FuncHolder::ImgGetter, this, static_cast<int>(mImageDefs.size()))) mReRecordCommandBuffers = true;
-					if (Checkbox("bilinear sampling", &mTestImageSettings.bilinear)) mReRecordCommandBuffers = true;
+					if (Combo("##image id", &mTestImageSettings.imageId, &FuncHolder::ImgGetter, this, static_cast<int>(mImageDefs.size()))) invalidate_command_buffers();
+					if (Checkbox("bilinear sampling", &mTestImageSettings.bilinear)) invalidate_command_buffers();
 
 					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
 					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
@@ -2433,12 +2448,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (CollapsingHeader("Shadows")) {
 					PushID("ShadowStuff");
-					if (Checkbox("enable", &mShadowMap.enable)) mReRecordCommandBuffers = true;
+					if (Checkbox("enable", &mShadowMap.enable)) invalidate_command_buffers();
 					SameLine();
-					if (Checkbox("transp.", &mShadowMap.enableForTransparency)) mReRecordCommandBuffers = true;
+					if (Checkbox("transp.", &mShadowMap.enableForTransparency)) invalidate_command_buffers();
 
-					if (Checkbox("show shadowmap", &mShadowMap.show)) mReRecordCommandBuffers = true;
-					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) mReRecordCommandBuffers = true;
+					if (Checkbox("show shadowmap", &mShadowMap.show)) invalidate_command_buffers();
+					if (Checkbox("show frustum", &mShadowMap.drawFrustum)) invalidate_command_buffers();
 
 					Checkbox("restrict to scene", &mShadowMap.shadowMapUtil.restrictLightViewToScene);
 					SliderInt("num cascades", &mShadowMap.desiredNumCascades, 1, SHADOWMAP_MAX_CASCADES);
@@ -2467,7 +2482,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						PopItemWidth();
 						PopID();
 					}
-					if (mod) mReRecordCommandBuffers = true;
+					if (mod) invalidate_command_buffers();
 
 					PopID();
 				}
@@ -2716,9 +2731,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// print_pipelines_info();
 
-#if !RECORD_CMDBUFFER_IN_RENDER
-		record_command_buffer_for_models();
-#endif
+		// alloc command buffers for drawing the scene, but don't record them yet
+		alloc_command_buffers_for_models();
+		invalidate_command_buffers();
 
 		// Add the camera to the composition (and let it handle the updates)
 		mQuakeCam.set_translation({ 0.0f, 1.0f, 0.0f });
@@ -2781,7 +2796,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mAntiAliasing.init_updater(mUpdater);
 
 		// updating the pipelines crashes when using pre-recorded command buffers! (because pipeline is still in use)
-#if RECORD_CMDBUFFER_IN_RENDER
+#if RERECORD_CMDBUFFERS_ALWAYS
 
 #if FORWARD_RENDERING
 		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
@@ -2891,21 +2906,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	}
 
-	void wait_until_frame_is_ready() {
-#if SYNC_FRAMES_WITH_FENCES
-		// wait until the frame-fence is signaled
-		auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
-		if (mModelsCommandBufferFence[inFlightIndex].has_value()) {
-			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
-		}
-#endif
-	}
-
 	void update() override
 	{
-		//PRINT_DEBUGMARK("begin update()");
-
-		wait_until_frame_is_ready();
+		// NOTE: Do NOT write GPU resources here that were used #concurrentFrames before. These commands may still be executing.
+		//       Do it in render(), there it is guaranteed that frame #(thisFrame - concurrentFrames) has finished.
 
 		init_updater_only_once(); // don't init in initialize, taa hasn't created its pipelines there yet.
 
@@ -3062,32 +3066,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
-
-#if ENABLE_SHADOWMAP
-		// re-init shadowmap if numCascades changed
-		if (mShadowMap.numCascades != mShadowMap.desiredNumCascades) {
-			re_init_shadowmap();
-			mReRecordCommandBuffers = true;
-		}
-#endif
-
-		// rebuild scene buffers
-		if (mSceneData.mRegeneratePerFrame) {
-			rebuild_scene_buffers(inFlightIndex);
-			mReRecordCommandBuffers = true;
-		}
-
-
-#if !RECORD_CMDBUFFER_IN_RENDER
-		// re-record command buffers if necessary (this is only in response to gui selections)
-		if (mReRecordCommandBuffers) {
-			gvk::context().device().waitIdle(); // this is ok in THIS application, not generally though!
-			record_command_buffer_for_models();
-		}
-#endif
-		mReRecordCommandBuffers = false;
-
-
 		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
 	}
 
@@ -3112,43 +3090,50 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto mainWnd = gvk::context().main_window();
 		auto inFlightIndex = mainWnd->in_flight_index_for_frame();
 
-		//PRINT_DEBUGMARK("begin render()");
+		#if ADDITIONAL_FRAME_SYNC_WITH_FENCES
+			// wait until the frame-fence is signaled
+			if (mModelsCommandBufferFence[inFlightIndex].has_value()) mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
+		#endif
+
+		#if ENABLE_SHADOWMAP
+			// re-init shadowmap if numCascades changed
+			if (mShadowMap.numCascades != mShadowMap.desiredNumCascades) {
+				re_init_shadowmap();
+				invalidate_command_buffers();
+			}
+		#endif
+
+		// rebuild scene buffers
+		if (mSceneData.mRegeneratePerFrame) {
+			rebuild_scene_buffers(inFlightIndex);
+			invalidate_command_buffers();	// FIXME - avoid this!
+		}
+
 		update_matrices_and_user_input();
 		update_lightsources();
 		update_bone_matrices();
 		update_camera_path_draw_buffer();
 
-		// Note: if SYNC_FRAMES_WITH_FENCES, we already waited for the frame to become ready in update()
+		#if RERECORD_CMDBUFFERS_ALWAYS
+			mModelsCommandBuffer[inFlightIndex]->prepare_for_reuse(); // this basically does: mPostExecutionHandler.reset()
+			// note: vkResetCommandBuffer is not necessary - vkBeginCommandBuffer (when re-recording) does that implicitly
+			record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
+		#else
+			// re-record command buffers for ALL frames-in-flight, but only if necessary (this should only be in response to gui selections)
+			if (mReRecordCommandBuffers) {
+				gvk::context().device().waitIdle(); // this is ok in THIS application, not generally though!
+				record_all_command_buffers_for_models();
+				mReRecordCommandBuffers = false;
+			}
+		#endif
 
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
 
-#if RECORD_CMDBUFFER_IN_RENDER
-	#if SYNC_FRAMES_WITH_FENCES
-		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
-			// first-time-init
-			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
-			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
-		} else {
-			mModelsCommandBuffer[inFlightIndex]->prepare_for_reuse(); // this basically does: mPostExecutionHandler.reset()
-		  // note: vkResetCommandBuffer is not necessary - vkBeginCommandBuffer (when re-recording) does that implicitly
-		}
-		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
-		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
-	#else
-		// original version; alloc a new one-shot command buffer - used to crash in forward-rendering with beta drivers sometimes (most likely reason: old commandbuffer for frame-in-flight still executing)
-		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
-		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
-		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
-		mQueue->submit(cmdbfr, std::optional<avk::resource_reference<avk::semaphore_t>>{});
-		mainWnd->handle_lifetime(avk::owned(cmdbfr));
-	#endif
-#else
-	#if SYNC_FRAMES_WITH_FENCES
-		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
-	#else
-		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
-	#endif
-#endif
+		#if ADDITIONAL_FRAME_SYNC_WITH_FENCES
+			mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
+		#else
+			mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
+		#endif
 
 		// anti_asiasing::render() will be invoked after this
 	}
@@ -3366,7 +3351,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		readCamPathFromIni(ini);
 
 		// TODO: check all stuff we need to reset
-		mReRecordCommandBuffers = true;
+		invalidate_command_buffers();
 
 		return true;
 	}
