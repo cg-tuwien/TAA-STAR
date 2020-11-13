@@ -15,7 +15,8 @@
 #include "ShadowMap.hpp"
 #include "FrustumCulling.hpp"
 
-#define FIX_BETA_DRIVER_CRASH	1
+// use fences to avoid processing a frame-in-flight that is still executing
+#define SYNC_FRAMES_WITH_FENCES	1
 
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
@@ -39,7 +40,10 @@
 		per-fif buffers: same
 		host_coherent instead of device:	31/45
 	- with first version cpu culling:		10.5/35		(dev buffers)
-		w/ host coherent buffers -> broken??? flickers badly!
+		w/ host coherent buffers -> broken??? flickers badly!	(with beta drivers 457.17 and also with official drivers 457.30)
+		-> flicker does NOT occur with RECORD_CMDBUFFER_IN_RENDER == 0 (-> implicitly uses a waitidle)
+		 -> same problem as "beta driver crash", i.e. cmd buffer for fif still in use when re-recording? -> YES IT IS!!
+		    how can this happen? not synched in framework?
 
 	- Performance! Esp. w/ shadows!
 
@@ -125,7 +129,7 @@
 	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
 */
 
-#define SCENE_DATA_BUFFER_ON_DEVICE 1
+#define SCENE_DATA_BUFFER_ON_DEVICE 0
 
 // descriptor binding shortcuts
 #define SCENE_DRAW_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer[fif_]),	/* per meshgroup: material index */				\
@@ -620,21 +624,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// and upload
 		for (decltype(from_fif) i = from_fif; i <= to_fif; ++i) {
 #if SCENE_DATA_BUFFER_ON_DEVICE
-			// FIXME! TODO: synch!!
+			// TODO: is sync ok? probably not!
 			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 #else
-			// FIXME - This flickers badly! WHY? (buffers are host coherent)
+			// (buffers are host coherent)
 			mSceneData.mMaterialIndexBuffer  [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()       * sizeof(uint32_t),                     avk::sync::not_required());
 			mSceneData.mAttribBaseIndexBuffer[i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()   * sizeof(uint32_t),                     avk::sync::not_required());
 			mSceneData.mAttributesBuffer     [i]->fill(attributesData.data(),    0, 0, attributesData.size()   * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
 			mSceneData.mDrawCommandsBuffer   [i]->fill(drawcommandsData.data(),  0, 0, drawcommandsData.size() * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
-			//gvk::context().device().waitIdle(); // <- NO flickering
-			vkSetEvent(gvk::context().device(), mSceneData.mUpdateEvent[i]);
-			//PRINT_DEBUGMARK("scene updated");
-			mSceneData.mUpdated = true; // set this only for host-buffers for now -> enabled waitEvent in command buffer
 #endif
 		}
 
@@ -1225,13 +1225,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer[i]->handle(), "scene_AttribBaseIndexBuffer", i);
 			rdoc::labelBuffer(mSceneData.mAttributesBuffer     [i]->handle(), "scene_AttributesBuffer", i);
 			rdoc::labelBuffer(mSceneData.mDrawCommandsBuffer   [i]->handle(), "scene_DrawCommandsBuffer", i);
-		}
-
-		// create events (experimental)
-		mSceneData.mUpdated = false;
-		for (decltype(numFif) i = 0; i < numFif; ++i) {
-			auto ci = vk::EventCreateInfo{};
-			mSceneData.mUpdateEvent[i] = gvk::context().device().createEvent(ci);
 		}
 
 		mSceneData.print_stats();
@@ -1989,29 +1982,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		push_constant_data_for_dii pushc_dii = {};
 
 		commandBuffer->begin_recording();
-
-		// experimental - wait for event that scene buffers have been updated - see https://stackoverflow.com/questions/48667439/should-i-syncronize-an-access-to-a-memory-with-host-visible-bit-host-coherent
-		if (mSceneData.mUpdated) {
-			vk::AccessFlags dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eMemoryRead;
-			commandBuffer->handle().waitEvents({ mSceneData.mUpdateEvent[fif] },
-				vk::PipelineStageFlagBits::eHost,
-				vk::PipelineStageFlagBits::eDrawIndirect | vk::PipelineStageFlagBits::eVertexShader,
-				{},
-				{
-					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mMaterialIndexBuffer  [fif]->handle(), 0, VK_WHOLE_SIZE },
-					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttribBaseIndexBuffer[fif]->handle(), 0, VK_WHOLE_SIZE },
-					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttributesBuffer     [fif]->handle(), 0, VK_WHOLE_SIZE },
-					vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, dstAccessMask, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mDrawCommandsBuffer   [fif]->handle(), 0, VK_WHOLE_SIZE },
-					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mMaterialIndexBuffer  [fif]->handle(), 0, VK_WHOLE_SIZE },
-					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttribBaseIndexBuffer[fif]->handle(), 0, VK_WHOLE_SIZE },
-					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eShaderRead,          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mAttributesBuffer     [fif]->handle(), 0, VK_WHOLE_SIZE },
-					//vk::BufferMemoryBarrier{ vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eIndirectCommandRead, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mSceneData.mDrawCommandsBuffer   [fif]->handle(), 0, VK_WHOLE_SIZE },
-				},
-				{}
-			);
-		}
-		mSceneData.mUpdated = false;
-		commandBuffer->handle().resetEvent(mSceneData.mUpdateEvent[fif], vk::PipelineStageFlagBits::eBottomOfPipe);
 
 #if ENABLE_SHADOWMAP
 		if (mShadowMap.enable) {
@@ -2921,9 +2891,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	}
 
+	void wait_until_frame_is_ready() {
+#if SYNC_FRAMES_WITH_FENCES
+		// wait until the frame-fence is signaled
+		auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
+		if (mModelsCommandBufferFence[inFlightIndex].has_value()) {
+			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
+		}
+#endif
+	}
+
 	void update() override
 	{
 		//PRINT_DEBUGMARK("begin update()");
+
+		wait_until_frame_is_ready();
 
 		init_updater_only_once(); // don't init in initialize, taa hasn't created its pipelines there yet.
 
@@ -3136,67 +3118,36 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		update_bone_matrices();
 		update_camera_path_draw_buffer();
 
+		// Note: if SYNC_FRAMES_WITH_FENCES, we already waited for the frame to become ready in update()
+
 		mQueue->submit(mSkyboxCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
 
 #if RECORD_CMDBUFFER_IN_RENDER
-#if !FIX_BETA_DRIVER_CRASH
-		// original - crashes in forward-rendering
+	#if SYNC_FRAMES_WITH_FENCES
+		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
+			// first-time-init
+			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
+			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
+		} else {
+			mModelsCommandBuffer[inFlightIndex]->prepare_for_reuse(); // this basically does: mPostExecutionHandler.reset()
+		  // note: vkResetCommandBuffer is not necessary - vkBeginCommandBuffer (when re-recording) does that implicitly
+		}
+		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
+		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
+	#else
+		// original version; alloc a new one-shot command buffer - used to crash in forward-rendering with beta drivers sometimes (most likely reason: old commandbuffer for frame-in-flight still executing)
 		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
 		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
 		mQueue->submit(cmdbfr, std::optional<avk::resource_reference<avk::semaphore_t>>{});
 		mainWnd->handle_lifetime(avk::owned(cmdbfr));
-
-#elif 0
-		// still crashes in forward-rendering, but no stack-overflow
-
-		if (mModelsCommandBufferFence[inFlightIndex].has_value()) {
-			PRINT_DEBUGMARK("Wait for fence");
-			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
-			PRINT_DEBUGMARK("..done waiting");
-		}
-
-		auto& commandPool = gvk::context().get_command_pool_for_single_use_command_buffers(*mQueue);
-		auto cmdbfr = commandPool->alloc_command_buffer(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
-		record_single_command_buffer_for_models(cmdbfr, inFlightIndex);
-		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(cmdbfr);
-		mainWnd->handle_lifetime(std::move(cmdbfr));
-
-#elif 0
-		// no (driver) crash, but some stack-overflow..
-
-		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
-			PRINT_DEBUGMARK("Alloc cmdbuf & fence");
-			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
-			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
-			mModelsCommandBufferFence[inFlightIndex] = gvk::context().create_fence(false);
-		} else {
-			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
-			mModelsCommandBufferFence[inFlightIndex]->reset();
-		}
-
-		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
-		my_queue_submit_with_existing_fence(*mQueue, mModelsCommandBuffer[inFlightIndex], mModelsCommandBufferFence[inFlightIndex]);
-#elif FIX_BETA_DRIVER_CRASH
-		// no (driver) crash, stack-overflow is now fixed by resetting the command buffer's mPostExecutionHandler
-
-		if (!mModelsCommandBuffer[inFlightIndex].has_value()) {
-			//PRINT_DEBUGMARK("Alloc cmdbuf");
-			auto& commandPool = gvk::context().get_command_pool_for_resettable_command_buffers(*mQueue);
-			mModelsCommandBuffer[inFlightIndex] = commandPool->alloc_command_buffer();
-		} else {
-			mModelsCommandBufferFence[inFlightIndex]->wait_until_signalled();
-			mModelsCommandBuffer[inFlightIndex]->prepare_for_reuse(); // this basically does: mPostExecutionHandler.reset()
-		}
-
-		// note: vkResetCommandBuffer is not necessary - vkBeginCommandBuffer (when re-recording) does that implicitly
-		//if (VK_SUCCESS != vkResetCommandBuffer(mModelsCommandBuffer[inFlightIndex]->handle(), 0)) LOG_WARNING("vkResetCommandBuffer failed");
-
-		record_single_command_buffer_for_models(mModelsCommandBuffer[inFlightIndex], inFlightIndex);
-		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
-#endif
+	#endif
 #else
+	#if SYNC_FRAMES_WITH_FENCES
+		mModelsCommandBufferFence[inFlightIndex] = mQueue->submit_with_fence(mModelsCommandBuffer[inFlightIndex]);
+	#else
 		mQueue->submit(mModelsCommandBuffer[inFlightIndex], std::optional<avk::resource_reference<avk::semaphore_t>>{});
+	#endif
 #endif
 
 		// anti_asiasing::render() will be invoked after this
@@ -3206,10 +3157,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	{
 		helpers::clean_up_timing_resources();
 		gvk::current_composition()->remove_element(mQuakeCam);
-
-		for (auto ev : mSceneData.mUpdateEvent) {
-			gvk::context().device().destroyEvent(ev);
-		}
 	}
 
 	bool saveCamPath(std::string fullFilename, bool overwrite) {
@@ -3460,9 +3407,7 @@ private: // v== Member variables ==v
 	avk::buffer mMaterialBuffer;
 	std::vector<avk::image_sampler> mImageSamplers;
 	std::vector<dynamic_object> mDynObjects;
-#if FIX_BETA_DRIVER_CRASH || !RECORD_CMDBUFFER_IN_RENDER
 	std::array<avk::command_buffer, cConcurrentFrames> mModelsCommandBuffer;
-#endif
 	std::array<avk::fence, cConcurrentFrames> mModelsCommandBufferFence;
 
 	// shadowmap
@@ -3590,11 +3535,8 @@ private: // v== Member variables ==v
 		// full scene bounding box
 		BoundingBox mBoundingBox;
 
-		std::array<vk::Event, cConcurrentFrames> mUpdateEvent;
-
 		bool mRegeneratePerFrame = true;
 		bool mCullViewFrustum = true;
-		bool mUpdated = false;
 
 		void print_stats() {
 			size_t numIns[2] = { 0, 0 }, numGrp[2] = { 0, 0 };
