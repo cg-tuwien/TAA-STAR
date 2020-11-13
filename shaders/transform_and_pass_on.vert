@@ -54,9 +54,9 @@ layout (location = 0) out VertexData {
 void main()
 {
 	mat4 prev_modelMatrix;
-	if (mDrawIdOffset >= 0) {
+	if (mDrawType >= 0) {
 		// static scenery
-		uint meshgroup = gl_DrawID + mDrawIdOffset;
+		uint meshgroup = gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset;
 		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
 		v_out.materialIndex  = materialIndex[meshgroup];
 		v_out.modelMatrix    = attrib[attribIndex].modelMatrix;
@@ -67,7 +67,7 @@ void main()
 		v_out.materialIndex = mMover_materialIndex;
 		v_out.modelMatrix   = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
 		prev_modelMatrix    = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
-		v_out.movingObjectId = -mDrawIdOffset;
+		v_out.movingObjectId = -mDrawType;
 	}
 
 

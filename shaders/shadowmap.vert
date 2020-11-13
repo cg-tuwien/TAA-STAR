@@ -27,9 +27,9 @@ layout(set = 1, binding = 0) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 void main()
 {
 	mat4 modelMatrix;
-	if (mDrawIdOffset >= 0) {
+	if (mDrawType >= 0) {
 		// static scenery
-		uint meshgroup = gl_DrawID + mDrawIdOffset;
+		uint meshgroup = gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset;
 		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
 		modelMatrix    = attrib[attribIndex].modelMatrix;
 	} else {

@@ -48,8 +48,7 @@
 	int   mMover_materialIndex;																						\
 	int   mMover_meshIndex;																							\
 																													\
-	/* current draw call (= mesh group for scenery; negative = moving object id) */									\
-	int   mDrawIdOffset;																							\
+	int   mDrawType; /* 0:scene opaque, 1:scene transparent, negative numbers: moving object id */					\
 	int   mShadowMapCascadeToBuild;																					\
 }
 
@@ -80,6 +79,10 @@
 	bool mUseShadowMap;																								\
 	float mShadowBias;																								\
 	int mShadowNumCascades;																							\
+																													\
+	int mSceneTransparentMeshgroupsOffset;																			\
+																													\
+	float pad1, pad2, pad3;																							\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

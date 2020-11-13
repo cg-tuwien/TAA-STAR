@@ -34,9 +34,9 @@ layout (location = 0) out VertexData {
 void main()
 {
 	mat4 modelMatrix;
-	if (mDrawIdOffset >= 0) {
+	if (mDrawType >= 0) {
 		// static scenery
-		uint meshgroup = gl_DrawID + mDrawIdOffset;
+		uint meshgroup = gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset;
 		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
 		v_out.materialIndex  = materialIndex[meshgroup];
 		modelMatrix    = attrib[attribIndex].modelMatrix;

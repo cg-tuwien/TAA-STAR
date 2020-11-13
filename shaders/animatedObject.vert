@@ -57,7 +57,7 @@ void main()
 	v_out.materialIndex   = mMover_materialIndex;
 	v_out.modelMatrix     = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
 	mat4 prev_modelMatrix = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
-	v_out.movingObjectId  = -mDrawIdOffset;
+	v_out.movingObjectId  = -mDrawType;
 
 	// "normalize" bone weights - there may be more than four in the model, but we only get the first four here; make sure they add up to one
 	vec4 boneWeights = aBoneWeights;
