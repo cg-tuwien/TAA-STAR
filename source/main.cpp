@@ -1255,8 +1255,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSceneData.mMaterialIndexBuffer          [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
 			mSceneData.mAttributesBuffer             [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
 			mSceneData.mAttribBaseIndexBuffer        [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-			mSceneData.mDrawCommandsBufferOpaque     [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(mSceneData.mMaxOpaqueMeshgroups));
-			mSceneData.mDrawCommandsBufferTransparent[i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(mSceneData.mMaxTransparentMeshgroups));
+			mSceneData.mDrawCommandsBufferOpaque     [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(std::max(1u, mSceneData.mMaxOpaqueMeshgroups)));
+			mSceneData.mDrawCommandsBufferTransparent[i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(std::max(1u, mSceneData.mMaxTransparentMeshgroups)));
 			mSceneData.mDrawCountBuffer              [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements(2, sizeof(uint32_t)));
 
 			rdoc::labelBuffer(mSceneData.mMaterialIndexBuffer          [i]->handle(), "scene_MaterialIndexBuffer", i);
