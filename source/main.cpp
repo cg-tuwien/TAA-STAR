@@ -528,7 +528,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		dynObj.mBoneMatricesPrev = dynObj.mBoneMatrices;
 
 		for (auto &m : dynObj.mBoneMatrices) m = glm::mat4(0);
-		anim.animate(dynObj.mAnimClips[dynObj.mActiveAnimation], static_cast<double>(dynObj.mAnimTime));	// fill bone matrix data (-> dc.mBoneMatrices)
+		anim.animate(dynObj.mAnimClips[dynObj.mActiveAnimation], static_cast<double>(dynObj.mAnimTime), gvk::bone_matrices_space::object_space); // fill bone matrix data (-> dc.mBoneMatrices) in object space
 
 		static bool firstTime = true;
 		if (firstTime) {
@@ -1902,7 +1902,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto &md = dynObj.mMeshData[part.mMeshIndex];
 
 				pushc_dii.mDrawType               = -(mMovingObject.moverId + 1);
-				pushc_dii.mMover_baseModelMatrix  = dynObj.mBaseTransform * part.mMeshTransform;
+				pushc_dii.mMover_baseModelMatrix  = dynObj.mBaseTransform; // no longer multiply with part.mMeshTransform, as bone matrices are already computed in object space now;
 				pushc_dii.mMover_materialIndex    = md.mMaterialIndex;
 				pushc_dii.mMover_meshIndex        = part.mMeshIndex;
 
