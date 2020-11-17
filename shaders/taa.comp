@@ -63,12 +63,14 @@ struct Parameters {
 	int mVelocitySampleMode;		// 0=simple 1=3x3_max 2=3x3_closest
 	int mInterpolationMode;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 	bool mToneMapLumaKaris;			// "tone mapping" by luma weighting (Karis)
+	bool mAddNoise;
+	float mNoiseFactor;				// small, way less than 1, e.g. 1/512
 
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
 
-//	float pad1,pad2;
+	float pad1,pad2;
 };
 
 //layout(push_constant) uniform PushConstants {
@@ -82,6 +84,7 @@ layout(set = 1, binding = 0) uniform Matrices {
 
 	Parameters	param[2];
 	vec4        mJitterNdc;		// only .xy used; jitter is in NDC units, NOT UV units!
+	vec4		mSinTime;		// sin(t/8), sin(t/4), sin(t/2), sin(t)
 	bool		splitScreen;
 	int			splitX;
 	bool        mUpsampling;
@@ -520,6 +523,13 @@ vec4 sample_history_rgb(vec2 uv) {
 	else										return sample_history_bicubic_catmullrom(uv);
 }
 
+vec4 noise(vec2 uv) {
+	vec2 seed = uv + ubo.mSinTime.x + 0.6959174;
+	vec4 nRand = fract( sin(dot(seed, vec2(12.9898, 78.233))) * vec4(43758.5453, 28001.8384, 50849.4141, 12996.89) ); // normalized [0,1)
+	vec4 sRand = nRand * 2.0 - 1.0; // [-1,1)
+	return sRand * params.mNoiseFactor;
+}
+
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -648,6 +658,12 @@ void main()
 
 	//vec3 antiAliased = mix(maybe_ycocg_to_rgb(historyColor), maybe_ycocg_to_rgb(currentColor), alpha * beta);	// current * ab + history * (1-ab)
 	vec3 antiAliased = maybe_ycocg_to_rgb(mix(historyColor, currentColor, alpha * beta));	// current * ab + history * (1-ab)
+
+	// add noise
+	if (params.mAddNoise) {
+		vec4 n = noise(uv);
+		antiAliased += n.rgb;
+	}
 
 	vec3 output_to_history = antiAliased;
 	vec3 output_to_screen  = un_tonemap_rgb(antiAliased);

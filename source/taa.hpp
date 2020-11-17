@@ -49,12 +49,14 @@ class taa : public gvk::invokee
 		int mVelocitySampleMode				= 0;			// 0=simple 1=3x3_max 2=3x3_closest
 		int mInterpolationMode				= 0;			// 0=bilinear 1=bicubic b-spline 2=bicubic catmull-rom
 		VkBool32 mToneMapLumaKaris			= VK_FALSE;		// "tone mapping" by luma weighting (Karis)
+		VkBool32 mAddNoise					= VK_FALSE;
+		float mNoiseFactor					= 1.f / 510.f;	// small, way less than 1, e.g. 1/512
 
 		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		//float pad1,pad2;
+		float pad1,pad2;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -85,6 +87,7 @@ class taa : public gvk::invokee
 
 		Parameters	param[2];
 		glm::vec4	mJitterNdc;		// only .xy used
+		glm::vec4	mSinTime;		// sin(t/8), sin(t/4), sin(t/2), sin(t)
 		VkBool32	splitScreen;
 		int			splitX;
 		VkBool32    mUpsampling;
@@ -328,18 +331,6 @@ public:
 		mPostProcessPushConstants.zoomDstLTWH = { w - dZoomDst - dZoomBrd, dZoomBrd, dZoomDst, dZoomDst };
 	}
 
-	//// Return a reference to all the result images:
-	//auto& result_images()
-	//{
-	//	return mResultImagesSrgb;
-	//}
-
-	//// Return a reference to one particular result image:
-	//avk::image_view_t& result_image_at(size_t i)
-	//{
-	//	return mResultImagesSrgb[i];
-	//}
-
 	// Return the result of the GPU timer query:
 	float duration()
 	{
@@ -349,7 +340,6 @@ public:
 		auto inFlightIndex = gvk::context().main_window()->in_flight_index_for_frame();
 		return helpers::get_timing_interval_in_ms(fmt::format("TAA {}", inFlightIndex));
 	}
-
 
 	void setup_ui_callback()
 	{
@@ -431,6 +421,10 @@ public:
 
 					CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
 					HelpMarker("Not to be confused with luma weight (Lottes)!");
+
+					CheckboxB32("noise", &param.mAddNoise);
+					SameLine();
+					SliderFloat("##noisefac", &param.mNoiseFactor, 0.f, 0.01f, "%.4f", 2.f);
 
 					if (isPrimary) {
 						ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
@@ -793,6 +787,7 @@ public:
 			mTaaUniforms.param[i] = mParameters[i];
 		}
 		mTaaUniforms.mJitterNdc  = glm::vec4(jitter.x, jitter.y, 0.f, 0.f);
+		mTaaUniforms.mSinTime    = glm::sin(glm::vec4(.125f, .25f, .5f, 1.f) * static_cast<float>(glfwGetTime()));
 		mTaaUniforms.mUpsampling = mUpsampling;
 		mTaaUniforms.splitScreen = mSplitScreen;
 		mTaaUniforms.splitX      = mSplitX;
@@ -983,6 +978,8 @@ public:
 			iniWriteInt		(ini, sec, "mVelocitySampleMode",		param.mVelocitySampleMode);
 			iniWriteInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
 			iniWriteBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
+			iniWriteBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
+			iniWriteFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
 			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniWriteBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
@@ -1038,6 +1035,8 @@ public:
 			iniReadInt		(ini, sec, "mVelocitySampleMode",		param.mVelocitySampleMode);
 			iniReadInt		(ini, sec, "mInterpolationMode",		param.mInterpolationMode);
 			iniReadBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
+			iniReadBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
+			iniReadFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniReadBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);

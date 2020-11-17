@@ -49,6 +49,7 @@
 	ok - avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
 
 	- FIXME: shadows are wrong with culling enabled (because we cull just for the main cam frustum now!)
+	- also avoid unnecessary buffer updates with culling -> add a level of indirection
 
 	- Performance! Esp. w/ shadows!
 
