@@ -3267,6 +3267,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniWriteInt		(ini, sec, "mTestImageSettings.imageId",	mTestImageSettings.imageId);
 		iniWriteBool	(ini, sec, "mTestImageSettings.bilinear",	mTestImageSettings.bilinear);
 
+		sec = "Shadows";
+		iniWriteBool	(ini, sec, "enable",						mShadowMap.enable);
+		iniWriteBool	(ini, sec, "enableForTransparency",			mShadowMap.enableForTransparency);
+		iniWriteBool	(ini, sec, "restrictLightViewToScene",		mShadowMap.shadowMapUtil.restrictLightViewToScene);
+		iniWriteFloat	(ini, sec, "bias",							mShadowMap.bias);
+		iniWriteBool	(ini, sec, "autoCalcCascadeEnds",			mShadowMap.autoCalcCascadeEnds);
+		iniWriteInt		(ini, sec, "numCascades",					mShadowMap.numCascades); // ATTN on load!
+		for (int i = 0; i < SHADOWMAP_MAX_CASCADES; ++i) {
+			iniWriteFloat	(ini, sec, "cascadeEnd_"			+ std::to_string(i), mShadowMap.shadowMapUtil.cascadeEnd[i]);
+			iniWriteBool	(ini, sec, "depthBias.enable_"		+ std::to_string(i), mShadowMap.depthBias[i].enable);
+			iniWriteFloat	(ini, sec, "depthBias.constant_"	+ std::to_string(i), mShadowMap.depthBias[i].constant);
+			iniWriteFloat	(ini, sec, "depthBias.slope_"		+ std::to_string(i), mShadowMap.depthBias[i].slope);
+			iniWriteFloat	(ini, sec, "depthBias.clamp_"		+ std::to_string(i), mShadowMap.depthBias[i].clamp);
+		}
+
 		sec = "PathEditor";
 		iniWriteBool	(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
 		iniWriteInt		(ini, sec, "mCameraSpline.drawNpoints",		mCameraSpline.drawNpoints);
@@ -3339,6 +3354,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniReadBool		(ini, sec, "mTestImageSettings.enabled",	mTestImageSettings.enabled);
 		iniReadInt		(ini, sec, "mTestImageSettings.imageId",	mTestImageSettings.imageId);
 		iniReadBool		(ini, sec, "mTestImageSettings.bilinear",	mTestImageSettings.bilinear);
+
+		sec = "Shadows";
+		iniReadBool		(ini, sec, "enable",						mShadowMap.enable);
+		iniReadBool		(ini, sec, "enableForTransparency",			mShadowMap.enableForTransparency);
+		iniReadBool		(ini, sec, "restrictLightViewToScene",		mShadowMap.shadowMapUtil.restrictLightViewToScene);
+		iniReadFloat	(ini, sec, "bias",							mShadowMap.bias);
+		iniReadBool		(ini, sec, "autoCalcCascadeEnds",			mShadowMap.autoCalcCascadeEnds);
+		iniReadInt		(ini, sec, "numCascades",					mShadowMap.desiredNumCascades); // ATTN on load! read to desiredNumCascades
+		for (int i = 0; i < SHADOWMAP_MAX_CASCADES; ++i) {
+			iniReadFloat	(ini, sec, "cascadeEnd_"			+ std::to_string(i), mShadowMap.shadowMapUtil.cascadeEnd[i]);
+			iniReadBool		(ini, sec, "depthBias.enable_"		+ std::to_string(i), mShadowMap.depthBias[i].enable);
+			iniReadFloat	(ini, sec, "depthBias.constant_"	+ std::to_string(i), mShadowMap.depthBias[i].constant);
+			iniReadFloat	(ini, sec, "depthBias.slope_"		+ std::to_string(i), mShadowMap.depthBias[i].slope);
+			iniReadFloat	(ini, sec, "depthBias.clamp_"		+ std::to_string(i), mShadowMap.depthBias[i].clamp);
+		}
 
 		sec = "PathEditor";
 		iniReadBool		(ini, sec, "mCameraSpline.draw",			mCameraSpline.draw);
