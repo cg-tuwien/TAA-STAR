@@ -15,6 +15,10 @@
 #include "ShadowMap.hpp"
 #include "FrustumCulling.hpp"
 
+// for implementing/testing new features in gvk/avk, which are not yet merged to master
+// if code doesn't compile for you (although you have pulled the latest master on *both* submodules: gears_vk AND auto_vk), set it to 0
+#define USE_UNMERGED_FEATURES 0
+
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
@@ -653,9 +657,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSceneData.mMaterialIndexBuffer          [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()        * sizeof(uint32_t),                     makeSyncNone());
 			mSceneData.mAttribBaseIndexBuffer        [i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()    * sizeof(uint32_t),                     makeSyncNone());
 			mSceneData.mAttributesBuffer             [i]->fill(attributesData.data(),    0, 0, attributesData.size()    * sizeof(MeshgroupPerInstanceData),     makeSyncNone());
-			if (numOpaqueMeshgroups)
 			mSceneData.mDrawCommandsBufferOpaque     [i]->fill(drawcommandsData.data(),  0, 0, numOpaqueMeshgroups      * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
-			if (numTransparentMeshgroups)
 			mSceneData.mDrawCommandsBufferTransparent[i]->fill(drawcmdsTransp_data,      0, 0, numTransparentMeshgroups * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
 			mSceneData.mDrawCountBuffer              [i]->fill(drawCounts.data(),        0, 0, drawCounts.size()        * sizeof(uint32_t),                     makeSyncAll());
 #else
@@ -663,9 +665,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSceneData.mMaterialIndexBuffer          [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()        * sizeof(uint32_t),                     avk::sync::not_required());
 			mSceneData.mAttribBaseIndexBuffer        [i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()    * sizeof(uint32_t),                     avk::sync::not_required());
 			mSceneData.mAttributesBuffer             [i]->fill(attributesData.data(),    0, 0, attributesData.size()    * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
-			if (numOpaqueMeshgroups)
 			mSceneData.mDrawCommandsBufferOpaque     [i]->fill(drawcommandsData.data(),  0, 0, numOpaqueMeshgroups      * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
-			if (numTransparentMeshgroups)
 			mSceneData.mDrawCommandsBufferTransparent[i]->fill(drawcmdsTransp_data,      0, 0, numTransparentMeshgroups * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
 			mSceneData.mDrawCountBuffer              [i]->fill(drawCounts.data(),        0, 0, drawCounts.size()        * sizeof(uint32_t),                     avk::sync::not_required());
 #endif
@@ -1830,7 +1830,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	void draw_scene(avk::command_buffer &cmd, gvk::window::frame_id_t fif, bool transparentParts, int shadowCascade = -1) {
-		//if (numDraws == 0) return; // no point in wasting a drawcall that draws nothing (though it would work just fine)
+		using namespace avk;
 
 		// set depth bias in shadow pass
 		if (shadowCascade >= 0) {
@@ -1842,37 +1842,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}
 		}
 
-		//cmd->draw_indexed_indirect(
-		//	const_referenced(transparentParts ? mSceneData.mDrawCommandsBufferTransparent[fif] : mSceneData.mDrawCommandsBufferOpaque[fif]),
-		//	const_referenced(mSceneData.mIndexBuffer),
-		//	numDraws,
-		//	vk::DeviceSize{ 0 },
-		//	static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)),	// cast is critical, won't compile without; draw_indexed suffers from the same problem btw.
-		//	const_referenced(mSceneData.mPositionsBuffer),
-		//	const_referenced(mSceneData.mTexCoordsBuffer),
-		//	const_referenced(mSceneData.mNormalsBuffer),
-		//	const_referenced(mSceneData.mTangentsBuffer),
-		//	const_referenced(mSceneData.mBitangentsBuffer)
-		//);
-
-		cmd->handle().bindVertexBuffers(0u,
-			{
-				mSceneData.mPositionsBuffer->handle(),
-				mSceneData.mTexCoordsBuffer->handle(),
-				mSceneData.mNormalsBuffer->handle(),
-				mSceneData.mTangentsBuffer->handle(),
-				mSceneData.mBitangentsBuffer->handle()
-			},
-			{ vk::DeviceSize{ 0 }, vk::DeviceSize{ 0 }, vk::DeviceSize{ 0 }, vk::DeviceSize{ 0 }, vk::DeviceSize{ 0 } }
-		);
-		cmd->handle().bindIndexBuffer(mSceneData.mIndexBuffer->handle(), 0u, vk::IndexType::eUint32);
-		cmd->handle().drawIndexedIndirectCount(
-			transparentParts ? mSceneData.mDrawCommandsBufferTransparent[fif]->handle() : mSceneData.mDrawCommandsBufferOpaque[fif]->handle(),
-			vk::DeviceSize{ 0 },
-			mSceneData.mDrawCountBuffer[fif]->handle(),
-			vk::DeviceSize{ transparentParts ? sizeof(uint32_t) : 0 },
+		cmd->draw_indexed_indirect_count(
+			const_referenced(transparentParts ? mSceneData.mDrawCommandsBufferTransparent[fif] : mSceneData.mDrawCommandsBufferOpaque[fif]),
+			const_referenced(mSceneData.mIndexBuffer),
 			transparentParts ? mSceneData.mMaxTransparentMeshgroups : mSceneData.mMaxOpaqueMeshgroups,
-			sizeof(vk::DrawIndexedIndirectCommand)
+			vk::DeviceSize{ 0 },
+			static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)),
+			const_referenced(mSceneData.mDrawCountBuffer[fif]),
+			vk::DeviceSize{ transparentParts ? sizeof(uint32_t) : 0 },
+			const_referenced(mSceneData.mPositionsBuffer),
+			const_referenced(mSceneData.mTexCoordsBuffer),
+			const_referenced(mSceneData.mNormalsBuffer),
+			const_referenced(mSceneData.mTangentsBuffer),
+			const_referenced(mSceneData.mBitangentsBuffer)
 		);
 	}
 
@@ -2312,6 +2294,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					ColorEdit3("amb col", &mAmbLight.col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); SameLine();
 					SliderFloat("amb boost", &mAmbLight.boost, 0.f, 1.f);
+
+
 
 					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0SM cascade\0Debug\0Debug 2\0");
 				}
