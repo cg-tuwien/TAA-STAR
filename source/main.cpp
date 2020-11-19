@@ -3677,7 +3677,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
 		int window_width  = USE_SMALLER_WINDOW ? 1280 : 1920;
-		int window_height = USE_SMALLER_WINDOW ?  960 : 1080;
+		int window_height = USE_SMALLER_WINDOW ?  720 : 1080;
 		bool hide_window = false;
 		float upsample_factor = 1.f;
 		bool fullscreen = false;
