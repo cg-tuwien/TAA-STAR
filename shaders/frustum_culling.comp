@@ -1,0 +1,65 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// -------------------------------------------------------
+
+struct CullingBoundingBox { vec4 minPos, maxPos; };	// only .xyz used
+
+layout(set = 0, binding = 0) uniform CullingUniforms {
+    uint numMeshgroups;
+	uint numInstances;
+	uint numFrusta;
+    uint drawcmdbuf_FirstTransparentIndex;  // index (not offset!) where transparent draw commands start in the DrawCommandsBuffer
+	vec4 frustumPlanes[5*6];	            // frustum planes, 6 per frustum (frustum #0 = main camera, #1 - #5 = shadow cascades)
+} ubo;
+
+layout (std430, set = 0, binding = 1) writeonly buffer CullingVisibilityBuffer { uint visible[]; } result;				// for total # instances; bits 0..5 correspond to different frusta
+layout (std430, set = 0, binding = 2) readonly  buffer CullingBoundingBoxBuffer{ CullingBoundingBox boundingBox[]; };	// for total # instances
+
+
+// ###### HELPER FUNCTIONS ###############################
+
+// FrustumAABBIntersect code adapted from https://gist.github.com/Kinwailo
+// Returns: INTERSECT : 0 
+//          INSIDE    : 1 
+//          OUTSIDE   : 2 
+int FrustumAABBIntersect(vec3 mins, vec3 maxs, uint planeBase) { 
+	int ret = 1; // INSIDE
+	vec3  vmin, vmax; 
+
+	for(uint i = planeBase; i < planeBase + 6; ++i) { 
+		if(ubo.frustumPlanes[i].x > 0) { vmin.x = mins.x; vmax.x = maxs.x; } else { vmin.x = maxs.x; vmax.x = mins.x; } // X axis 
+		if(ubo.frustumPlanes[i].y > 0) { vmin.y = mins.y; vmax.y = maxs.y; } else { vmin.y = maxs.y; vmax.y = mins.y; } // Y axis 
+		if(ubo.frustumPlanes[i].z > 0) { vmin.z = mins.z; vmax.z = maxs.z; } else { vmin.z = maxs.z; vmax.z = mins.z; } // Z axis 
+		if(dot(ubo.frustumPlanes[i].xyz, vmin) + ubo.frustumPlanes[i].w >  0) return 2; // OUTSIDE
+		if(dot(ubo.frustumPlanes[i].xyz, vmax) + ubo.frustumPlanes[i].w >= 0) ret = 0;  // INTERSECT
+	} 
+	return ret;
+}
+
+// ################## COMPUTE SHADER MAIN ###################
+layout(local_size_x = GPU_FRUSTUM_CULLING_WORKGROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uint instance = gl_GlobalInvocationID.x;
+	if (instance >= ubo.numInstances) return;
+
+	if (ubo.numFrusta == 0) {
+		// just for debugging: disable culling, set everything visible
+		result.visible[instance] = 0x1f;
+		return;
+	}
+
+	uint allVisible = 0;
+	uint planeBase = 0;
+	for (int frustum = 0; frustum < ubo.numFrusta; ++frustum, planeBase += 6) {
+		CullingBoundingBox bb = boundingBox[instance];
+		bool isVisible = (2 != FrustumAABBIntersect(bb.minPos.xyz, bb.maxPos.xyz, planeBase));
+		
+		if (isVisible) allVisible |= (1 << frustum);
+	}
+
+	result.visible[instance] = allVisible;
+}
+

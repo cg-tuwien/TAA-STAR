@@ -19,6 +19,7 @@ struct DrawnMeshgroupData {
 layout (std430, set = 0, binding = 2) readonly buffer AttributesBuffer      { PerInstanceAttribute attrib[]; };			// per global mesh,      persistent
 layout (std430, set = 0, binding = 3) readonly buffer DrawnMeshgroupBuffer  { DrawnMeshgroupData meshgroup_data[]; };	// per drawn meshgroup, indexed via glDrawId  (dynamic)
 layout (std430, set = 0, binding = 4) readonly buffer MeshAttribIndexBuffer { uint attrib_index[]; };					// per drawn mesh: index for AttributesBuffer (dynamic)
+layout (std430, set = 0, binding = 5) readonly buffer MeshgroupsLayoutInfoBuffer { uint transparentMeshgroupsOffset; };	// first transparent meshgroup index          (dynamic)
 
 // push constants
 layout(push_constant) PUSHCONSTANTSDEF_DII;
@@ -40,7 +41,7 @@ void main()
 	mat4 modelMatrix;
 	if (mDrawType >= 0) {
 		// static scenery
-		DrawnMeshgroupData mgInfo = meshgroup_data[gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset];
+		DrawnMeshgroupData mgInfo = meshgroup_data[gl_DrawID + mDrawType * transparentMeshgroupsOffset];
 		uint attribIndex     = attrib_index[mgInfo.meshIndexBase + gl_InstanceIndex];
 		v_out.materialIndex  = mgInfo.materialIndex;
 		modelMatrix          = attrib[attribIndex].modelMatrix;

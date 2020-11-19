@@ -79,10 +79,6 @@
 	bool mUseShadowMap;																								\
 	float mShadowBias;																								\
 	int mShadowNumCascades;																							\
-																													\
-	int mSceneTransparentMeshgroupsOffset;																			\
-																													\
-	float pad1, pad2, pad3;																							\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

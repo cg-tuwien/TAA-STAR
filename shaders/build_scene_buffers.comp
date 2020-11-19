@@ -1,0 +1,109 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// --- input
+layout(push_constant) uniform BuildSceneBuffersPushConstants {
+	uint frustum;	// 0 = main camera, 1 - 5 = shadow cascades
+} pushc;
+
+layout(set = 0, binding = 0) uniform CullingUniforms {
+    uint numMeshgroups;
+	uint numInstances;
+	uint numFrusta;
+    uint drawcmdbuf_FirstTransparentIndex;  // index (not offset!) where transparent draw commands start in the DrawCommandsBuffer
+	vec4 frustumPlanes[5*6];	            // frustum planes, 6 per frustum (frustum #0 = main camera, #1 - #5 = shadow cascades)
+} ubo;
+
+struct MeshgroupBasicInfoGpu {
+	uint materialIndex;
+	uint numInstances;
+	uint numIndices;
+	uint baseIndex;
+	bool transparent;
+    // pad?
+};
+
+layout (std430, set = 0, binding = 1) readonly buffer CullingVisibilityBuffer { uint visible[]; };			            // for total # instances; bits 0..5 correspond to different frusta
+layout (std430, set = 0, binding = 2) readonly buffer MeshgroupInfoBuffer     { MeshgroupBasicInfoGpu mg_info[]; };		// for total # meshgroups (opaque + transparent)
+
+// --- output
+struct VkDrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+struct DrawnMeshgroupData {
+	uint materialIndex;			// material index
+	uint meshIndexBase;			// index of first mesh of the group in MeshAttribOffsetBuffer
+};
+
+layout (std430, set = 0, binding = 3) writeonly buffer DrawnMeshgroupBuffer       { DrawnMeshgroupData drawn_meshgroup_data[]; };	// per drawn meshgroup, indexed via glDrawId  (dynamic)
+layout (std430, set = 0, binding = 4) writeonly buffer DrawnMeshAttribIndexBuffer { uint attrib_index[]; };					        // per drawn mesh: index for AttributesBuffer (dynamic)
+layout (std430, set = 0, binding = 5) writeonly buffer MeshgroupsLayoutInfoBuffer { uint transparentMeshgroupsOffset; };	        // first transparent meshgroup index          (dynamic)
+layout (std430, set = 0, binding = 6) writeonly buffer DrawCommandsBuffer         { VkDrawIndexedIndirectCommand cmd[]; } drawcmd;
+layout (std430, set = 0, binding = 7) writeonly buffer DrawCountBuffer            { uint cnt[2]; }                        drawcount;
+
+// ################## COMPUTE SHADER MAIN ###################
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+    uint visMask = 1 << pushc.frustum;
+    uint globMeshCount = 0;
+    uint attribIndexCnt = 0;
+    uint cmdCnt = 0;
+    uint cntOpaqueMg = 0, cntTranspMg = 0;
+    for (uint iMg = 0; iMg < ubo.numMeshgroups; ++iMg) {
+        MeshgroupBasicInfoGpu mg = mg_info[iMg];
+
+		uint globMeshFirstId = globMeshCount;
+		globMeshCount += mg.numInstances;
+
+        DrawnMeshgroupData drawnMgData;
+        drawnMgData.materialIndex = mg.materialIndex;
+        drawnMgData.meshIndexBase = attribIndexCnt;
+
+        uint numVisInstances = 0;
+		for (uint iLocalInst = 0; iLocalInst < mg.numInstances; ++iLocalInst) {
+            uint currentInstanceGlobalId = globMeshFirstId + iLocalInst;
+            if ((visible[currentInstanceGlobalId] & visMask) != 0) {
+                // instance is visible
+                numVisInstances++;
+                attrib_index[attribIndexCnt] = currentInstanceGlobalId;
+                attribIndexCnt++;
+            }
+        }
+
+        if (numVisInstances > 0) {
+            drawn_meshgroup_data[cmdCnt] = drawnMgData;
+
+			VkDrawIndexedIndirectCommand cmd;
+			cmd.indexCount    = mg.numIndices;
+			cmd.instanceCount = numVisInstances;
+			cmd.firstIndex    = mg.baseIndex;
+			cmd.vertexOffset  = 0;	// already taken care of
+			cmd.firstInstance = 0;
+
+            uint offset;
+            if (mg.transparent) {
+                offset = ubo.drawcmdbuf_FirstTransparentIndex;
+                cntTranspMg++;
+            } else {
+                offset = 0;
+                cntOpaqueMg++;
+            }
+
+            drawcmd.cmd[cmdCnt++] = cmd;
+        }
+    }
+
+    drawcount.cnt[0] = cntOpaqueMg;
+    drawcount.cnt[1] = cntTranspMg;
+
+    transparentMeshgroupsOffset = cntOpaqueMg;
+}
+
+

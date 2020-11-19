@@ -7,8 +7,7 @@
 
 class FrustumCulling {
 private:
-	glm::vec3	mPlaneN[6];
-	float		mPlaneD[6];
+	glm::vec4	mPlanes[6];	// .xyz = normal, .w = distance
 
 	const static bool normalize_planes = false; // not needed
 public:
@@ -30,25 +29,20 @@ public:
 		vec4 m2 = glm::row(projViewMatrix, 2);
 		vec4 m3 = glm::row(projViewMatrix, 3);
 
-		vec4 n4[6];
-		n4[0] = -(m3 + m0);
-		n4[1] = -(m3 - m0);
-		n4[2] = -(m3 + m1);
-		n4[3] = -(m3 - m1);
-		n4[4] = -(m3 + m2);
-		n4[5] = -(m3 - m2);
+		mPlanes[0] = -(m3 + m0);
+		mPlanes[1] = -(m3 - m0);
+		mPlanes[2] = -(m3 + m1);
+		mPlanes[3] = -(m3 - m1);
+		mPlanes[4] = -(m3 + m2);
+		mPlanes[5] = -(m3 - m2);
 
 		if (normalize_planes) {
 			for (int i = 0; i < 6; i++) {
-				float len = length(vec3(n4[i]));
-				n4[i] /= len;
+				float len = length(vec3(mPlanes[i]));
+				mPlanes[i] /= len;
 			}
 		}
 
-		for (int i = 0; i < 6; i++) {
-			mPlaneN[i] = vec3(n4[i]);
-			mPlaneD[i] = n4[i].w;
-		}
 	}
 
 	// FrustumAABBIntersect code adapted from https://gist.github.com/Kinwailo
@@ -61,7 +55,7 @@ public:
 
 		for(int i = 0; i < 6; ++i) { 
 			// X axis 
-			if(mPlaneN[i].x > 0) { 
+			if(mPlanes[i].x > 0) { 
 				vmin.x = mins.x; 
 				vmax.x = maxs.x; 
 			} else { 
@@ -69,7 +63,7 @@ public:
 				vmax.x = mins.x; 
 			} 
 			// Y axis 
-			if(mPlaneN[i].y > 0) { 
+			if(mPlanes[i].y > 0) { 
 				vmin.y = mins.y; 
 				vmax.y = maxs.y; 
 			} else { 
@@ -77,15 +71,15 @@ public:
 				vmax.y = mins.y; 
 			} 
 			// Z axis 
-			if(mPlaneN[i].z > 0) { 
+			if(mPlanes[i].z > 0) { 
 				vmin.z = mins.z; 
 				vmax.z = maxs.z; 
 			} else { 
 				vmin.z = maxs.z; 
 				vmax.z = mins.z; 
 			} 
-			if(glm::dot(mPlaneN[i], vmin) + mPlaneD[i] >  0.f) return TestResult::outside;
-			if(glm::dot(mPlaneN[i], vmax) + mPlaneD[i] >= 0.f) ret = TestResult::intersect;
+			if(glm::dot(glm::vec3(mPlanes[i]), vmin) + mPlanes[i].w >  0.f) return TestResult::outside;
+			if(glm::dot(glm::vec3(mPlanes[i]), vmax) + mPlanes[i].w >= 0.f) ret = TestResult::intersect;
 		} 
 		return ret;
 	}
@@ -93,4 +87,6 @@ public:
 	bool CanCull(const BoundingBox &bb) const {
 		return TestResult::outside == FrustumAABBIntersect(bb.min, bb.max);
 	}
+
+	glm::vec4 Plane(int index) { return mPlanes[index]; }
 };

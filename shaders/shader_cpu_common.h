@@ -20,6 +20,10 @@
 // max. bones for animations
 #define MAX_BONES	114
 
+// GPU frustum culling
+#define ENABLE_GPU_FRUSTUM_CULLING 1
+#define GPU_FRUSTUM_CULLING_WORKGROUP_SIZE 32	// TODO: Test!
+
 // don't have transparent movers (yet)
 
 // 8-bit unorm - ugly! (interestingly: way worse than with explicit sRGB output)
@@ -49,7 +53,7 @@
 
 #define IMAGE_FORMAT_SHADOWMAP			vk::Format::eD32Sfloat
 #define SHADOWMAP_BINDING_SET			0
-#define SHADOWMAP_BINDING_SLOT			5
+#define SHADOWMAP_BINDING_SLOT			6
 
 // for debugging
 #define USE_DEBUG_POSBUFFERS	1
