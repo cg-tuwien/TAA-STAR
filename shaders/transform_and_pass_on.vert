@@ -18,9 +18,13 @@ layout (location = 3) in vec3 aTangent;
 layout (location = 4) in vec3 aBitangent;
 
 struct PerInstanceAttribute { mat4 modelMatrix; };
-layout (std430, set = 0, binding = 2) readonly buffer MaterialIndexBuffer   { uint materialIndex[]; };			// per meshgroup
-layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { uint attrib_base[]; };			// per meshgroup
-layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
+struct DrawnMeshgroupData {
+	uint materialIndex;			// material index
+	uint meshIndexBase;			// index of first mesh of the group in MeshAttribOffsetBuffer
+};
+layout (std430, set = 0, binding = 2) readonly buffer AttributesBuffer      { PerInstanceAttribute attrib[]; };			// per global mesh,      persistent
+layout (std430, set = 0, binding = 3) readonly buffer DrawnMeshgroupBuffer  { DrawnMeshgroupData meshgroup_data[]; };	// per drawn meshgroup, indexed via glDrawId  (dynamic)
+layout (std430, set = 0, binding = 4) readonly buffer MeshAttribIndexBuffer { uint attrib_index[]; };					// per drawn mesh: index for AttributesBuffer (dynamic)
 
 // push constants
 layout(push_constant) PUSHCONSTANTSDEF_DII;
@@ -56,17 +60,17 @@ void main()
 	mat4 prev_modelMatrix;
 	if (mDrawType >= 0) {
 		// static scenery
-		uint meshgroup = gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset;
-		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
-		v_out.materialIndex  = materialIndex[meshgroup];
+		DrawnMeshgroupData mgInfo = meshgroup_data[gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset];
+		uint attribIndex     = attrib_index[mgInfo.meshIndexBase + gl_InstanceIndex];
+		v_out.materialIndex  = mgInfo.materialIndex;
 		v_out.modelMatrix    = attrib[attribIndex].modelMatrix;
 		prev_modelMatrix     = v_out.modelMatrix;
 		v_out.movingObjectId = 0;
 	} else {
 		// moving object
-		v_out.materialIndex = mMover_materialIndex;
-		v_out.modelMatrix   = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
-		prev_modelMatrix    = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
+		v_out.materialIndex  = mMover_materialIndex;
+		v_out.modelMatrix    = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
+		prev_modelMatrix     = uboMatUsr.mMover_additionalModelMatrix_prev * mMover_baseModelMatrix;
 		v_out.movingObjectId = -mDrawType;
 	}
 

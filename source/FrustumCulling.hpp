@@ -55,7 +55,7 @@ public:
 	// Returns: INTERSECT : 0 
 	//          INSIDE : 1 
 	//          OUTSIDE : 2 
-	TestResult FrustumAABBIntersect(glm::vec3 &mins, glm::vec3 &maxs) { 
+	TestResult FrustumAABBIntersect(const glm::vec3 &mins, const glm::vec3 &maxs) const { 
 		TestResult ret = TestResult::inside;
 		glm::vec3  vmin, vmax; 
 
@@ -88,5 +88,9 @@ public:
 			if(glm::dot(mPlaneN[i], vmax) + mPlaneD[i] >= 0.f) ret = TestResult::intersect;
 		} 
 		return ret;
-	} 
+	}
+
+	bool CanCull(const BoundingBox &bb) const {
+		return TestResult::outside == FrustumAABBIntersect(bb.min, bb.max);
+	}
 };

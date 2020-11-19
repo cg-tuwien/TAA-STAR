@@ -11,9 +11,13 @@
 layout (location = 0) in vec3 aPosition;
 
 struct PerInstanceAttribute { mat4 modelMatrix; };
-layout (std430, set = 0, binding = 2) readonly buffer MaterialIndexBuffer   { uint materialIndex[]; };			// per meshgroup
-layout (std430, set = 0, binding = 3) readonly buffer AttribBaseIndexBuffer { uint attrib_base[]; };			// per meshgroup
-layout (std430, set = 0, binding = 4) readonly buffer mAttributesBuffer     { PerInstanceAttribute attrib[]; };	// per mesh
+struct DrawnMeshgroupData {
+	uint materialIndex;			// material index
+	uint meshIndexBase;			// index of first mesh of the group in MeshAttribOffsetBuffer
+};
+layout (std430, set = 0, binding = 2) readonly buffer AttributesBuffer      { PerInstanceAttribute attrib[]; };			// per global mesh,      persistent
+layout (std430, set = 0, binding = 3) readonly buffer DrawnMeshgroupBuffer  { DrawnMeshgroupData meshgroup_data[]; };	// per drawn meshgroup, indexed via glDrawId  (dynamic)
+layout (std430, set = 0, binding = 4) readonly buffer MeshAttribIndexBuffer { uint attrib_index[]; };					// per drawn mesh: index for AttributesBuffer (dynamic)
 
 // push constants
 layout(push_constant) PUSHCONSTANTSDEF_DII;
@@ -29,9 +33,9 @@ void main()
 	mat4 modelMatrix;
 	if (mDrawType >= 0) {
 		// static scenery
-		uint meshgroup = gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset;
-		uint attribIndex = attrib_base[meshgroup] + gl_InstanceIndex;
-		modelMatrix    = attrib[attribIndex].modelMatrix;
+		DrawnMeshgroupData mgInfo = meshgroup_data[gl_DrawID + mDrawType * uboMatUsr.mSceneTransparentMeshgroupsOffset];
+		uint attribIndex = attrib_index[mgInfo.meshIndexBase + gl_InstanceIndex];
+		modelMatrix      = attrib[attribIndex].modelMatrix;
 	} else {
 		// moving object
 		modelMatrix   = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;

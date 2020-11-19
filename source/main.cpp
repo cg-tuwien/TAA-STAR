@@ -45,6 +45,7 @@
 			host_coherent instead of device:	31/45
 		- with first version cpu culling:		10.5/35		(dev buffers)
 												10.8/37		(host-coherent buffers)
+		- second version:						~same results
 
 	ok - avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
 
@@ -87,62 +88,15 @@
 	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
 */
 
-/*
-	DrawIndexedIndirect scheme:
-
-	create one big vertex and index buffer (for scenery only? - tbd) [and matching buffers for other vertex-attributes: texCoord,normals,tangents,bitangents]
-
-	meshgroup ~= what was called drawcall_data in earlier versions -> all the instances for a given meshid (differing only in their modelmatrix)
-
-	build an array of VkDrawIndexedIndirectCommand (size = #meshgroups)
-	for each meshgroup mg:
-		instance count = #instances in mg
-		first index = start index of mg in huge index buffer
-		vertex offset = start vertex of mg in huge vertex buffer	(or keep 0 and adjust indices accordingly)
-		keep first instance = 0
-
-	create a materialIndexBuffer[#mg]	(NO alternative: stream it in via instance attributes? - is a waste of memory, need to replicate per-mg-value for each mesh-instance; there are no per-draw-attributes unfortunately)
-	create a perInstanceAttributesBuffer[# total instances] (for now holds only model matrix) (could stream this in via instance attribs instead)
-	create a attribStartIndexBuffer[#mg] -> holds index for perInstanceAttributesBuffer for the first instance of the mg (if not streaming attrib buffer)
-	(for motion vectors on static geo: attribs of last frame == same as this frame, so don't need anything extra)
-
-	for now we don't stream the per-instance attributes
-
-	example perInstanceAttributesBuffer layout (if mesh0 has 2 instances, mesh1 has 1 and mesh2 has 3):
-		perInstanceAttributesBuffer { mesh0_inst0, mesh0_inst1, mesh1_inst0, mesh2_inst0, mesh2_inst1, mesh2_inst2, mesh3_inst0, ... }
-		attribStartIndexBuffer		{ 0, 2, 3, 6, ... }
-
-	draw call/pipeline:
-		per-vertex-attributes:	 index, vertex, normals, tan, bitan, ...
-		per-instance-attributes: attribStartIndex (when not streaming instace attribs), or the instance-attributes directly
-		buffer materialIndexBuffer[]
-
-	in shader:
-		gl_DrawId        := mg being drawn
-		gl_InstanceIndex := instance of mg being drawn
-
-		materialIdx = materialIndexBuffer[gl_DrawId]
-
-		// via buffers
-		attribBase = attribStartIndexBuffer[gl_DrawId]
-		modelMatrix = perInstanceAttributesBuffer[attribBase + gl_InstanceIndex].modelmatrix
-
-		// via streaming attribs
-		modelMatrix = in_perInstanceAttributes_modelmatrix
-
-
-	test status OK: also tested with scenes with multiple orca-models, multiple orca-instances
-*/
-
 #define SCENE_DATA_BUFFER_ON_DEVICE 1
 
 // use fences to avoid processing a frame-in-flight that is still executing - note: this shouldn't be necessary! if it is: is there perhaps a GPU resource update in update()
 #define ADDITIONAL_FRAME_SYNC_WITH_FENCES 0
 
 // descriptor binding shortcuts
-#define SCENE_DRAW_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 2, mSceneData.mMaterialIndexBuffer[fif_]),	/* per meshgroup: material index */				\
-												descriptor_binding(0, 3, mSceneData.mAttribBaseIndexBuffer[fif_]),	/* per meshgroup: attributes base index */		\
-												descriptor_binding(0, 4, mSceneData.mAttributesBuffer[fif_]),		/* per mesh:      attributes (model matrix) */
+#define SCENE_DRAW_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 2, mSceneData.mAttributesBuffer),					/* per (global) mesh:	   attributes (model matrix) */		\
+												descriptor_binding(0, 3, mSceneData.mDrawnMeshgroupBuffer[fif_]),		/* per (drawn)  meshgroup: material, mesh base index */		\
+												descriptor_binding(0, 4, mSceneData.mDrawnMeshAttribIndexBuffer[fif_]),	/* per (drawn)  mesh:      index to attributes buffer*/
 
 
 #if ENABLE_SHADOWMAP
@@ -303,6 +257,10 @@ class wookiee : public gvk::invokee
 
 	struct MeshgroupPerInstanceData {
 		glm::mat4 modelMatrix;
+	};
+	struct DrawnMeshgroupData {
+		uint32_t materialIndex;			// material index
+		uint32_t meshIndexBase;			// index of first mesh of the group in MeshAttribOffsetBuffer
 	};
 	struct Meshgroup {
 		uint32_t numIndices;
@@ -585,43 +543,42 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		FrustumCulling frustumCulling(effectiveCam_proj_matrix() * effectiveCam_view_matrix());
 
-		// build materialIndexBuffer (materialIndexBuffer[i] holds the material index for meshgroup i), attributes / attrib base index buffers, and draw commands buffer
-		std::vector<uint32_t> matIdxData;
-		std::vector<uint32_t> attribBaseData;
-		std::vector<MeshgroupPerInstanceData> attributesData;
+		std::vector<DrawnMeshgroupData> drawnMeshgroupData;
+		std::vector<uint32_t> attribIndexData;
 		std::vector<VkDrawIndexedIndirectCommand> drawcommandsData;
-		matIdxData.      reserve(mSceneData.mMeshgroups.size());
-		attribBaseData.  reserve(mSceneData.mMeshgroups.size());
-		drawcommandsData.reserve(mSceneData.mMeshgroups.size());
-		for (auto i = 0; i < mSceneData.mMeshgroups.size(); ++i) {
-			auto &mg = mSceneData.mMeshgroups[i];
+		drawnMeshgroupData.reserve(mSceneData.mMeshgroups.size());
+		drawcommandsData  .reserve(mSceneData.mMeshgroups.size());
+		uint32_t meshIndexBase = 0;
+		uint32_t globMeshCount = 0;
+		for (auto &mg : mSceneData.mMeshgroups) {
+			uint32_t globMeshFirstId = globMeshCount;
+			globMeshCount += static_cast<uint32_t>(mg.perInstanceData.size());
 
-			size_t numInstances;
+			DrawnMeshgroupData meshgroup_data = { static_cast<uint32_t>(mg.materialIndex), static_cast<uint32_t>(attribIndexData.size()) };
+
+			size_t numInstances = 0;
 			if (mSceneData.mCullViewFrustum) {
-				std::vector<MeshgroupPerInstanceData> attribs;
-				for (auto &insDat : mg.perInstanceData) {
+				for (auto iLocalInst = 0; iLocalInst < mg.perInstanceData.size(); ++iLocalInst) {
+					auto &insDat = mg.perInstanceData[iLocalInst];
 					glm::vec4 p[8];
 					mg.boundingBox_untransformed.getTransformedPointsV4(insDat.modelMatrix, p);
 					BoundingBox bb;
 					bb.calcFromPoints(8, p);
-					if (FrustumCulling::TestResult::outside != frustumCulling.FrustumAABBIntersect(bb.min, bb.max)) {
-						attribs.push_back(insDat);
+					if (!frustumCulling.CanCull(bb)) {
+						attribIndexData.push_back(globMeshFirstId + iLocalInst);
+						numInstances++;
 					}
 				}
-				numInstances = attribs.size();
-				if (numInstances == 0) continue; // with next mesh group
-
-				matIdxData.push_back(mg.materialIndex);
-				attribBaseData.push_back(static_cast<uint32_t>(attributesData.size()));
-				gvk::insert_into(attributesData, attribs);
-
 			} else {
-				numInstances = mg.perInstanceData.size();
-				matIdxData.push_back(mg.materialIndex);
-				attribBaseData.push_back(static_cast<uint32_t>(attributesData.size()));
-				gvk::insert_into(attributesData, mg.perInstanceData);
+				for (auto iLocalInst = 0; iLocalInst < mg.perInstanceData.size(); ++iLocalInst) {
+					attribIndexData.push_back(globMeshFirstId + iLocalInst);
+					numInstances++;
+				}
 			}
-			
+
+			if (numInstances == 0) continue; // with next mesh group
+
+			drawnMeshgroupData.push_back(meshgroup_data);
 
 			VkDrawIndexedIndirectCommand dc;
 			dc.indexCount    = mg.numIndices;
@@ -638,38 +595,31 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto drawcmdsTransp_data = drawcommandsData.data() + numOpaqueMeshgroups;	// pointer to the first transparent draw command
 		std::array<uint32_t, 2> drawCounts = { numOpaqueMeshgroups, numTransparentMeshgroups };
 
+		// Set up synchronization for upload
+		// Note: it's not necessary to have a separate memory barrier for each fill, one combined barrier at the last fill is sufficient! (and none at all is required if buffers are host-coherent)
+#if SCENE_DATA_BUFFER_ON_DEVICE
+		auto makeSyncNone = []() { return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {}, {}); };
+		auto makeSyncAll  = []() {
+			return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {},
+				[](avk::command_buffer_t& cb, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
+					// data buffers are read in vertex shader, draw command buffer is used for indirect draw
+					cb.establish_global_memory_barrier_rw(srcStage,  avk::pipeline_stage::draw_indirect | avk::pipeline_stage::vertex_shader,
+						srcAccess, avk::memory_access::indirect_command_data_read_access | avk::memory_access::shader_buffers_and_images_read_access);
+				});
+		};
+#else
+		auto makeSyncNone = []() { return avk::sync::not_required(); };
+		auto makeSyncAll  = []() { return avk::sync::not_required(); };
+#endif
+
 		// and upload
 		for (decltype(from_fif) i = from_fif; i <= to_fif; ++i) {
-#if SCENE_DATA_BUFFER_ON_DEVICE
-			// Note: it's not necessary to have a separate memory barrier for each fill, one combined barrier at the last fill is sufficient!
-			auto makeSyncNone = []() {
-				return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {}, {});
-			};
-			auto makeSyncAll = []() {
-				return avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler(), {},
-					[](avk::command_buffer_t& cb, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
-						// data buffers are read in vertex shader, draw command buffer is used for indirect draw
-						cb.establish_global_memory_barrier_rw(srcStage,  avk::pipeline_stage::draw_indirect | avk::pipeline_stage::vertex_shader,
-							                                  srcAccess, avk::memory_access::indirect_command_data_read_access | avk::memory_access::shader_buffers_and_images_read_access);
-					});
-			};
 
-			// TODO: remove if's later, when 0-byte fill bug is fixed
-			mSceneData.mMaterialIndexBuffer          [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()        * sizeof(uint32_t),                     makeSyncNone());
-			mSceneData.mAttribBaseIndexBuffer        [i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()    * sizeof(uint32_t),                     makeSyncNone());
-			mSceneData.mAttributesBuffer             [i]->fill(attributesData.data(),    0, 0, attributesData.size()    * sizeof(MeshgroupPerInstanceData),     makeSyncNone());
-			mSceneData.mDrawCommandsBufferOpaque     [i]->fill(drawcommandsData.data(),  0, 0, numOpaqueMeshgroups      * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
-			mSceneData.mDrawCommandsBufferTransparent[i]->fill(drawcmdsTransp_data,      0, 0, numTransparentMeshgroups * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
-			mSceneData.mDrawCountBuffer              [i]->fill(drawCounts.data(),        0, 0, drawCounts.size()        * sizeof(uint32_t),                     makeSyncAll());
-#else
-			// (buffers are host coherent)
-			mSceneData.mMaterialIndexBuffer          [i]->fill(matIdxData.data(),        0, 0, matIdxData.size()        * sizeof(uint32_t),                     avk::sync::not_required());
-			mSceneData.mAttribBaseIndexBuffer        [i]->fill(attribBaseData.data(),    0, 0, attribBaseData.size()    * sizeof(uint32_t),                     avk::sync::not_required());
-			mSceneData.mAttributesBuffer             [i]->fill(attributesData.data(),    0, 0, attributesData.size()    * sizeof(MeshgroupPerInstanceData),     avk::sync::not_required());
-			mSceneData.mDrawCommandsBufferOpaque     [i]->fill(drawcommandsData.data(),  0, 0, numOpaqueMeshgroups      * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
-			mSceneData.mDrawCommandsBufferTransparent[i]->fill(drawcmdsTransp_data,      0, 0, numTransparentMeshgroups * sizeof(VkDrawIndexedIndirectCommand), avk::sync::not_required());
-			mSceneData.mDrawCountBuffer              [i]->fill(drawCounts.data(),        0, 0, drawCounts.size()        * sizeof(uint32_t),                     avk::sync::not_required());
-#endif
+			mSceneData.mDrawnMeshgroupBuffer         [i]->fill(drawnMeshgroupData.data(), 0, 0, drawnMeshgroupData.size() * sizeof(DrawnMeshgroupData),           makeSyncNone());
+			mSceneData.mDrawnMeshAttribIndexBuffer   [i]->fill(attribIndexData.data(),    0, 0, attribIndexData.size()    * sizeof(uint32_t),                     makeSyncNone());
+			mSceneData.mDrawCommandsBufferOpaque     [i]->fill(drawcommandsData.data(),   0, 0, numOpaqueMeshgroups       * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
+			mSceneData.mDrawCommandsBufferTransparent[i]->fill(drawcmdsTransp_data,       0, 0, numTransparentMeshgroups  * sizeof(VkDrawIndexedIndirectCommand), makeSyncNone());
+			mSceneData.mDrawCountBuffer              [i]->fill(drawCounts.data(),         0, 0, drawCounts.size()         * sizeof(uint32_t),                     makeSyncAll());
 		}
 
 	}
@@ -1243,26 +1193,27 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mNormalsBuffer         = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mNormals));
 		mSceneData.mTangentsBuffer        = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mTangents));
 		mSceneData.mBitangentsBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::vertex_buffer_meta::create_from_data(mSceneData.mBitangents));
+		mSceneData.mAttributesBuffer      = gvk::context().create_buffer(avk::memory_usage::device, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
+
 		rdoc::labelBuffer(mSceneData.mIndexBuffer          ->handle(), "scene_IndexBuffer");
 		rdoc::labelBuffer(mSceneData.mPositionsBuffer      ->handle(), "scene_PositionsBuffer");
 		rdoc::labelBuffer(mSceneData.mTexCoordsBuffer      ->handle(), "scene_TexCoordsBuffer");
 		rdoc::labelBuffer(mSceneData.mNormalsBuffer        ->handle(), "scene_NormalsBuffer");
 		rdoc::labelBuffer(mSceneData.mTangentsBuffer       ->handle(), "scene_TangentsBuffer");
 		rdoc::labelBuffer(mSceneData.mBitangentsBuffer     ->handle(), "scene_BitangentsBuffer");
+		rdoc::labelBuffer(mSceneData.mAttributesBuffer     ->handle(), "scene_AttributesBuffer");
 
 		auto numFif = gvk::context().main_window()->number_of_frames_in_flight();
 		avk::memory_usage memoryUsage = (SCENE_DATA_BUFFER_ON_DEVICE ? avk::memory_usage::device : avk::memory_usage::host_coherent);
 		for (decltype(numFif) i = 0; i < numFif; ++i) {
-			mSceneData.mMaterialIndexBuffer          [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
-			mSceneData.mAttributesBuffer             [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(MeshgroupPerInstanceData)));
-			mSceneData.mAttribBaseIndexBuffer        [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(uint32_t)));
+			mSceneData.mDrawnMeshgroupBuffer         [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numMeshgroups * sizeof(DrawnMeshgroupData)));
+			mSceneData.mDrawnMeshAttribIndexBuffer   [i] = gvk::context().create_buffer(memoryUsage, {}, avk::storage_buffer_meta::create_from_size(numInstances  * sizeof(uint32_t)));
 			mSceneData.mDrawCommandsBufferOpaque     [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(std::max(1u, mSceneData.mMaxOpaqueMeshgroups)));
 			mSceneData.mDrawCommandsBufferTransparent[i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements_for_draw_indexed_indirect(std::max(1u, mSceneData.mMaxTransparentMeshgroups)));
 			mSceneData.mDrawCountBuffer              [i] = gvk::context().create_buffer(memoryUsage, {}, avk::indirect_buffer_meta::create_from_num_elements(2, sizeof(uint32_t)));
 
-			rdoc::labelBuffer(mSceneData.mMaterialIndexBuffer          [i]->handle(), "scene_MaterialIndexBuffer", i);
-			rdoc::labelBuffer(mSceneData.mAttribBaseIndexBuffer        [i]->handle(), "scene_AttribBaseIndexBuffer", i);
-			rdoc::labelBuffer(mSceneData.mAttributesBuffer             [i]->handle(), "scene_AttributesBuffer", i);
+			rdoc::labelBuffer(mSceneData.mDrawnMeshgroupBuffer         [i]->handle(), "scene_DrawnMeshgroupBuffer", i);
+			rdoc::labelBuffer(mSceneData.mDrawnMeshAttribIndexBuffer   [i]->handle(), "scene_DrawnMeshAttribIndexBuffer", i);
 			rdoc::labelBuffer(mSceneData.mDrawCommandsBufferOpaque     [i]->handle(), "scene_DrawCommandsBufferOpaque", i);
 			rdoc::labelBuffer(mSceneData.mDrawCommandsBufferTransparent[i]->handle(), "scene_DrawCommandsBufferTransparent", i);
 			rdoc::labelBuffer(mSceneData.mDrawCountBuffer              [i]->handle(), "scene_mDrawCountBuffer", i);
@@ -1478,7 +1429,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mSceneData.mTangentsBuffer  ->fill(mSceneData.mTangents.data(),   0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 		mSceneData.mBitangentsBuffer->fill(mSceneData.mBitangents.data(), 0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
 
-		// build the scene data and drawcommand buffers, and upload them
+		// build static scene buffers, and upload them
+		std::vector<MeshgroupPerInstanceData> attributesData;
+		for (auto i = 0; i < mSceneData.mMeshgroups.size(); ++i) {
+			auto &mg = mSceneData.mMeshgroups[i];
+			gvk::insert_into(attributesData, mg.perInstanceData);
+		}
+		assert(mSceneData.mAttributesBuffer   ->meta<avk::storage_buffer_meta>().total_size() == attributesData.size() * sizeof(MeshgroupPerInstanceData));
+		mSceneData.mAttributesBuffer   ->fill(attributesData.data(),      0, avk::sync::with_barriers([this](avk::command_buffer cb){ mStoredCommandBuffers.emplace_back(std::move(cb)); }, {}, {}));
+
+		// build dynamic scene and drawcommand buffers, and upload them
 		rebuild_scene_buffers(0, gvk::context().main_window()->number_of_frames_in_flight() - 1);
 
 		// upload data for other models
@@ -3530,19 +3490,15 @@ private: // v== Member variables ==v
 		avk::buffer mTangentsBuffer;
 		avk::buffer mBitangentsBuffer;
 
-		// per-meshgroup buffers
-		std::array<avk::buffer, cConcurrentFrames> mMaterialIndexBuffer;
-		std::array<avk::buffer, cConcurrentFrames> mAttribBaseIndexBuffer;		// [x] holds the index for mAttributesBuffer, so that mAttributesBuffer[x] is the attributes of the first instance of mesh group x
+		// other static buffers
+		avk::buffer mAttributesBuffer;		// per (global) mesh
 
-		// buffers with entries for every mesh-instance
-		std::array<avk::buffer, cConcurrentFrames> mAttributesBuffer;
-
-		// buffer holding draw parameters (VkDrawIndexedIndirectCommand)
-		std::array<avk::buffer, cConcurrentFrames> mDrawCommandsBufferOpaque;
-		std::array<avk::buffer, cConcurrentFrames> mDrawCommandsBufferTransparent;
-
-		// buffer holding the draw count for opaque and transparent meshgroups (only 2 entries: [0]=opaque [1]=transparent)
-		std::array<avk::buffer, cConcurrentFrames> mDrawCountBuffer;
+		// dynamic buffers
+		std::array<avk::buffer, cConcurrentFrames> mDrawnMeshgroupBuffer;			// per drawn meshgroup: info for one (drawn) meshgroup
+		std::array<avk::buffer, cConcurrentFrames> mDrawnMeshAttribIndexBuffer;		// per drawn mesh:      info for one (drawn) mesh
+		std::array<avk::buffer, cConcurrentFrames> mDrawCommandsBufferOpaque;		// draw parameters (VkDrawIndexedIndirectCommand) for opaque...
+		std::array<avk::buffer, cConcurrentFrames> mDrawCommandsBufferTransparent;	//    ... and transparent meshgroups
+		std::array<avk::buffer, cConcurrentFrames> mDrawCountBuffer;				// draw count for opaque and transparent meshgroups (only 2 entries: [0]=opaque [1]=transparent)
 
 		// temporary vectors, holding data to be uploaded to the GPU
 		std::vector<uint32_t> mIndices;
