@@ -54,8 +54,7 @@ void main() {
     uint visMask = 1 << pushc.frustum;
     uint globMeshCount = 0;
     uint attribIndexCnt = 0;
-    uint cmdCnt = 0;
-    uint cntOpaqueMg = 0, cntTranspMg = 0;
+    uint cmdCnt = 0, cmdCntOpaque = 0, cmdCntTransp = 0;
     for (uint iMg = 0; iMg < ubo.numMeshgroups; ++iMg) {
         MeshgroupBasicInfoGpu mg = mg_info[iMg];
 
@@ -87,23 +86,22 @@ void main() {
 			cmd.vertexOffset  = 0;	// already taken care of
 			cmd.firstInstance = 0;
 
-            uint offset;
             if (mg.transparent) {
-                offset = ubo.drawcmdbuf_FirstTransparentIndex;
-                cntTranspMg++;
+                drawcmd.cmd[ubo.drawcmdbuf_FirstTransparentIndex + cmdCntTransp] = cmd;
+                cmdCntTransp++;
             } else {
-                offset = 0;
-                cntOpaqueMg++;
+                drawcmd.cmd[cmdCntOpaque] = cmd;
+                cmdCntOpaque++;
             }
 
-            drawcmd.cmd[cmdCnt++] = cmd;
+            cmdCnt++;
         }
     }
 
-    drawcount.cnt[0] = cntOpaqueMg;
-    drawcount.cnt[1] = cntTranspMg;
+    drawcount.cnt[0] = cmdCntOpaque;
+    drawcount.cnt[1] = cmdCntTransp;
 
-    transparentMeshgroupsOffset = cntOpaqueMg;
+    transparentMeshgroupsOffset = cmdCntOpaque; // offset in DrawnMeshgroupBuffer (not in DrawCommandsBuffer(!), offset is fixed there)
 }
 
 

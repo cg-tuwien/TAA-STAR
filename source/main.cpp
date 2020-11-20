@@ -46,6 +46,8 @@
 		- with first version cpu culling:		10.5/35		(dev buffers)
 												10.8/37		(host-coherent buffers)
 		- second version:						~same results
+		- first version GPU culling:            11/36 (but now ~same with CPU - due to new/changed buffer setup?)
+
 
 	ok - avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
 
@@ -305,7 +307,6 @@ class wookiee : public gvk::invokee
 
 	std::vector<CameraState> mCameraPresets = {			// NOTE: literal quat constructor = {w,x,y,z} 
 		{ "Start" },	// t,r filled in from code
-		{ "sp cull bug", {-0.290819f, 1.000000f, -0.915799f}, {0.993742f, -0.055708f, -0.096697f, -0.005421f} },
 		{ "Origin",                  {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f, 0.f} },
 		{ "ES street flicker",       {-18.6704f, 3.43254f, 17.9527f}, {0.219923f, 0.00505909f, -0.975239f, 0.0224345f} },
 		{ "ES window flicker",       {70.996590f, 6.015063f, -5.423345f}, {-0.712177f, -0.027789f, 0.700885f, -0.027349f} },
