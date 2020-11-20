@@ -2036,6 +2036,73 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 	}
 
+	void compute_frustum_culling(avk::command_buffer &cmd, gvk::window::frame_id_t fif) {
+#if ENABLE_GPU_FRUSTUM_CULLING
+		// frustum culling
+
+		if (mSceneData.mRegeneratePerFrame) {
+			using namespace avk;
+			using namespace gvk;
+
+			rdoc::beginSection(cmd->handle(), "Frustum culling", fif);
+
+			// do frustum culling
+			cmd->bind_pipeline(const_referenced(mPipelineFrustumCulling));
+			cmd->bind_descriptors(mPipelineFrustumCulling->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(0, 0, mSceneData.mCullingUniformsBuffer[fif]),
+				descriptor_binding(0, 1, mSceneData.mCullingVisibilityBuffer[fif]),
+				descriptor_binding(0, 2, mSceneData.mCullingBoundingBoxBuffer)
+				}));
+			cmd->handle().dispatch(static_cast<uint32_t>((mSceneData.mNumTotalInstances + GPU_FRUSTUM_CULLING_WORKGROUP_SIZE - 1) / GPU_FRUSTUM_CULLING_WORKGROUP_SIZE), 1u, 1u);
+
+			// the resulting visibility buffer will be read in a compute shader
+			cmd->establish_global_memory_barrier(
+				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::compute_shader,
+				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_read_access
+			);
+			rdoc::endSection(cmd->handle());
+		}
+#endif
+	}
+
+	void compute_scene_draw_buffers(avk::command_buffer &cmd, gvk::window::frame_id_t fif, int shadowCascade = -1) {
+#if ENABLE_GPU_FRUSTUM_CULLING
+		// build scene draw buffers
+
+		if (mSceneData.mRegeneratePerFrame) {
+			using namespace avk;
+			using namespace gvk;
+
+			rdoc::beginSection(cmd->handle(), "Build draw commands", fif);
+
+			cmd->bind_pipeline(const_referenced(mPipelineBuildSceneBuffers));
+			cmd->bind_descriptors(mPipelineBuildSceneBuffers->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+				descriptor_binding(0, 0, mSceneData.mCullingUniformsBuffer[fif]),
+				descriptor_binding(0, 1, mSceneData.mCullingVisibilityBuffer[fif]),
+				descriptor_binding(0, 2, mSceneData.mMeshgroupInfoBuffer),
+				descriptor_binding(0, 3, mSceneData.mDrawnMeshgroupBuffer[fif]),
+				descriptor_binding(0, 4, mSceneData.mDrawnMeshAttribIndexBuffer[fif]),
+				descriptor_binding(0, 5, mSceneData.mMeshgroupsLayoutInfoBuffer[fif]),
+				descriptor_binding(0, 6, mSceneData.mDrawCommandsBuffer[fif]->as_storage_buffer()),
+				descriptor_binding(0, 7, mSceneData.mDrawCountBuffer[fif]->as_storage_buffer()),
+				}));
+
+			BuildSceneBuffersPushConstants pushc;
+			pushc.frustum = shadowCascade + 1;
+			cmd->push_constants(mPipelineBuildSceneBuffers->layout(), pushc);
+			cmd->handle().dispatch(1u, 1u, 1u);
+
+			// compute shader wrote storage and indirect buffers - these are used by vertex shaders and indirect draw commands
+			cmd->establish_global_memory_barrier(
+				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::vertex_shader | pipeline_stage::draw_indirect,
+				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_read_access | memory_access::indirect_command_data_read_access
+			);
+
+			rdoc::endSection(cmd->handle());
+		}
+#endif
+	}
+
 	void record_all_command_buffers_for_models() {
 		auto fif = gvk::context().main_window()->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
@@ -2060,70 +2127,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->begin_recording();
 
-#if ENABLE_GPU_FRUSTUM_CULLING
-		// frustum culling and scene drawbuffer building
-		if (mSceneData.mRegeneratePerFrame) {
-			rdoc::beginSection(commandBuffer->handle(), "Frustum culling", fif);
-
-			// do frustum culling
-			commandBuffer->bind_pipeline(const_referenced(mPipelineFrustumCulling));
-			commandBuffer->bind_descriptors(mPipelineFrustumCulling->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				descriptor_binding(0, 0, mSceneData.mCullingUniformsBuffer[fif]),
-				descriptor_binding(0, 1, mSceneData.mCullingVisibilityBuffer[fif]),
-				descriptor_binding(0, 2, mSceneData.mCullingBoundingBoxBuffer)
-				}));
-			commandBuffer->handle().dispatch(static_cast<uint32_t>((mSceneData.mNumTotalInstances + GPU_FRUSTUM_CULLING_WORKGROUP_SIZE - 1) / GPU_FRUSTUM_CULLING_WORKGROUP_SIZE), 1u, 1u);
-
-			// the resulting visibility buffer will be read in a compute shader
-			commandBuffer->establish_global_memory_barrier(
-				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::compute_shader,
-				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_read_access
-			);
-
-			// FIXME: move to separate function, call also for shadow maps
-			// build scene draw buffers
-			commandBuffer->bind_pipeline(const_referenced(mPipelineBuildSceneBuffers));
-			commandBuffer->bind_descriptors(mPipelineBuildSceneBuffers->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				descriptor_binding(0, 0, mSceneData.mCullingUniformsBuffer[fif]),
-				descriptor_binding(0, 1, mSceneData.mCullingVisibilityBuffer[fif]),
-				descriptor_binding(0, 2, mSceneData.mMeshgroupInfoBuffer),
-				descriptor_binding(0, 3, mSceneData.mDrawnMeshgroupBuffer[fif]),
-				descriptor_binding(0, 4, mSceneData.mDrawnMeshAttribIndexBuffer[fif]),
-				descriptor_binding(0, 5, mSceneData.mMeshgroupsLayoutInfoBuffer[fif]),
-				descriptor_binding(0, 6, mSceneData.mDrawCommandsBuffer[fif]->as_storage_buffer()),
-				descriptor_binding(0, 7, mSceneData.mDrawCountBuffer[fif]->as_storage_buffer()),
-				}));
-
-			BuildSceneBuffersPushConstants pushc;
-			pushc.frustum = 0; // TODO further down, shadow maps!
-			commandBuffer->push_constants(mPipelineBuildSceneBuffers->layout(), pushc);
-			commandBuffer->handle().dispatch(1u, 1u, 1u);
-
-			// compute shader wrote storage and indirect buffers - these are used by vertex shaders and indirect draw commands
-			commandBuffer->establish_global_memory_barrier(
-				pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::vertex_shader | pipeline_stage::draw_indirect,
-				memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_read_access | memory_access::indirect_command_data_read_access
-			);
-
-			rdoc::endSection(commandBuffer->handle());
-		}
-#endif
+		compute_frustum_culling(commandBuffer, fif);	// calculate frustum visibility
 
 #if ENABLE_SHADOWMAP
 		if (mShadowMap.enable) {
 			rdoc::beginSection(commandBuffer->handle(), "Shadowmap", fif);
 			// TODO - move shadowmap creation into a subpass?
 
-			// bind descriptors
-			commandBuffer->bind_descriptors(mPipelineShadowmapOpaque->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				descriptor_binding(0, 0, mMaterialBuffer),
-				descriptor_binding(0, 1, mImageSamplers),
-				SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
-				descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
-				descriptor_binding(1, 1, mLightsourcesBuffer[fif])
-				}));
-
 			for (int cascade = 0; cascade < mShadowMap.numCascades; ++cascade) {
+				// Prepare scene draw buffers for current cascade
+				compute_scene_draw_buffers(commandBuffer, fif, cascade);
+
+				// bind descriptors
+				commandBuffer->bind_descriptors(mPipelineShadowmapOpaque->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+					descriptor_binding(0, 0, mMaterialBuffer),
+					descriptor_binding(0, 1, mImageSamplers),
+					SCENE_DRAW_DESCRIPTOR_BINDINGS(fif)
+					descriptor_binding(1, 0, mMatricesUserInputBuffer[fif]),
+					descriptor_binding(1, 1, mLightsourcesBuffer[fif])
+					}));
+
 				pushc_dii.mShadowMapCascadeToBuild = cascade;
 
 				// start renderpass
@@ -2151,6 +2174,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			rdoc::endSection(commandBuffer->handle());
 		}
 #endif
+		// Prepare scene draw buffers for main camera
+		compute_scene_draw_buffers(commandBuffer, fif);
 
 		rdoc::beginSection(commandBuffer->handle(), "Render models", fif);
 		helpers::record_timing_interval_start(commandBuffer->handle(), fmt::format("mModelsCommandBuffer{} time", fif));
