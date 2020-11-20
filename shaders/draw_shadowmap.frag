@@ -34,7 +34,8 @@ void main() {
 		uv = (f_in.texCoords - vec2(0.5, 0.5)) * 2.0;
 	}
 	if (cascade < uboMatUsr.mShadowNumCascades) {
-		oFragColor = vec4(vec3(texture(sampler2D(texShadowMap[cascade], uSampler), uv).r), 1.0);
+		oFragColor = vec4(vec3(texture(sampler2D(texShadowMap[cascade], uSampler), vec2(uv.x, 1-uv.y)).r), 1.0); // flip y (if shadow cam is oriented upside down)
+		//oFragColor = vec4(vec3(texture(sampler2D(texShadowMap[cascade], uSampler), uv).r), 1.0);
 	} else {
 		oFragColor = vec4(0,0,0,1);
 	}

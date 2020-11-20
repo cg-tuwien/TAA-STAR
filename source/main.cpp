@@ -26,7 +26,7 @@
 #define USE_GVK_UPDATER 1
 
 // re-record (model) command buffer for frame-in-flight always, instead of pre-recording (for all frame-in-flights) only when necessary? (allows shader hot reloading, but is quite a bit slower (~ +2ms for Emerald Square))
-#define RERECORD_CMDBUFFERS_ALWAYS 0
+#define RERECORD_CMDBUFFERS_ALWAYS 1
 
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
@@ -51,12 +51,11 @@
 
 	ok - avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
 
-	- FIXME: shadows are wrong with culling enabled (because we cull just for the main cam frustum now!)
-	- also avoid unnecessary buffer updates with culling -> add a level of indirection
+	- shadows: need backface culling disabled - why? something to do with upside-down shadow camera?
 
 	- Performance! Esp. w/ shadows!
 
-	- Shadows: remove manual bias, add polygon offsets
+	ok Shadows: remove manual bias, add polygon offsets
 
 	- cleanup TODO list ;-)   remove obsolete stuff, add notes from scratchpads
 
@@ -1770,7 +1769,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			vertex_shader("shaders/shadowmap.vert.spv"), // no fragment shader
 			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),
 			mShadowmapRenderpass,
-			//cfg::culling_mode::disabled,	// no backface culling // (for now) TODO
+			cfg::culling_mode::disabled,	// no backface culling // (for now) TODO - enabling it leads to shadow problems!
 			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
 			cfg::viewport_depth_scissors_config::from_framebuffer(mShadowmapPerCascade[0].mShadowmapFramebuffer[0]),
 			cfg::depth_clamp_bias::dynamic(), // allow dynamic setting of depth bias AND enable it
