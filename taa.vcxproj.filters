@@ -179,5 +179,11 @@
     <Image Include="assets\models\goblin.dds">
       <Filter>assets</Filter>
     </Image>
+    <Image Include="assets\images\thingrid_2560x1440.png">
+      <Filter>assets\images</Filter>
+    </Image>
+    <Image Include="assets\images\thingrid_inv_2560x1440.png">
+      <Filter>assets\images</Filter>
+    </Image>
   </ItemGroup>
 </Project>

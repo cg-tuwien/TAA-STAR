@@ -31,9 +31,6 @@
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
 
-// small default window size ?
-#define USE_SMALLER_WINDOW 0
-
 /* TODO:
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -54,12 +51,13 @@
 	- shadows: need backface culling disabled - why? something to do with upside-down shadow camera?
 
 	- Performance! Esp. w/ shadows!
+	  Note: shadows of transparent obj. consumes much time, but NOT due to sampling diff. texture (diff=only ~2ms at ES park) ! It's just the amount of additional objects
 
 	ok Shadows: remove manual bias, add polygon offsets
 
 	- cleanup TODO list ;-)   remove obsolete stuff, add notes from scratchpads
 
-	- do on-GPU visibility culling?
+	ok - do on-GPU visibility culling?
 
 	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
 
@@ -336,9 +334,11 @@ class wookiee : public gvk::invokee
 		const char *filename;
 	};
 	std::vector<ImageDef> mImageDefs = {
-		{ "Forest sunlight",	"assets/images/Forest_Sunlight_Background-954.jpg" },
-		{ "Barcelona",			"assets/images/Barcelona_Spain_Background-1421.jpg" },
-		{ "Test card",			"assets/images/Chinese_HDTV_test_card.png" },
+		{ "Forest sunlight",		"assets/images/Forest_Sunlight_Background-954.jpg" },
+		{ "Barcelona",				"assets/images/Barcelona_Spain_Background-1421.jpg" },
+		{ "Test card",				"assets/images/Chinese_HDTV_test_card.png" },
+		{ "Grid 2560x1440",			"assets/images/thingrid_2560x1440.png" },
+		{ "Grid 2560x1440 inv",		"assets/images/thingrid_inv_2560x1440.png" },
 	};
 
 
@@ -2940,14 +2940,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// updating the pipelines crashes when using pre-recorded command buffers! (because pipeline is still in use)
 #if RERECORD_CMDBUFFERS_ALWAYS
 
-#if FORWARD_RENDERING
-		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
-#else
-		std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFirstPass, &mPipelineLightingPass };
-#endif
+		#if FORWARD_RENDERING
+			std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFwdOpaque, &mPipelineFwdTransparent, &mPipelineFwdTransparentNoBlend };
+		#else
+			std::vector<avk::graphics_pipeline *> gfx_pipes = { &mPipelineFirstPass, &mPipelineLightingPass };
+		#endif
 		gfx_pipes.push_back(&mPipelineAnimObject);
 		gfx_pipes.push_back(&mPipelineTestImage);
 		gfx_pipes.push_back(&mPipelineDrawCamPath);
+		#if ENABLE_SHADOWMAP
+			gfx_pipes.push_back(&mPipelineShadowmapOpaque);
+			gfx_pipes.push_back(&mPipelineShadowmapTransparent);
+		#endif
 
 		for (auto ppipe : gfx_pipes) {
 			ppipe->enable_shared_ownership();
@@ -3805,6 +3809,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		// Parse command line
 		// first parameter starting without dash is scene filename
 		// -- (double-dash) terminates command line, everything after (including scene file name) is ignored
+		const glm::ivec2 win_size_def   = { 1920, 1080 };
+		const glm::ivec2 win_size_small = { 1280,  720 };
 		bool badCmd = false;
 		bool disableValidation = false;
 		bool forceValidation = false;
@@ -3813,8 +3819,8 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool disableAlphaBlending = false;
 		int  capture_n_frames = 0;
 		bool skip_scene_filename = false;
-		int window_width  = USE_SMALLER_WINDOW ? 1280 : 1920;
-		int window_height = USE_SMALLER_WINDOW ?  720 : 1080;
+		int window_width  = win_size_def.x;
+		int window_height = win_size_def.y;
 		bool hide_window = false;
 		float upsample_factor = 1.f;
 		bool fullscreen = false;
@@ -3858,6 +3864,9 @@ int main(int argc, char **argv) // <== Starting point ==
 				} else if (0 == _stricmp(argv[i], "-test")) {
 					skip_scene_filename = true;
 					sceneFileName = "../../extras/TestScene/TestScene.fscene";
+				} else if (0 == _stricmp(argv[i], "-small")) {
+					window_width  = win_size_small.x;
+					window_height = win_size_small.y;
 				} else if (0 == _stricmp(argv[i], "-w")) {
 					i++;
 					if (i >= argc) { badCmd = true; break; }
@@ -3896,6 +3905,7 @@ int main(int argc, char **argv) // <== Starting point ==
 			std::cout << "Parameters:\n"
 				"-w <width>             set window width\n"
 				"-h <height>            set window height\n"
+				"-small                 use smaller default window size (" << win_size_small.x << "x" << win_size_small.y << ") instead of (" << win_size_def.x << "x" << win_size_def.y << ")\n"
 				"-fullscreen            enable fullscreen mode\n"
 				"-upsample <factor>     upsampling factor (render framebuffer is <factor> times smaller than the window)\n"
 				"-sponza                ignore scene file path and load Sponza scene\n"

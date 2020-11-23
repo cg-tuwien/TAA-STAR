@@ -65,12 +65,14 @@ struct Parameters {
 	bool mToneMapLumaKaris;			// "tone mapping" by luma weighting (Karis)
 	bool mAddNoise;
 	float mNoiseFactor;				// small, way less than 1, e.g. 1/512
+	bool mReduceBlendNearClamp;		// reduce blend factor when near clamping (Karis14)
 
+	vec4 mDebugMask;
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
 
-	float pad1,pad2;
+	float pad1;
 };
 
 //layout(push_constant) uniform PushConstants {
@@ -222,7 +224,7 @@ vec3 getCurrentUpsampledColor(in ivec2 currentTc, in vec2 currentUv, out float b
 	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(0,        almostOne)) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
 	inTcSample = floor(textureSize_loRes * vec2(currentTc + vec2(almostOne,almostOne)) / textureSize_hiRes) + 0.5 + texelJitter; if (ivec2(inTcSample * scale) == currentTc) foundTc = inTcSample;
 
-	gDebugValue = foundTc.x >= 0.0 ? vec4(1, foundTc, 0) : vec4(0);	
+	//gDebugValue = foundTc.x >= 0.0 ? vec4(1, foundTc, 0) : vec4(0);	
 
 	if (foundTc.x >= 0.0) {
 		beta = 1.0;
@@ -652,6 +654,28 @@ void main()
 			// ww=0: bad history, use max alpha ; ww=1: good history, use min alpha
 			alpha = mix(params.mMaxAlpha, params.mMinAlpha, ww);
 		}
+
+		// Anti-flicker: Reduce blend factor when history is near clamping [Karis14]
+		if (params.mReduceBlendNearClamp) {
+			// calculation adapted from NVidia's Falcor / Unreal Engine
+			float colMin_lum  = luminance(colMin);
+			float colMax_lum  = luminance(colMax);
+			float history_lum = luminance(origHistorColor);
+			#if 0
+				// Falcor-based
+				float distToClamp = min(abs(colMin_lum - history_lum), abs(colMax_lum - history_lum));
+				float factor = distToClamp / (distToClamp + colMax_lum - colMin_lum);
+				float alpha = clamp(alpha * factor, 0.0, 1.0);
+				gDebugValue = vec4(factor, alpha, distToClamp, 0);
+			#else
+				// Unreal Engine-based (slightly modified)
+				float distToClamp = 2.0 * abs(min(history_lum - colMin_lum, colMax_lum - history_lum)) / (colMax_lum - colMin_lum);	// what if max == min ?
+				float alphaOrig = alpha;
+				alpha += 0.8 * clamp(0.02 * history_lum / abs(luminance(currentColor) - history_lum), 0, 1);
+				alpha = clamp(alpha, 0, 1);
+				gDebugValue = vec4(alphaOrig, alpha, distToClamp, 0);
+			#endif
+		}
 	}
 
 	if (ubo.mResetHistory) { alpha = 1.0; beta = 1.0; }
@@ -694,7 +718,7 @@ void main()
 	}
 	// else keep current gDebugValue
 
-	gDebugValue *= params.mDebugScale;
+	gDebugValue *= params.mDebugScale * params.mDebugMask;
 	if (params.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
 	imageStore(uDebug,  iuv, gDebugValue);
 

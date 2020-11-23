@@ -18,8 +18,6 @@
 #include "ffx_cas.h"
 
 
-#define TAA_USE_POSTPROCESS_STEP 1
-
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
 // are created CF-times, once for each concurrent frame.
@@ -51,12 +49,14 @@ class taa : public gvk::invokee
 		VkBool32 mToneMapLumaKaris			= VK_FALSE;		// "tone mapping" by luma weighting (Karis)
 		VkBool32 mAddNoise					= VK_FALSE;
 		float mNoiseFactor					= 1.f / 510.f;	// small, way less than 1, e.g. 1/512
+		VkBool32 mReduceBlendNearClamp		= VK_FALSE;		// reduce blend factor when near clamping (Karis14)
 
+		glm::vec4 mDebugMask				= glm::vec4(1);
 		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
 
-		float pad1,pad2;
+		float pad1;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -136,7 +136,7 @@ public:
 	}
 
 	// Compute an offset for the projection matrix based on the given frame-id
-	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId) const
+	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId, std::vector<glm::vec2> *copyPatternDst = nullptr) const
 	{
 		//const static auto sResolution = gvk::context().main_window()->resolution();
 		assert(mInputResolution.x);
@@ -168,11 +168,10 @@ public:
 			);
 
 
-		const static auto sDebugSampleOffsets = avk::make_array<glm::vec2>(sPxSizeNDC * glm::vec2(0, 0));
-
 		// Select a specific distribution:
 		const glm::vec2* sampleOffsetValues = nullptr;
 		size_t numSampleOffsets = 0;
+		glm::vec2 scaleBy = glm::vec2(1);
 		switch (mSampleDistribution) {
 		case 0:
 			sampleOffsetValues = sCircularQuadSampleOffsets.data();
@@ -195,16 +194,22 @@ public:
 			numSampleOffsets = sRegular16SampleOffsets.size();
 			break;
 		case 5:
-			sampleOffsetValues = sDebugSampleOffsets.data();
-			numSampleOffsets = sDebugSampleOffsets.size();
+			sampleOffsetValues = mDebugSampleOffsets.data();
+			numSampleOffsets = mDebugSampleOffsets.size();
+			scaleBy = sPxSizeNDC;
 			break;
+		}
+
+		if (copyPatternDst) {
+			copyPatternDst->resize(numSampleOffsets);
+			for (auto i = 0; i < numSampleOffsets; ++i) copyPatternDst->at(i) = sampleOffsetValues[i] * scaleBy / sPxSizeNDC;
 		}
 
 		if (mJitterSlowMotion > 1) aFrameId /= mJitterSlowMotion;
 		if (mFixedJitterIndex >= 0) aFrameId = mFixedJitterIndex;
 
 
-		auto pos = sampleOffsetValues[aFrameId % numSampleOffsets];
+		auto pos = sampleOffsetValues[aFrameId % numSampleOffsets] * scaleBy;
 
 		if (mJitterRotateDegrees != 0.f) {
 			float s = sin(glm::radians(mJitterRotateDegrees));
@@ -303,13 +308,11 @@ public:
 			rdoc::labelImage(mDebugImages[i]->get_image().handle(), "taa.mDebugImages", i);
 			layoutTransitions.emplace_back(std::move(mDebugImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
-#if TAA_USE_POSTPROCESS_STEP
 			mPostProcessImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_POSTPROCESS, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
 			rdoc::labelImage(mPostProcessImages[i]->get_image().handle(), "taa.mPostProcessImages", i);
 			layoutTransitions.emplace_back(std::move(mPostProcessImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
-#endif
 
 			mInputResolution = glm::uvec2(mSrcColor[0]->get_image().width(), mSrcColor[0]->get_image().height());
 			mOutputResolution = targetResolution;
@@ -381,57 +384,61 @@ public:
 					} else {
 						SetCursorPosY(GetCursorPosY() + checkbox_height);
 					}
-					CheckboxB32("pass through", &param.mPassThrough); HelpMarker("Effectively disables TAA, but runs shader");
-					static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
-					ComboW(120, "color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
-					if (CheckboxB32("shaped neighbourhood", &param.mShapedNeighbourhood)) if (param.mShapedNeighbourhood) param.mVarianceClipping = VK_FALSE;
-					HelpMarker("[Karis14] average the min/max of 3x3 and 5-tap clipboxes");
-					if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
-					SameLine(); SliderFloatW(100, "##gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
-					CheckboxB32("use YCoCg", &param.mUseYCoCg);
-					if (!param.mUseYCoCg) PushStyleVar(ImGuiStyleVar_Alpha, GetStyle().Alpha * 0.5f);
-					SameLine(); CheckboxB32("shrink chroma", &param.mShrinkChromaAxis);
-					if (!param.mUseYCoCg) PopStyleVar();
-					HelpMarker("Use YCoCg: Perform clamping/clipping in YCoCg color space instead of RGB.\nShrink chroma: (in addition) Shape the YCoCg clip box to reduce the influence of chroma.");
-					CheckboxB32("luma weight (Lottes)", &param.mLumaWeightingLottes); HelpMarker("Not to be confused with tonemap luma weight (Karis)!\nSet min and max alpha to define feedback range.");
-					CheckboxB32("depth culling", &param.mDepthCulling);
-					CheckboxB32("reject out-of-screen", &param.mRejectOutside);
-					//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
-					CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
-					CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
-					PushItemWidth(120);
-					InputFloat("unjitter factor", &param.mUnjitterFactor);
-					static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton(2,3) x8", "halton(2,3) x16", "debug x16", "debug x1" };
-					if (isPrimary) Combo("sample pattern", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
+
+					if (CollapsingHeader("Params")) {
+						CheckboxB32("pass through", &param.mPassThrough); HelpMarker("Effectively disables TAA, but runs shader");
+						static const char* sColorClampingClippingValues[] = { "nope", "clamp", "clip fast", "clip slow" };
+						ComboW(120, "color clamp/clip", &param.mColorClampingOrClipping, sColorClampingClippingValues, IM_ARRAYSIZE(sColorClampingClippingValues));
+						if (CheckboxB32("shaped neighbourhood", &param.mShapedNeighbourhood)) if (param.mShapedNeighbourhood) param.mVarianceClipping = VK_FALSE;
+						HelpMarker("[Karis14] average the min/max of 3x3 and 5-tap clipboxes");
+						if (CheckboxB32("variance clipping", &param.mVarianceClipping)) if (param.mVarianceClipping) param.mShapedNeighbourhood = VK_FALSE;
+						SameLine(); SliderFloatW(100, "##gamma", &param.mVarClipGamma, 0.f, 2.f, "%.2f");
+						CheckboxB32("use YCoCg", &param.mUseYCoCg);
+						if (!param.mUseYCoCg) PushStyleVar(ImGuiStyleVar_Alpha, GetStyle().Alpha * 0.5f);
+						SameLine(); CheckboxB32("shrink chroma", &param.mShrinkChromaAxis);
+						if (!param.mUseYCoCg) PopStyleVar();
+						HelpMarker("Use YCoCg: Perform clamping/clipping in YCoCg color space instead of RGB.\nShrink chroma: (in addition) Shape the YCoCg clip box to reduce the influence of chroma.");
+						CheckboxB32("luma weight (Lottes)", &param.mLumaWeightingLottes); HelpMarker("Not to be confused with tonemap luma weight (Karis)!\nSet min and max alpha to define feedback range.");
+						CheckboxB32("depth culling", &param.mDepthCulling);
+						CheckboxB32("reject out-of-screen", &param.mRejectOutside);
+						//Checkbox("texture lookup unjitter", &param.mTextureLookupUnjitter);
+						CheckboxB32("unjitter neighbourhood",  &param.mUnjitterNeighbourhood);
+						CheckboxB32("unjitter current sample", &param.mUnjitterCurrentSample);
+						PushItemWidth(120);
+						InputFloat("unjitter factor", &param.mUnjitterFactor);
 					
-					SliderFloat("alpha", &param.mAlpha, 0.0f, 1.0f);
-					SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
-					SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
-					SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
-					Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
-					Combo("vel.sampling", &param.mVelocitySampleMode, "simple\0""3x3 longest\0""3x3 closest\0");
-					HelpMarker("simple:      just sample velocity at the current fragment\n"
-						       "3x3 longest: take the longest velocity vector in a 3x3\n"
-						       "             neighbourhood\n"
-						       "3x3 closest: take the velocity from the (depth-wise) closest"
-						       "             fragment in a 3x3 neighbourhood"
-					);
-					Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
-					PopItemWidth();
+						SliderFloat("alpha", &param.mAlpha, 0.0f, 1.0f);
+						SliderFloat("a_min", &param.mMinAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting min alpha");
+						SliderFloat("a_max", &param.mMaxAlpha, 0.0f, 1.0f); HelpMarker("Luma weighting max alpha");
+						SliderFloat("rejection alpha", &param.mRejectionAlpha, 0.0f, 1.0f);
+						Combo("use velocity", &param.mUseVelocityVectors, "none\0movers\0all\0");
+						Combo("vel.sampling", &param.mVelocitySampleMode, "simple\0""3x3 longest\0""3x3 closest\0");
+						HelpMarker("simple:      just sample velocity at the current fragment\n"
+								   "3x3 longest: take the longest velocity vector in a 3x3\n"
+								   "             neighbourhood\n"
+								   "3x3 closest: take the velocity from the (depth-wise) closest"
+								   "             fragment in a 3x3 neighbourhood"
+						);
+						Combo("interpol", &param.mInterpolationMode, "bilinear\0bicubic b-Spline\0bicubic Catmull-Rom\0");
+						PopItemWidth();
 
-					CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
-					HelpMarker("Not to be confused with luma weight (Lottes)!");
+						CheckboxB32("tonemap luma w. (Karis)", &param.mToneMapLumaKaris);
+						HelpMarker("Not to be confused with luma weight (Lottes)!");
 
-					CheckboxB32("noise", &param.mAddNoise);
-					SameLine();
-					SliderFloat("##noisefac", &param.mNoiseFactor, 0.f, 0.01f, "%.4f", 2.f);
-
-					if (isPrimary) {
-						ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
+						CheckboxB32("noise", &param.mAddNoise);
 						SameLine();
-						SliderFloatW(80, "##sharpening factor", &mSharpenFactor, 0.f, 1.f, "%.1f");
-					} else {
-						SetCursorPosY(GetCursorPosY() + checkbox_height);
+						SliderFloat("##noisefac", &param.mNoiseFactor, 0.f, 0.01f, "%.4f", 2.f);
+
+						CheckboxB32("reduce blend near clamp", &param.mReduceBlendNearClamp);
+						HelpMarker("Anti-flicker: Reduce blend factor when history is near clamping [Karis14]");
+
+						if (isPrimary) {
+							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
+							SameLine();
+							SliderFloatW(80, "##sharpening factor", &mSharpenFactor, 0.f, 1.f, "%.1f");
+						} else {
+							SetCursorPosY(GetCursorPosY() + checkbox_height);
+						}
 					}
 
 					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
@@ -444,6 +451,14 @@ public:
 					PopItemWidth();
 					SameLine();
 					CheckboxB32("center##debug center", &param.mDebugCenter);
+					static bool mask_r, mask_g, mask_b;
+					mask_r = param.mDebugMask.r != 0.f;
+					mask_g = param.mDebugMask.g != 0.f;
+					mask_b = param.mDebugMask.b != 0.f;
+					Checkbox("R##debugmaskR", &mask_r); SameLine();
+					Checkbox("G##debugmaskG", &mask_g); SameLine();
+					Checkbox("B##debugmaskB", &mask_b);
+					param.mDebugMask = glm::vec4(mask_r ? 1.f : 0.f, mask_g ? 1.f : 0.f, mask_b ? 1.f : 0.f, 1.f);
 
 					if (isPrimary) {
 
@@ -458,15 +473,38 @@ public:
 							switchParams = Button("flip");
 						}
 
-						if (CollapsingHeader("Jitter debug")) {
+						if (CollapsingHeader("Jitter")) {
+							PushID("JitterStuff");
+							static const char* sSampleDistributionValues[] = { "circular quad", "uniform4 helix", "halton x8", "halton x16", "grid x16", "debug" };
+							if (isPrimary) Combo("sample pattern", &mSampleDistribution, sSampleDistributionValues, IM_ARRAYSIZE(sSampleDistributionValues)); else SetCursorPosY(GetCursorPosY() + combo_height);
+
 							SliderInt("lock", &mFixedJitterIndex, -1, 16);
 							InputFloat("scale", &mJitterExtraScale, 0.f, 0.f, "%.2f");
 							InputInt("slowdown", &mJitterSlowMotion);
 							InputFloat("rotate", &mJitterRotateDegrees);
+							Text("Debug pattern:");
+							SameLine();
+							if (Button("copy")) {
+								std::vector<glm::vec2> tmp;
+								get_jitter_offset_for_frame(0, &tmp);
+								mDebugSampleOffsets = tmp;
+							}
+							int delAt = -1;
+							int addAt = -1;
+							for (int i = 0; i < static_cast<int>(mDebugSampleOffsets.size()); ++i) {
+								PushID(i);
+								Text("#%d", i); SameLine();
+								InputFloat2W(100, "##pos", &mDebugSampleOffsets[i].x, "%.2f");
+								SameLine(); if (Button("+")) addAt = i;
+								SameLine(); if (Button("-")) delAt = i;
+								PopID();
+							}
+							if (delAt >= 0 && mDebugSampleOffsets.size() < 2) delAt = -1; // keep at least one sample
+							if (addAt >= 0) mDebugSampleOffsets.insert(mDebugSampleOffsets.begin() + addAt + 1, glm::vec2(0));
+							if (delAt >= 0) mDebugSampleOffsets.erase(mDebugSampleOffsets.begin() + delAt);
+							PopID();
 						}
 
-
-#if TAA_USE_POSTPROCESS_STEP
 						if (CollapsingHeader("Postprocess")) {
 							auto &pp = mPostProcessPushConstants;
 
@@ -481,7 +519,7 @@ public:
 							InputInt4("dst", &pp.zoomDstLTWH.x);
 
 						}
-#endif
+
 						Checkbox("Reset history at any change", &mResetHistoryOnChange);
 					}
 
@@ -502,10 +540,7 @@ public:
 	// called from main
 	void init_updater(gvk::updater &updater) {
 		LOG_DEBUG("TAA: initing updater");
-		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline };
-#if TAA_USE_POSTPROCESS_STEP
-		comp_pipes.push_back(&mPostProcessPipeline);
-#endif
+		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline, &mPostProcessPipeline };
 		for (auto ppipe : comp_pipes) {
 			ppipe->enable_shared_ownership();
 			updater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
@@ -558,15 +593,12 @@ public:
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_cas) }
 		);
 
-#if TAA_USE_POSTPROCESS_STEP
 		mPostProcessPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/post_process.comp.spv"),
 			descriptor_binding(0, 1, *mResultImages[0]),
 			descriptor_binding(0, 2, mPostProcessImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_postprocess) }
 		);
-#endif
-
 
 		auto& commandPool = context().get_command_pool_for_reusable_command_buffers(*mQueue);
 
@@ -891,7 +923,8 @@ public:
 				pLastProducedImageView = &mTempImages[inFlightIndex];
 			}
 
-#if TAA_USE_POSTPROCESS_STEP
+			if (mShowDebug) pLastProducedImageView = &mDebugImages[inFlightIndex]; // apply post-processing to debug image, so we can use zoom there too
+
 			if (mPostProcessEnabled) {
 				// post-processing
 
@@ -910,11 +943,8 @@ public:
 
 				pLastProducedImageView = &mPostProcessImages[inFlightIndex];
 			}
-#endif
 
-			// Blit into backbuffer directly from here (ATTENTION if you'd like to render something in other invokees!)
-			
-			auto &image_to_show = mShowDebug ? mDebugImages[inFlightIndex]->get_image() : (*pLastProducedImageView)->get_image();
+			auto &image_to_show = (*pLastProducedImageView)->get_image();
 
 			// TODO: is this barrier needed?
 			cmdbfr->establish_global_memory_barrier(
@@ -980,6 +1010,8 @@ public:
 			iniWriteBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
 			iniWriteBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
 			iniWriteFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
+			iniWriteBool32	(ini, sec, "mReduceBlendNearClamp",		param.mReduceBlendNearClamp);
+			iniWriteVec4	(ini, sec, "mDebugMask",				param.mDebugMask);
 			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniWriteBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
@@ -998,6 +1030,11 @@ public:
 		iniWriteInt		(ini, sec, "mJitterSlowMotion",				mJitterSlowMotion);
 		iniWriteFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
 		iniWriteBool	(ini, sec, "mResetHistoryOnChange",			mResetHistoryOnChange);
+
+		iniWriteInt		(ini, sec, "mDebugSampleOffsets.size",		static_cast<int>(mDebugSampleOffsets.size()));
+		for (int i = 0; i < static_cast<int>(mDebugSampleOffsets.size()); ++i) {
+			iniWriteVec2(ini, sec, "mDebugSampleOffsets_" + std::to_string(i),	mDebugSampleOffsets[i]);
+		}
 
 		sec = "TAA_Postprocess";
 		auto &pp = mPostProcessPushConstants;
@@ -1037,6 +1074,8 @@ public:
 			iniReadBool32	(ini, sec, "mToneMapLumaKaris",			param.mToneMapLumaKaris);
 			iniReadBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
 			iniReadFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
+			iniReadBool32	(ini, sec, "mReduceBlendNearClamp",		param.mReduceBlendNearClamp);
+			iniReadVec4		(ini, sec, "mDebugMask",				param.mDebugMask);
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniReadBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
@@ -1056,6 +1095,13 @@ public:
 		iniReadFloat	(ini, sec, "mJitterRotateDegrees",			mJitterRotateDegrees);
 		iniReadBool		(ini, sec, "mResetHistoryOnChange",			mResetHistoryOnChange);
 
+		int nSamples = 0;
+		iniReadInt		(ini, sec, "mDebugSampleOffsets.size",		nSamples);
+		mDebugSampleOffsets.resize(std::max(1, nSamples), glm::vec2(0));
+		for (int i = 0; i < nSamples; ++i) {
+			iniReadVec2 (ini, sec, "mDebugSampleOffsets_" + std::to_string(i),	mDebugSampleOffsets[i]);
+		}
+
 		sec = "TAA_Postprocess";
 		auto &pp = mPostProcessPushConstants;
 		iniReadBool		(ini, sec, "mPostProcessEnabled",			mPostProcessEnabled);
@@ -1071,7 +1117,7 @@ private:
 
 	// Settings, which can be modified via ImGui:
 	bool mTaaEnabled = true;
-	bool mPostProcessEnabled = static_cast<bool>(TAA_USE_POSTPROCESS_STEP);
+	bool mPostProcessEnabled = true;
 	int mSampleDistribution = 1;
 	bool mResetHistory = false;
 
@@ -1132,4 +1178,6 @@ private:
 
 	bool mResetHistoryOnChange = true; // reset history when any parameter has changed?
 	float mLastResetHistoryTime = 0.f;
+
+	std::vector<glm::vec2> mDebugSampleOffsets = { {0.f, 0.f} };
 };
