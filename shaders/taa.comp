@@ -668,11 +668,13 @@ void main()
 				float alpha = clamp(alpha * factor, 0.0, 1.0);
 				gDebugValue = vec4(factor, alpha, distToClamp, 0);
 			#else
-				// Unreal Engine-based (slightly modified)
+				// Unreal Engine-based (modified)
 				float distToClamp = 2.0 * abs(min(history_lum - colMin_lum, colMax_lum - history_lum)) / (colMax_lum - colMin_lum);	// what if max == min ?
+				if (colMax_lum - colMin_lum < 0.001) distToClamp = 1.0; // just testing
 				float alphaOrig = alpha;
-				alpha += 0.8 * clamp(0.02 * history_lum / abs(luminance(currentColor) - history_lum), 0, 1);
-				alpha = clamp(alpha, 0, 1);
+				alpha *= clamp(4 * distToClamp, 0, 1);
+				//alpha += 0.8 * clamp(0.02 * history_lum / abs(luminance(currentColor) - history_lum), 0, 1);
+				//alpha = clamp(alpha, 0, 1);
 				gDebugValue = vec4(alphaOrig, alpha, distToClamp, 0);
 			#endif
 		}
