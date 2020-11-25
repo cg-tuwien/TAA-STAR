@@ -66,13 +66,15 @@ struct Parameters {
 	bool mAddNoise;
 	float mNoiseFactor;				// small, way less than 1, e.g. 1/512
 	bool mReduceBlendNearClamp;		// reduce blend factor when near clamping (Karis14)
+	int mDynamicAntiGhosting;		// dynamic anti-ghosting, inspired by Unreal Engine: 0=off 1=for movers only 2=for everything
 
+	float pad1, pad2, pad3;
+	// -- aligned again here
 	vec4 mDebugMask;
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
-
-	float pad1;
+	float final_pad1;
 };
 
 //layout(push_constant) uniform PushConstants {
@@ -519,7 +521,7 @@ vec4 sample_history_bicubic_b_spline(vec2 uv) {
 	     +  SAMPLE_TEX(uHistoryFrame, vec2(t1.x, t1.y)) * s1.x) * s1.y;
 }
 
-vec4 sample_history_rgb(vec2 uv) {
+vec4 sample_history_rgba(vec2 uv) {
 	if      (params.mInterpolationMode == 0)	return SAMPLE_TEX(uHistoryFrame, uv);
 	else if (params.mInterpolationMode == 1)	return sample_history_bicubic_b_spline(uv);
 	else										return sample_history_bicubic_catmullrom(uv);
@@ -592,7 +594,8 @@ void main()
 	float expectedHistoryDepth;
 	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
 	
-	vec3 historyColor = maybe_rgb_to_ycocg(sample_history_rgb(historyUv).rgb);
+	vec4 historyRaw = sample_history_rgba(historyUv);	// .a contains dynamic mask if dynamic anti-ghosting is used
+	vec3 historyColor = maybe_rgb_to_ycocg(historyRaw.rgb);
 
 	float alpha = params.mAlpha;
 
@@ -603,6 +606,23 @@ void main()
 			alpha = params.mRejectionAlpha;
 			rejected = true;
 		}
+	}
+	float writeDynamicMask = 0;
+	if (params.mDynamicAntiGhosting != 0) {
+		bool moversOnly = (params.mDynamicAntiGhosting == 1);
+		// 5-tap sample velocity
+		vec2 toUv = vec2(1,1) / textureSize(uCurrentVelocity, 0);
+		const float eps = 1e-5;
+		vec4 v;
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2(-1,  0)));	bool movL = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 1,  0)));	bool movR = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0, -1)));	bool movT = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0,  1)));	bool movB = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv                      ));	bool movC = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
+		writeDynamicMask = movC ? 1.0 : 0.0;
+		bool movement = movL || movR || movT || movB || movC;
+		if (!movement && historyRaw.a > 0.0) rejected = true;
+		gDebugValue = vec4(historyRaw.a, writeDynamicMask, 0, 0);
 	}
 
 	// cull by depth
@@ -666,7 +686,7 @@ void main()
 				float distToClamp = min(abs(colMin_lum - history_lum), abs(colMax_lum - history_lum));
 				float factor = distToClamp / (distToClamp + colMax_lum - colMin_lum);
 				float alpha = clamp(alpha * factor, 0.0, 1.0);
-				gDebugValue = vec4(factor, alpha, distToClamp, 0);
+				//gDebugValue = vec4(factor, alpha, distToClamp, 0);
 			#else
 				// Unreal Engine-based (modified)
 				float distToClamp = 2.0 * abs(min(history_lum - colMin_lum, colMax_lum - history_lum)) / (colMax_lum - colMin_lum);	// what if max == min ?
@@ -675,7 +695,7 @@ void main()
 				alpha *= clamp(4 * distToClamp, 0, 1);
 				//alpha += 0.8 * clamp(0.02 * history_lum / abs(luminance(currentColor) - history_lum), 0, 1);
 				//alpha = clamp(alpha, 0, 1);
-				gDebugValue = vec4(alphaOrig, alpha, distToClamp, 0);
+				//gDebugValue = vec4(alphaOrig, alpha, distToClamp, 0);
 			#endif
 		}
 	}
@@ -694,7 +714,7 @@ void main()
 	vec3 output_to_history = antiAliased;
 	vec3 output_to_screen  = un_tonemap_rgb(antiAliased);
 
-	imageStore(uResultHistory, iuv, vec4(output_to_history, 1.0));
+	imageStore(uResultHistory, iuv, vec4(output_to_history, writeDynamicMask));
 	imageStore(uResultScreen,  iuv, vec4(output_to_screen,  1.0));
 
 	// --- debug ---
