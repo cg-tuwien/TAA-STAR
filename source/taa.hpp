@@ -50,7 +50,7 @@ class taa : public gvk::invokee
 		VkBool32 mAddNoise					= VK_FALSE;
 		float mNoiseFactor					= 1.f / 510.f;	// small, way less than 1, e.g. 1/512
 		VkBool32 mReduceBlendNearClamp		= VK_FALSE;		// reduce blend factor when near clamping (Karis14)
-		int mDynamicAntiGhosting			= 0;			// dynamic anti-ghosting, inspired by Unreal Engine: 0=off 1=for movers only 2=for everything
+		VkBool32 mDynamicAntiGhosting		= VK_FALSE;		// dynamic anti-ghosting, inspired by Unreal Engine
 
 		float pad1, pad2, pad3;
 		// -- aligned again here
@@ -434,8 +434,8 @@ public:
 						CheckboxB32("reduce blend near clamp", &param.mReduceBlendNearClamp);
 						HelpMarker("Anti-flicker: Reduce blend factor when history is near clamping [Karis14]");
 
-						Combo("dynamic anti-ghosting", &param.mDynamicAntiGhosting, "off\0movers\0all\0");
-						HelpMarker("Reject history if there is a no movement in a 5-tap neighbourhood and there was movement at the current pixel in the previous frame. [inspired by Unreal Engine]");
+						CheckboxB32("dynamic anti-ghosting", &param.mDynamicAntiGhosting);
+						HelpMarker("Reject history if there is a no movement in a 5-tap neighbourhood and there was movement at the current pixel in the previous frame. [Inspired by Unreal Engine]");
 
 						if (isPrimary) {
 							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
@@ -1016,7 +1016,7 @@ public:
 			iniWriteBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
 			iniWriteFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
 			iniWriteBool32	(ini, sec, "mReduceBlendNearClamp",		param.mReduceBlendNearClamp);
-			iniWriteInt		(ini, sec, "mDynamicAntiGhosting",		param.mDynamicAntiGhosting);
+			iniWriteBool32	(ini, sec, "mDynamicAntiGhosting",		param.mDynamicAntiGhosting);
 			iniWriteVec4	(ini, sec, "mDebugMask",				param.mDebugMask);
 			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
@@ -1081,7 +1081,7 @@ public:
 			iniReadBool32	(ini, sec, "mAddNoise",					param.mAddNoise);
 			iniReadFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
 			iniReadBool32	(ini, sec, "mReduceBlendNearClamp",		param.mReduceBlendNearClamp);
-			iniReadInt		(ini, sec, "mDynamicAntiGhosting",		param.mDynamicAntiGhosting);
+			iniReadBool32	(ini, sec, "mDynamicAntiGhosting",		param.mDynamicAntiGhosting);
 			iniReadVec4		(ini, sec, "mDebugMask",				param.mDebugMask);
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);

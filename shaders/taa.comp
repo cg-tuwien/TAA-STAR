@@ -66,7 +66,7 @@ struct Parameters {
 	bool mAddNoise;
 	float mNoiseFactor;				// small, way less than 1, e.g. 1/512
 	bool mReduceBlendNearClamp;		// reduce blend factor when near clamping (Karis14)
-	int mDynamicAntiGhosting;		// dynamic anti-ghosting, inspired by Unreal Engine: 0=off 1=for movers only 2=for everything
+	bool mDynamicAntiGhosting;		// dynamic anti-ghosting, inspired by Unreal Engine
 
 	float pad1, pad2, pad3;
 	// -- aligned again here
@@ -608,20 +608,20 @@ void main()
 		}
 	}
 	float writeDynamicMask = 0;
-	if (params.mDynamicAntiGhosting != 0) {
-		bool moversOnly = (params.mDynamicAntiGhosting == 1);
+	if (params.mDynamicAntiGhosting) {
 		// 5-tap sample velocity
+		// Only consider movement for real dynamic objects (velocity.w == 1)! (Not usable for static scenery -> results in ugly history-reset flash after changing the camera)
 		vec2 toUv = vec2(1,1) / textureSize(uCurrentVelocity, 0);
 		const float eps = 1e-5;
 		vec4 v;
-		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2(-1,  0)));	bool movL = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
-		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 1,  0)));	bool movR = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
-		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0, -1)));	bool movT = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
-		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0,  1)));	bool movB = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
-		v = abs(SAMPLE_TEX(uCurrentVelocity, uv                      ));	bool movC = (v.x > eps || v.y > eps) && (!moversOnly || v.w >= 0.5);
-		writeDynamicMask = movC ? 1.0 : 0.0;
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2(-1,  0)));	bool movL = (v.x > eps || v.y > eps) && (v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 1,  0)));	bool movR = (v.x > eps || v.y > eps) && (v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0, -1)));	bool movT = (v.x > eps || v.y > eps) && (v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv + toUv * vec2( 0,  1)));	bool movB = (v.x > eps || v.y > eps) && (v.w >= 0.5);
+		v = abs(SAMPLE_TEX(uCurrentVelocity, uv                      ));	bool movC = (v.x > eps || v.y > eps) && (v.w >= 0.5);
 		bool movement = movL || movR || movT || movB || movC;
 		if (!movement && historyRaw.a > 0.0) rejected = true;
+		writeDynamicMask = movC ? 1.0 : 0.0; // this is historyRaw.a in the next frame
 		gDebugValue = vec4(historyRaw.a, writeDynamicMask, 0, 0);
 	}
 
@@ -633,7 +633,6 @@ void main()
 		float historyDepth = texelFetch(uHistoryDepth, uv_to_tc(historyUv, textureSize_loRes), 0).r;
 		float depthEpsilon = 0.1 * (1.0 - historyDepth);
 		if (abs(historyDepth - expectedHistoryDepth) > depthEpsilon) {
-			alpha = params.mRejectionAlpha;
 			rejected = true;
 		}
 	}
@@ -663,7 +662,10 @@ void main()
 
 	// ---- blending ----
 
-	if (!rejected) {
+	if (rejected) {
+		alpha = params.mRejectionAlpha; // typically = 1
+		beta  = 1.0;
+	} else {
 		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
 		if (params.mLumaWeightingLottes) {
 			float lumaCurrent = luminance(currentColor);
