@@ -506,9 +506,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// keep matrices of previous frame
 		dynObj.mBoneMatricesPrev = dynObj.mBoneMatrices;
-
+		
 		for (auto &m : dynObj.mBoneMatrices) m = glm::mat4(0);
-		anim.animate(dynObj.mAnimClips[dynObj.mActiveAnimation], static_cast<double>(dynObj.mAnimTime), gvk::bone_matrices_space::object_space); // fill bone matrix data (-> dc.mBoneMatrices) in object space
+		anim.animate_into_strided_target_per_mesh(
+			dynObj.mAnimClips[dynObj.mActiveAnimation], 
+			static_cast<double>(dynObj.mAnimTime), 
+			gvk::bone_matrices_space::model_space,
+			dynObj.mBoneMatrices.data(),
+			size_t{MAX_BONES} * sizeof(glm::mat4) // Stride between two consecutive sets of bonem atrices
+		); // fill bone matrix data (-> dc.mBoneMatrices) in object space
 
 		static bool firstTime = true;
 		if (firstTime) {
@@ -1395,8 +1401,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto allMeshIndices = model->select_all_meshes();
 
 				for (auto meshIdx : allMeshIndices) {
-					if (model->num_bones(meshIdx) > MAX_BONES) {
-						throw avk::runtime_error("Model mesh #" + std::to_string(meshIdx) + " has more bones (" + std::to_string(model->num_bones(meshIdx)) + ") than MAX_BONES (" + std::to_string(MAX_BONES) + ") !");
+					if (model->num_bone_matrices(meshIdx) > MAX_BONES) {
+						throw avk::runtime_error("Model mesh #" + std::to_string(meshIdx) + " has more bones (" + std::to_string(model->num_bone_matrices(meshIdx)) + ") than MAX_BONES (" + std::to_string(MAX_BONES) + ") !");
 					}
 				}
 
@@ -1406,7 +1412,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				dynObj.mBoneMatrices.resize(MAX_BONES * allMeshIndices.size(), glm::mat4(0));
 				totalNumBoneMatrices += dynObj.mBoneMatrices.size();
-				dynObj.mAnimations.push_back(model->prepare_animation_for_meshes_into_tightly_packed_contiguous_memory(objdef.animId, allMeshIndices, dynObj.mBoneMatrices.data(), MAX_BONES));
+				dynObj.mAnimations.push_back(model->prepare_animation(objdef.animId, allMeshIndices));
 				dynObj.mAnimClips.push_back(anim_clip);
 			}
 		}
