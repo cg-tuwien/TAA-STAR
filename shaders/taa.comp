@@ -69,12 +69,13 @@ struct Parameters {
 	bool mDynamicAntiGhosting;		// dynamic anti-ghosting, inspired by Unreal Engine
 
 	float pad1, pad2, pad3;
+
 	// -- aligned again here
 	vec4 mDebugMask;
 	int  mDebugMode;
 	float mDebugScale;
 	bool mDebugCenter;
-	float final_pad1;
+	bool mDebugToScreenOutput;
 };
 
 //layout(push_constant) uniform PushConstants {
@@ -370,7 +371,7 @@ vec3 findClosestUvAndZ_3x3(vec2 uv) {
 	return vec3(uv + closestOffset, dClosest);
 }
 
-void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth) {
+void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 historyUv, out float historyDepth, out float outputPixelSpeed /* in pixel units*/) {
 	vec4 velocitySample = SAMPLE_TEX(uCurrentVelocity, currentUv);
 
 	bool canUseVelocity = true;
@@ -403,15 +404,18 @@ void getHistoryPosition(in vec2 currentUv, in float currentDepth, out vec2 histo
 		historyUv    = currentUv    - velocitySample.xy;
 		historyDepth = currentDepth - velocitySample.z;
 		// TODO: check if material history is same object and set canUseVelocity = false otherwise
-	}
-
-	if (!canUseVelocity) {
+	} else {
+		// not using the velocity buffer but doing reprojection instead
 		vec4 clipSpace = vec4(currentUv * 2.0 - 1.0, currentDepth, 1);
 		vec4 worldSpace = ubo.mInverseViewProjMatrix * clipSpace;
 		vec4 historyClipSpace = ubo.mHistoryViewProjMatrix * worldSpace;
 		historyUv = (historyClipSpace.xy / historyClipSpace.w) * 0.5 + 0.5;
 		historyDepth = historyClipSpace.z / historyClipSpace.w;
 	}
+
+	// set outputPixelSpeed (magnitude of velocity vector in output pixel units)
+	vec2 velUv = currentUv - historyUv;
+	outputPixelSpeed = sqrt(dot(velUv, velUv));
 
 	// TODO: need to adjust for current jitter if history buf is considered unjittered?
 }
@@ -592,7 +596,8 @@ void main()
 //	float expectedHistoryDepth = historyClipSpace.z / historyClipSpace.w;
 	vec2 historyUv;
 	float expectedHistoryDepth;
-	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth);
+	float pixelSpeed;
+	getHistoryPosition(uv, depth, historyUv, expectedHistoryDepth, pixelSpeed);
 	
 	vec4 historyRaw = sample_history_rgba(historyUv);	// .a contains dynamic mask if dynamic anti-ghosting is used
 	vec3 historyColor = maybe_rgb_to_ycocg(historyRaw.rgb);
@@ -713,14 +718,10 @@ void main()
 		antiAliased += n.rgb;
 	}
 
-	vec3 output_to_history = antiAliased;
-	vec3 output_to_screen  = un_tonemap_rgb(antiAliased);
+	vec4 output_to_history = vec4(antiAliased, writeDynamicMask);
+	vec4 output_to_screen  = vec4(un_tonemap_rgb(antiAliased), 1.0);
 
-	imageStore(uResultHistory, iuv, vec4(output_to_history, writeDynamicMask));
-	imageStore(uResultScreen,  iuv, vec4(output_to_screen,  1.0));
-
-	// --- debug ---
-
+	// --- debugging -----------------------------------------
 	if (params.mDebugMode == 0) {
 		// colour bounding box, individual
 		vec3 tmp = colMax - colMin;
@@ -736,16 +737,29 @@ void main()
 	} else if (params.mDebugMode == 4) {
 		gDebugValue = texelFetch(uCurrentVelocity, iuv, 0);
 	} else if (params.mDebugMode == 5) {
-		gDebugValue = vec4(output_to_screen, 0);
+		gDebugValue = vec4(pixelSpeed, 0, 0, 0);
 	} else if (params.mDebugMode == 6) {
-		gDebugValue = vec4(output_to_history, 0);
+		gDebugValue = output_to_screen;
+	} else if (params.mDebugMode == 7) {
+		gDebugValue = output_to_history;
 	}
 	// else keep current gDebugValue
 
 	gDebugValue *= params.mDebugScale * params.mDebugMask;
 	if (params.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
-	imageStore(uDebug,  iuv, gDebugValue);
 
+	if (params.mDebugToScreenOutput) {
+		output_to_screen = vec4(gDebugValue.rgb, 1);
+		// make alpha channel visible
+		if (params.mDebugMask.a > 0) {
+			output_to_screen.rb += gDebugValue.a;
+		}
+	}
+	// -------------------------------------------------------
+
+	// store outputs
+	imageStore(uResultHistory, iuv, output_to_history);
+	imageStore(uResultScreen,  iuv, output_to_screen);
+	imageStore(uDebug,  iuv, gDebugValue);
 }
-// -------------------------------------------------------
 

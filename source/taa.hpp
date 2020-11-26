@@ -53,12 +53,13 @@ class taa : public gvk::invokee
 		VkBool32 mDynamicAntiGhosting		= VK_FALSE;		// dynamic anti-ghosting, inspired by Unreal Engine
 
 		float pad1, pad2, pad3;
+
 		// -- aligned again here
-		glm::vec4 mDebugMask				= glm::vec4(1);
-		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection;
+		glm::vec4 mDebugMask				= glm::vec4(1,1,1,0);
+		int mDebugMode						= 0;			// 0=result, 1=color bb (rgb), 2=color bb(size), 3=history rejection, ...
 		float mDebugScale					= 1.0f;
 		VkBool32 mDebugCenter				= VK_FALSE;
-		float final_pad1;
+		VkBool32 mDebugToScreenOutput		= VK_FALSE;
 	};
 	static_assert(sizeof(Parameters) % 16 == 0, "Parameters struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -380,9 +381,11 @@ public:
 					if (isPrimary) {
 						Checkbox("enabled", &mTaaEnabled);
 						SameLine(); if (Button("En&cap")) { mTaaEnabled = true; mTriggerCapture = true; }
-						if (static_cast<float>(glfwGetTime()) - mLastResetHistoryTime < 0.5f) {
-							SameLine(); TextColored(ImVec4(1, 0, 0, 1), "HISTORY RESET");
-						}
+						SameLine();
+						bool resetting = static_cast<float>(glfwGetTime()) - mLastResetHistoryTime < 0.5f;
+						if (resetting) PushStyleColor(ImGuiCol_Button, ImColor(1.f, 0.f, 0.f));
+						if (Button("reset history")) mResetHistory = true;
+						if (resetting) PopStyleColor();
 					} else {
 						SetCursorPosY(GetCursorPosY() + checkbox_height);
 					}
@@ -446,24 +449,27 @@ public:
 						}
 					}
 
-					if (isPrimary) { if (Button("reset history")) mResetHistory = true; } else SetCursorPosY(GetCursorPosY() + button_height);
-					static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "screen-result", "history-result", "debug" /* always last */ };
-					if (isPrimary) Checkbox("debug##show debug", &mShowDebug); else Text("debug");
-					SameLine();
-					Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
-					PushItemWidth(100);
-					SliderFloat("scale##debug scale", &param.mDebugScale, 0.f, 100.f, "%.0f");
-					PopItemWidth();
-					SameLine();
-					CheckboxB32("center##debug center", &param.mDebugCenter);
-					static bool mask_r, mask_g, mask_b;
-					mask_r = param.mDebugMask.r != 0.f;
-					mask_g = param.mDebugMask.g != 0.f;
-					mask_b = param.mDebugMask.b != 0.f;
-					Checkbox("R##debugmaskR", &mask_r); SameLine();
-					Checkbox("G##debugmaskG", &mask_g); SameLine();
-					Checkbox("B##debugmaskB", &mask_b);
-					param.mDebugMask = glm::vec4(mask_r ? 1.f : 0.f, mask_g ? 1.f : 0.f, mask_b ? 1.f : 0.f, 1.f);
+					if (CollapsingHeader("Debug")) {
+						static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "pixel-speed", "screen-result", "history-result", "debug" /* always last */ };
+						CheckboxB32("debug##show debug", &param.mDebugToScreenOutput);
+						SameLine();
+						Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
+						PushItemWidth(100);
+						SliderFloat("scale##debug scale", &param.mDebugScale, 0.f, 100.f, "%.0f");
+						PopItemWidth();
+						SameLine();
+						CheckboxB32("center##debug center", &param.mDebugCenter);
+						static bool mask_r, mask_g, mask_b, mask_a;
+						mask_r = param.mDebugMask.r != 0.f;
+						mask_g = param.mDebugMask.g != 0.f;
+						mask_b = param.mDebugMask.b != 0.f;
+						mask_a = param.mDebugMask.a != 0.f;
+						Checkbox("R##debugmaskR", &mask_r); SameLine();
+						Checkbox("G##debugmaskG", &mask_g); SameLine();
+						Checkbox("B##debugmaskB", &mask_b); SameLine();
+						Checkbox("A##debugmaskA", &mask_a);
+						param.mDebugMask = glm::vec4(mask_r ? 1.f : 0.f, mask_g ? 1.f : 0.f, mask_b ? 1.f : 0.f, mask_a ? 1.f : 0.f);
+					}
 
 					if (isPrimary) {
 
@@ -803,12 +809,14 @@ public:
 		static bool oldParamsValid = false;
 		if (mResetHistoryOnChange && oldParamsValid) {
 			for (int i = 0; i < 2; ++i) {
-				// zero out stuff where we do NOT want a history reset
+				// zero out stuff where we do NOT want a history reset for
 				Parameters compare[2] = { mParameters[i], oldParams[i] };
 				for (int j = 0; j < 2; ++j) {
-					compare[j].mDebugMode   = 0;
-					compare[j].mDebugScale  = 0.f;
-					compare[j].mDebugCenter = VK_FALSE;
+					compare[j].mDebugMode           = 0;
+					compare[j].mDebugScale          = 0.f;
+					compare[j].mDebugCenter         = VK_FALSE;
+					compare[j].mDebugMask           = glm::vec4(0);
+					compare[j].mDebugToScreenOutput = VK_FALSE;
 				}
 
 				if (memcmp(&compare[0], &compare[1], sizeof(Parameters)) != 0) mResetHistory = true;
@@ -928,8 +936,6 @@ public:
 				pLastProducedImageView = &mTempImages[inFlightIndex];
 			}
 
-			if (mShowDebug) pLastProducedImageView = &mDebugImages[inFlightIndex]; // apply post-processing to debug image, so we can use zoom there too
-
 			if (mPostProcessEnabled) {
 				// post-processing
 
@@ -1021,6 +1027,7 @@ public:
 			iniWriteInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniWriteBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
+			iniWriteBool32	(ini, sec, "mDebugToScreenOutput",		param.mDebugToScreenOutput);
 		}
 
 		sec = "TAA_Primary";
@@ -1028,7 +1035,6 @@ public:
 		iniWriteInt		(ini, sec, "mSampleDistribution",			mSampleDistribution);
 		iniWriteInt		(ini, sec, "mSharpener",					mSharpener);
 		iniWriteFloat	(ini, sec, "mSharpenFactor",				mSharpenFactor);
-		iniWriteBool	(ini, sec, "mShowDebug",					mShowDebug);
 		iniWriteBool	(ini, sec, "mSplitScreen",					mSplitScreen);
 		iniWriteInt		(ini, sec, "mSplitX",						mSplitX);
 		iniWriteInt		(ini, sec, "mFixedJitterIndex",				mFixedJitterIndex);
@@ -1086,6 +1092,7 @@ public:
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniReadBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
+			iniReadBool32	(ini, sec, "mDebugToScreenOutput",		param.mDebugToScreenOutput);
 		}
 
 		sec = "TAA_Primary";
@@ -1093,7 +1100,6 @@ public:
 		iniReadInt		(ini, sec, "mSampleDistribution",			mSampleDistribution);
 		iniReadInt		(ini, sec, "mSharpener",					mSharpener);
 		iniReadFloat	(ini, sec, "mSharpenFactor",				mSharpenFactor);
-		iniReadBool		(ini, sec, "mShowDebug",					mShowDebug);
 		iniReadBool		(ini, sec, "mSplitScreen",					mSplitScreen);
 		iniReadInt		(ini, sec, "mSplitX",						mSplitX);
 		iniReadInt		(ini, sec, "mFixedJitterIndex",				mFixedJitterIndex);
@@ -1170,7 +1176,6 @@ private:
 	int mJitterSlowMotion = 1;
 	float mJitterRotateDegrees = 0.f;
 
-	bool mShowDebug = false;
 	bool mTriggerCapture = false;
 
 	bool mSplitScreen = false;
