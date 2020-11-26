@@ -67,8 +67,11 @@ struct Parameters {
 	float mNoiseFactor;				// small, way less than 1, e.g. 1/512
 	bool mReduceBlendNearClamp;		// reduce blend factor when near clamping (Karis14)
 	bool mDynamicAntiGhosting;		// dynamic anti-ghosting, inspired by Unreal Engine
+	bool  mVelBasedAlpha;			// let velocity influence alpha
+	float mVelBasedAlphaMax;
+	float mVelBasedAlphaFactor;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
-	float pad1, pad2, pad3;
+	//float pad1;
 
 	// -- aligned again here
 	vec4 mDebugMask;
@@ -627,7 +630,7 @@ void main()
 		bool movement = movL || movR || movT || movB || movC;
 		if (!movement && historyRaw.a > 0.0) rejected = true;
 		writeDynamicMask = movC ? 1.0 : 0.0; // this is historyRaw.a in the next frame
-		gDebugValue = vec4(historyRaw.a, writeDynamicMask, 0, 0);
+		//gDebugValue = vec4(historyRaw.a, writeDynamicMask, 0, 0);
 	}
 
 	// cull by depth
@@ -671,6 +674,13 @@ void main()
 		alpha = params.mRejectionAlpha; // typically = 1
 		beta  = 1.0;
 	} else {
+		// velocity-influence on alpha
+		if (params.mVelBasedAlpha) {
+			float oldAlpha = alpha;
+			alpha = max(alpha, mix(alpha, params.mVelBasedAlphaMax, clamp(pixelSpeed * params.mVelBasedAlphaFactor, 0, 1)));
+			gDebugValue = vec4(alpha, oldAlpha, abs(alpha - oldAlpha), 0);
+		}
+
 		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
 		if (params.mLumaWeightingLottes) {
 			float lumaCurrent = luminance(currentColor);

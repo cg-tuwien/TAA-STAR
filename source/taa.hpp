@@ -51,8 +51,11 @@ class taa : public gvk::invokee
 		float mNoiseFactor					= 1.f / 510.f;	// small, way less than 1, e.g. 1/512
 		VkBool32 mReduceBlendNearClamp		= VK_FALSE;		// reduce blend factor when near clamping (Karis14)
 		VkBool32 mDynamicAntiGhosting		= VK_FALSE;		// dynamic anti-ghosting, inspired by Unreal Engine
+		VkBool32 mVelBasedAlpha				= VK_FALSE;		// let velocity influence alpha
+		float    mVelBasedAlphaMax			= 0.2f;
+		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
-		float pad1, pad2, pad3;
+		// float pad1;
 
 		// -- aligned again here
 		glm::vec4 mDebugMask				= glm::vec4(1,1,1,0);
@@ -439,6 +442,11 @@ public:
 
 						CheckboxB32("dynamic anti-ghosting", &param.mDynamicAntiGhosting);
 						HelpMarker("Reject history if there is a no movement in a 5-tap neighbourhood and there was movement at the current pixel in the previous frame. [Inspired by Unreal Engine]");
+
+						CheckboxB32("vel->alpha influence", &param.mVelBasedAlpha);
+						InputFloatW(60, "max", &param.mVelBasedAlphaMax,    0.f, 0.f, "%.2f"); SameLine();
+						InputFloatW(60, "fac", &param.mVelBasedAlphaFactor, 0.f, 0.f, "%.3f");
+
 
 						if (isPrimary) {
 							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
@@ -1028,6 +1036,9 @@ public:
 			iniWriteFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniWriteBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
 			iniWriteBool32	(ini, sec, "mDebugToScreenOutput",		param.mDebugToScreenOutput);
+			iniWriteBool32	(ini, sec, "mVelBasedAlpha",			param.mVelBasedAlpha);
+			iniWriteFloat	(ini, sec, "mVelBasedAlphaMax",			param.mVelBasedAlphaMax);
+			iniWriteFloat	(ini, sec, "mVelBasedAlphaFactor",		param.mVelBasedAlphaFactor);
 		}
 
 		sec = "TAA_Primary";
@@ -1088,6 +1099,9 @@ public:
 			iniReadFloat	(ini, sec, "mNoiseFactor",				param.mNoiseFactor);
 			iniReadBool32	(ini, sec, "mReduceBlendNearClamp",		param.mReduceBlendNearClamp);
 			iniReadBool32	(ini, sec, "mDynamicAntiGhosting",		param.mDynamicAntiGhosting);
+			iniReadBool32	(ini, sec, "mVelBasedAlpha",			param.mVelBasedAlpha);
+			iniReadFloat	(ini, sec, "mVelBasedAlphaMax",			param.mVelBasedAlphaMax);
+			iniReadFloat	(ini, sec, "mVelBasedAlphaFactor",		param.mVelBasedAlphaFactor);
 			iniReadVec4		(ini, sec, "mDebugMask",				param.mDebugMask);
 			iniReadInt		(ini, sec, "mDebugMode",				param.mDebugMode);
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
