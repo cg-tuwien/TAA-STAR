@@ -2556,8 +2556,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					auto &dynObj = mDynObjects[mMovingObject.moverId];
 					if (dynObj.mIsAnimated) {
 						auto &clip = dynObj.mAnimClips[dynObj.mActiveAnimation];
-						float minAnimTime = static_cast<float>(clip.mStartTicks * clip.mTicksPerSecond);
-						float maxAnimTime = static_cast<float>(clip.mEndTicks   * clip.mTicksPerSecond);
+						float minAnimTime = static_cast<float>(clip.mStartTicks / clip.mTicksPerSecond);
+						float maxAnimTime = static_cast<float>(clip.mEndTicks   / clip.mTicksPerSecond);
 						SliderFloatW(120, "anim", &dynObj.mAnimTime, minAnimTime, maxAnimTime);
 						SameLine(); Checkbox("auto##auto anim", &mMovingObject.autoAnimate);
 						SliderFloat("speed##anim speed", &mMovingObject.animSpeed, -2.f, 2.f, "%.1f");
@@ -3177,8 +3177,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			auto &dynObj = mDynObjects[mMovingObject.moverId];
 			if (dynObj.mIsAnimated && mMovingObject.autoAnimate) {
 				auto &clip = dynObj.mAnimClips[dynObj.mActiveAnimation];
-				float minAnimTime = static_cast<float>(clip.mStartTicks * clip.mTicksPerSecond);
-				float maxAnimTime = static_cast<float>(clip.mEndTicks   * clip.mTicksPerSecond);
+				float minAnimTime = static_cast<float>(clip.mStartTicks / clip.mTicksPerSecond);
+				float maxAnimTime = static_cast<float>(clip.mEndTicks   / clip.mTicksPerSecond);
 				float timePassed = fmod(abs(mMovingObject.animSpeed) * tObjAccumulated, maxAnimTime - minAnimTime);
 				dynObj.mAnimTime = (mMovingObject.animSpeed < 0.f) ? maxAnimTime - timePassed : minAnimTime + timePassed;
 			}
