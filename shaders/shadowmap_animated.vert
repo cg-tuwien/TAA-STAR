@@ -20,9 +20,8 @@ void main()
 {
 	mat4 modelMatrix     = uboMatUsr.mMover_additionalModelMatrix * mMover_baseModelMatrix;
 
-	// "normalize" bone weights - there may be more than four in the model, but we only get the first four here; make sure they add up to one
 	vec4 boneWeights = aBoneWeights;
-	boneWeights.w = 1.0 - boneWeights.x - boneWeights.y - boneWeights.z;
+	//boneWeights.w = 1.0 - boneWeights.x - boneWeights.y - boneWeights.z; // no longer necessary to "normalize", this is now done at model loading
 
 	uint bonesBaseIndex = mMover_meshIndex * MAX_BONES;
 

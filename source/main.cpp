@@ -327,6 +327,7 @@ class wookiee : public gvk::invokee
 		{ "Goblin",				"assets/goblin.dae",								 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,.95f,0)), glm::vec3(.02f)) },
 		{ "Dragon",				"assets/optional/dragon/Dragon_2.5_baked.dae",		 0,	glm::scale(glm::mat4(1), glm::vec3(.1f)) },
 		{ "Dude",				"assets/optional/dude/dudeTest03.dae",				 0,	glm::scale(glm::rotate(glm::mat4(1), glm::radians(180.f), glm::vec3(0,1,0)), glm::vec3(3.f)) },
+		{ "Strange weights",	"assets/optional/strange_weights.fbx",				 0,	glm::scale(glm::mat4(1), glm::vec3(.01f)) },
 	};
 
 	struct ImageDef {
@@ -1309,6 +1310,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// iterate through all the model's meshes (TODO: combine materials first? ( model->distinct_material_configs() ) - probably should do that in a real-life app to avoid loading duplicate textures etc...)
 			for (auto meshIndex = 0; meshIndex < model->num_meshes(); ++meshIndex) {
+				bool didWarnStrangeBoneWeights = false;
 
 				auto &meshData = dynObj.mMeshData.emplace_back(dynamic_object_mesh_data{});
 
@@ -1360,6 +1362,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (dynObj.mIsAnimated) {
 					boneWeights = get_bone_weights(selection);
 					boneIndices = get_bone_indices(selection);
+
+					// "normalize" bone weights, so we don't have to do that in the shader
+					// weights should add up to one
+					for (auto &w : boneWeights) {
+						float sum_xyz = w.x + w.y + w.z;
+						// special case handling for "strange" models, where inital weights already add up to more than one
+						if (sum_xyz + w.w > 1.f) {
+							w /= (sum_xyz + w.w);	// just scale down all 4 weights, so they add up to one
+							if (!didWarnStrangeBoneWeights && (sum_xyz + w.w) > 1.001f) { // don't warn if it's just a math precision issue
+								LOG_WARNING(std::string("Strange bone weights encountered in model ") + objdef.name + std::string(", mesh #") + std::to_string(meshIndex));
+								didWarnStrangeBoneWeights = true;
+							}
+						} else {
+							w.w = 1.f - sum_xyz;
+						}
+						assert(w.x >= 0.f && w.y >= 0.f && w.z >= 0.f && w.w >= 0.f && w.x <= 1.f && w.y <= 1.f && w.z <= 1.f && w.w <= 1.f);
+					}
 				}
 
 				// Create all the GPU buffers, but don't fill yet:
