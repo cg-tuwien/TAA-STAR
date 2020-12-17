@@ -1360,25 +1360,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				std::vector<glm::vec4>  boneWeights;
 				std::vector<glm::uvec4> boneIndices;
 				if (dynObj.mIsAnimated) {
-					boneWeights = get_bone_weights(selection);
+					boneWeights = get_bone_weights(selection, true /* normalize */);
 					boneIndices = get_bone_indices(selection);
-
-					// "normalize" bone weights, so we don't have to do that in the shader
-					// weights should add up to one
-					for (auto &w : boneWeights) {
-						float sum_xyz = w.x + w.y + w.z;
-						// special case handling for "strange" models, where inital weights already add up to more than one
-						if (sum_xyz + w.w > 1.f) {
-							w /= (sum_xyz + w.w);	// just scale down all 4 weights, so they add up to one
-							if (!didWarnStrangeBoneWeights && (sum_xyz + w.w) > 1.001f) { // don't warn if it's just a math precision issue
-								LOG_WARNING(std::string("Strange bone weights encountered in model ") + objdef.name + std::string(", mesh #") + std::to_string(meshIndex));
-								didWarnStrangeBoneWeights = true;
-							}
-						} else {
-							w.w = 1.f - sum_xyz;
-						}
-						assert(w.x >= 0.f && w.y >= 0.f && w.z >= 0.f && w.w >= 0.f && w.x <= 1.f && w.y <= 1.f && w.z <= 1.f && w.w <= 1.f);
-					}
 				}
 
 				// Create all the GPU buffers, but don't fill yet:
