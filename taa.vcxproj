@@ -71,6 +71,9 @@
     <None Include="shaders\lighting_pass.frag" />
     <None Include="shaders\lighting_pass.vert" />
     <None Include="shaders\post_process.comp" />
+    <None Include="shaders\rt_test.rchit" />
+    <None Include="shaders\rt_test.rgen" />
+    <None Include="shaders\rt_test.rmiss" />
     <None Include="shaders\shadowmap.vert" />
     <None Include="shaders\shadowmap_animated.vert" />
     <None Include="shaders\shadowmap_transparent.frag" />

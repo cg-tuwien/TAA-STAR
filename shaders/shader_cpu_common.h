@@ -17,6 +17,9 @@
 #error "SHADOWMAP_INITIAL_CASCADES > SHADOWMAP_MAX_CASCADES"
 #endif
 
+// enable raytracing?
+#define ENABLE_RAYTRACING 1
+
 // max. bones for animations
 #define MAX_BONES	114
 

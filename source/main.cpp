@@ -32,6 +32,9 @@
 #define SET_WORKING_DIRECTORY 1
 
 /* TODO:
+
+	raytracing: using separate index/vertex buffers for now - 
+
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
 	ok - move any buffer updates from update() to render()! Update can be called for fif, if previous (same) fif is still executing!
@@ -251,6 +254,11 @@ class wookiee : public gvk::invokee
 		int       mShadowMapCascadeToBuild;
 	};
 
+	struct push_constant_data_for_rt {
+		glm::mat4 mCameraTransform;
+		glm::vec4 mLightDir;
+	};
+
 	struct CullingBoundingBox {
 		glm::vec4 minPos, maxPos; // only .xyz used
 	};
@@ -298,6 +306,12 @@ class wookiee : public gvk::invokee
 		uint32_t orcaMeshId;
 
 		BoundingBox boundingBox_untransformed;
+
+		struct {
+			avk::buffer rtIndexBuffer, rtVertexBuffer;
+			std::vector<uint32_t>  rtIndexData;
+			std::vector<glm::vec3> rtVertexData;
+		} rayTracingTmp;
 	};
 
 	struct CameraState { char name[80];  glm::vec3 t; glm::quat r; };	// ugly char[80] for easier ImGui access...
@@ -358,6 +372,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	int mCaptureNumFrames = 1;
 	int mCaptureFramesLeft = 0;
 	bool mStartCaptureEarly = false;
+
+	bool mDoRayTraceTest = false;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -1126,7 +1142,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto bufferUsageFlags = vk::BufferUsageFlags{};
 #ifdef RTX_ON
 		assert(cgb::settings::gEnableBufferDeviceAddress);
-		bufferUsageFlags |= vk::BufferUsageFlagBits::eShaderDeviceAddressKHR;
+		bufferUsageFlags |= vk::BufferUsageFlagBits::eShaderDeviceAddressKHR;	// TODO: need this for raytracing ?
 #endif
 
 		std::cout << "Parsing scene\r"; std::cout.flush();
@@ -1192,7 +1208,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 						// append the data of the current mesh(group) to the scene vectors
 						append_indices_and_vertex_data(
-							additional_index_data (mSceneData.mIndices,	[&]() { return indices;	 }),
+							additional_index_data (mSceneData.mIndices,		[&]() { return indices;	 }),
 							additional_vertex_data(mSceneData.mPositions,	[&]() { return positions; })
 						);
 						insert_into(mSceneData.mTexCoords,  texCoords);
@@ -1213,6 +1229,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 								mg.perInstanceData.push_back(pid);
 							}
 						}
+
+						#if ENABLE_RAYTRACING
+							// temp data for ray tracing - FIXME
+							mg.rayTracingTmp.rtIndexData  = indices;
+							mg.rayTracingTmp.rtVertexData = positions;
+						#endif			
 
 						mSceneData.mMeshgroups.push_back(mg);
 					}
@@ -1480,6 +1502,109 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		double tFini  = glfwGetTime();
 		printf("Loading took %.1f sec, parsing %.1f sec, rest  %.1f sec => total = %.1f sec\n", tLoad-t0, tParse-tLoad, tFini-tParse, tFini-t0);
 	}
+
+#if ENABLE_RAYTRACING
+	void init_raytracing() {
+		using namespace avk;
+		using namespace gvk;
+
+		// debug!
+		//auto &mg = mSceneData.mMeshgroups[0];
+		//mg.rayTracingTmp.rtIndexData = { 0u, 1u, 2u, 2u, 1u, 3u };
+		//mg.rayTracingTmp.rtVertexData = { glm::vec3{0,0,-1}, glm::vec3{1,0,-1}, glm::vec3{0,1,-1}, glm::vec3{1,1,-1} };
+		//mg.perInstanceData[0].modelMatrix = glm::mat4(1);
+
+		// create temp buffers for indices, vertices - FIXME!
+		for (auto &mg : mSceneData.mMeshgroups) {
+			mg.rayTracingTmp.rtIndexBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData));
+			mg.rayTracingTmp.rtVertexBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtVertexData).describe_only_member(mg.rayTracingTmp.rtVertexData[0], content_description::position));
+			mg.rayTracingTmp.rtIndexBuffer.enable_shared_ownership();
+			mg.rayTracingTmp.rtVertexBuffer.enable_shared_ownership();
+			mg.rayTracingTmp.rtIndexBuffer	->fill(mg.rayTracingTmp.rtIndexData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+			mg.rayTracingTmp.rtVertexBuffer	->fill(mg.rayTracingTmp.rtVertexData.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+		}
+
+		// build bottom level acceleration structures, one per meshgroup
+		for (auto &mg : mSceneData.mMeshgroups) {
+			auto blas = context().create_bottom_level_acceleration_structure({ acceleration_structure_size_requirements::from_buffers(vertex_index_buffer_pair{mg.rayTracingTmp.rtVertexBuffer, mg.rayTracingTmp.rtIndexBuffer}) }, true);
+			blas.enable_shared_ownership();
+			mSceneData.mBLASs.push_back(blas);
+
+			// TODO!! just for now, only use the first instance of each mg.
+			mSceneData.mGeometryInstances.push_back(
+				context().create_geometry_instance(blas).
+				set_transform_column_major(to_array(mg.perInstanceData[0].modelMatrix))
+				// TODO: custom index
+			);
+
+			mSceneData.mBLASs.back()->build({ vertex_index_buffer_pair{mg.rayTracingTmp.rtVertexBuffer, mg.rayTracingTmp.rtIndexBuffer} }, {},
+				avk::sync::with_barriers(
+					[posBfr = mg.rayTracingTmp.rtVertexBuffer, idxBfr = mg.rayTracingTmp.rtIndexBuffer](avk::command_buffer cb) {
+						cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
+						gvk::context().main_window()->handle_lifetime(avk::owned(cb));
+					},
+					{}, {}
+				)
+			);
+		}
+
+		// build top level acceleration structure, one per frame
+		auto numFif = context().main_window()->number_of_frames_in_flight();
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			auto tlas = context().create_top_level_acceleration_structure(static_cast<uint32_t>(mSceneData.mGeometryInstances.size()), true);
+
+			tlas->build(mSceneData.mGeometryInstances, {}, avk::sync::with_barriers(
+				gvk::context().main_window()->command_buffer_lifetime_handler(),
+				// Sync before building the TLAS:
+				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage destinationStage, std::optional<avk::read_memory_access> readAccess){
+					assert(avk::pipeline_stage::acceleration_structure_build == destinationStage);
+					assert(!readAccess.has_value() || avk::memory_access::acceleration_structure_read_access == readAccess.value().value());
+					// Wait on all the BLAS builds that happened before (and their memory):
+					commandBuffer.establish_global_memory_barrier_rw(
+						avk::pipeline_stage::acceleration_structure_build, destinationStage,
+						avk::memory_access::acceleration_structure_write_access, readAccess
+					);
+				},
+				// Whatever comes after must wait for this TLAS build to finish (and its memory to be made available):
+				//   However, that's exactly what the default_handler_after_operation
+				//   does, so let's just use that (it is also the default value for
+				//   this handler)
+				avk::sync::presets::default_handler_after_operation
+			));
+			mSceneData.mTLASs[i] = std::move(tlas);
+		}
+
+		// create images to render into
+		auto win = context().main_window();
+		//const auto wdth = win->resolution().x;
+		//const auto hght = win->resolution().y;
+		//const auto frmt = format_from_window_color_buffer(win);
+		const auto wdth = mLoResolution.x;
+		const auto hght = mLoResolution.y;
+		const auto frmt = IMAGE_FORMAT_COLOR;
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			auto offscreenImage = context().create_image(wdth, hght, frmt, 1, memory_usage::device, image_usage::general_storage_image);
+			offscreenImage->transition_to_layout({}, sync::with_barriers(win->command_buffer_lifetime_handler()));
+			mRtImageViews[i] = context().create_image_view(owned(offscreenImage));
+			assert((mRtImageViews[i]->config().subresourceRange.aspectMask & vk::ImageAspectFlagBits::eColor) == vk::ImageAspectFlagBits::eColor);
+		}
+
+		// create ray tracing pipeline
+		mPipelineRayTrace = context().create_ray_tracing_pipeline_for(
+			define_shader_table(
+				ray_generation_shader("shaders/rt_test.rgen.spv"),
+				triangles_hit_group::create_with_rchit_only("shaders/rt_test.rchit.spv"),
+				miss_shader("shaders/rt_test.rmiss.spv")
+			),
+			context().get_max_ray_tracing_recursion_depth(),
+			push_constant_binding_data{shader_type::ray_generation | shader_type::closest_hit, 0, sizeof(push_constant_data_for_rt)},
+			descriptor_binding(1, 0, mRtImageViews[0]->as_storage_image()),
+			descriptor_binding(2, 0, mSceneData.mTLASs[0])
+		);
+		mPipelineRayTrace->print_shader_binding_table_groups();
+
+	}
+#endif
 
 	void upload_materials_and_vertex_data_to_gpu()
 	{
@@ -2110,6 +2235,31 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 	}
 
+	void do_raytrace_test(avk::command_buffer &cmd, gvk::window::frame_id_t fif) {
+#if ENABLE_RAYTRACING
+		using namespace avk;
+		using namespace gvk;
+		cmd->bind_pipeline(const_referenced(mPipelineRayTrace));
+		cmd->bind_descriptors(mPipelineRayTrace->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+			descriptor_binding(1, 0, mRtImageViews[fif]->as_storage_image()),
+			descriptor_binding(2, 0, mSceneData.mTLASs[fif])
+			}));
+		push_constant_data_for_rt pushc;
+		pushc.mCameraTransform = mQuakeCam.global_transformation_matrix();
+		pushc.mLightDir = glm::vec4(mDirLight.dir, 0.f);
+		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
+		cmd->trace_rays(
+			//for_each_pixel(context().main_window()),
+			vk::Extent3D{ mLoResolution.x, mLoResolution.y, 1u },
+			mPipelineRayTrace->shader_binding_table(),
+			using_raygen_group_at_index(0),
+			using_miss_group_at_index(0),
+			using_hit_group_at_index(0)
+		);
+
+#endif
+	}
+
 	void record_all_command_buffers_for_models() {
 		auto fif = gvk::context().main_window()->number_of_frames_in_flight();
 		for (decltype(fif) i=0; i < fif; ++i) {
@@ -2133,6 +2283,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		push_constant_data_for_dii pushc_dii = {};
 
 		commandBuffer->begin_recording();
+
+		if (mDoRayTraceTest) do_raytrace_test(commandBuffer, fif);
 
 		compute_frustum_culling(commandBuffer, fif);	// calculate frustum visibility
 
@@ -2583,6 +2735,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
 					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
+					Checkbox("Ray trace test", &mDoRayTraceTest);
 
 					if (rdoc::active()) {
 						Separator();
@@ -2880,6 +3033,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		prepare_common_pipelines();
 
 		// print_pipelines_info();
+
+#if ENABLE_RAYTRACING
+		init_raytracing();
+#endif
 
 		// alloc command buffers for drawing the scene, but don't record them yet
 		alloc_command_buffers_for_models();
@@ -3711,6 +3868,13 @@ private: // v== Member variables ==v
 		// full scene bounding box
 		BoundingBox mBoundingBox;
 
+#if ENABLE_RAYTRACING
+		// raytracing-stuff
+		std::vector<avk::bottom_level_acceleration_structure> mBLASs;					// bottom level acceleration structures (one per object, shared for each TLAS)
+		std::array<avk::top_level_acceleration_structure, cConcurrentFrames> mTLASs;	// top level acceleration structures, one per frame
+		std::vector<avk::geometry_instance> mGeometryInstances;							// geometry instances for the BLASs
+#endif
+
 		bool mRegeneratePerFrame = true;
 		bool mCullViewFrustum = true;
 
@@ -3789,6 +3953,11 @@ private: // v== Member variables ==v
 			mRotation    = cam.rotation();
 		}
 	} mEffectiveCamera;
+
+#if ENABLE_RAYTRACING
+	std::array<avk::image_view, cConcurrentFrames> mRtImageViews;					// target images for ray tracing
+	avk::ray_tracing_pipeline mPipelineRayTrace;
+#endif
 
 };
 
@@ -4002,6 +4171,17 @@ int main(int argc, char **argv) // <== Starting point ==
 		gvk::required_device_extensions dev_extensions;
 		for (auto ext : rdoc::required_device_extensions()) dev_extensions.add_extension(ext);
 
+#if ENABLE_RAYTRACING
+		// add extensions necessary for raytracing
+		dev_extensions
+			.add_extension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
+			.add_extension(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME)
+			.add_extension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)
+			.add_extension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)
+			.add_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+			.add_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
+#endif
+
 		// GO:
 		gvk::start(
 			gvk::application_name("TAA-STAR"),
@@ -4016,7 +4196,18 @@ int main(int argc, char **argv) // <== Starting point ==
 			},
 			[](vk::PhysicalDeviceVulkan12Features& pdf) {
 				pdf.drawIndirectCount = VK_TRUE;	// needed for vkCmdDrawIndexedIndirectCount
+#if ENABLE_RAYTRACING
+				pdf.setBufferDeviceAddress(VK_TRUE);
+#endif
 			},
+#if ENABLE_RAYTRACING
+			[](vk::PhysicalDeviceRayTracingPipelineFeaturesKHR& rtpf) {
+				rtpf.setRayTracingPipeline(VK_TRUE);
+			},
+			[](vk::PhysicalDeviceAccelerationStructureFeaturesKHR& asf) {
+				asf.setAccelerationStructure(VK_TRUE);
+			},
+#endif
 			gvk::physical_device_selection_hint(devicehint)
 		);
 	}
