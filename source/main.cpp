@@ -33,7 +33,10 @@
 
 /* TODO:
 
-	raytracing: using separate index/vertex buffers for now - 
+	raytracing:
+		using separate index/vertex buffers for now...
+		add subpixel jittering so taa can work on raytraced image?
+
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -108,6 +111,17 @@
 #else
 #define SHADOWMAP_DESCRIPTOR_BINDINGS(fif_)
 #define SHADOWMAP_DESCRIPTOR_BINDINGS_(fif_)
+#endif
+
+#if ENABLE_RAYTRACING
+#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 0, mMaterialBuffer),							\
+												descriptor_binding(0, 1, mImageSamplers),							\
+												descriptor_binding(0, 2, mRtIndexBuffersArray),						\
+												descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
+												descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
+												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
+												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
+
 #endif
 
 
@@ -308,9 +322,10 @@ class wookiee : public gvk::invokee
 		BoundingBox boundingBox_untransformed;
 
 		struct {
-			avk::buffer rtIndexBuffer, rtVertexBuffer;
+			avk::buffer rtIndexBuffer, rtPositionBuffer;
 			std::vector<uint32_t>  rtIndexData;
-			std::vector<glm::vec3> rtVertexData;
+			std::vector<glm::vec3> rtPositionData;
+			std::vector<glm::vec2> rtTexCoordData;
 		} rayTracingTmp;
 	};
 
@@ -373,7 +388,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	int mCaptureFramesLeft = 0;
 	bool mStartCaptureEarly = false;
 
-	bool mDoRayTraceTest = false;
+	bool mDoRayTraceTest = true; // false;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -1232,8 +1247,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 						#if ENABLE_RAYTRACING
 							// temp data for ray tracing - FIXME
-							mg.rayTracingTmp.rtIndexData  = indices;
-							mg.rayTracingTmp.rtVertexData = positions;
+							mg.rayTracingTmp.rtIndexData    = indices;
+							mg.rayTracingTmp.rtPositionData = positions;
+							mg.rayTracingTmp.rtTexCoordData = texCoords;
 						#endif			
 
 						mSceneData.mMeshgroups.push_back(mg);
@@ -1508,38 +1524,59 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-		// debug!
-		//auto &mg = mSceneData.mMeshgroups[0];
-		//mg.rayTracingTmp.rtIndexData = { 0u, 1u, 2u, 2u, 1u, 3u };
-		//mg.rayTracingTmp.rtVertexData = { glm::vec3{0,0,-1}, glm::vec3{1,0,-1}, glm::vec3{0,1,-1}, glm::vec3{1,1,-1} };
-		//mg.perInstanceData[0].modelMatrix = glm::mat4(1);
+		// this is heavily based on the gears-vk raytracing example
 
 		// create temp buffers for indices, vertices - FIXME!
+		std::vector<uint32_t> materialIndices;
 		for (auto &mg : mSceneData.mMeshgroups) {
-			mg.rayTracingTmp.rtIndexBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData));
-			mg.rayTracingTmp.rtVertexBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtVertexData).describe_only_member(mg.rayTracingTmp.rtVertexData[0], content_description::position));
+			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData), uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
 			mg.rayTracingTmp.rtIndexBuffer.enable_shared_ownership();
-			mg.rayTracingTmp.rtVertexBuffer.enable_shared_ownership();
-			mg.rayTracingTmp.rtIndexBuffer	->fill(mg.rayTracingTmp.rtIndexData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
-			mg.rayTracingTmp.rtVertexBuffer	->fill(mg.rayTracingTmp.rtVertexData.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+			mg.rayTracingTmp.rtPositionBuffer.enable_shared_ownership();
+			mg.rayTracingTmp.rtIndexBuffer		->fill(mg.rayTracingTmp.rtIndexData.data(),    0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+			mg.rayTracingTmp.rtPositionBuffer	->fill(mg.rayTracingTmp.rtPositionData.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+
+			// add index buffer to an array of (views to) the individual meshgroup index buffers
+			//mRtIndexBuffersArray.push_back( context().create_buffer_view(shared(mg.rayTracingTmp.rtIndexBuffer)) );
+			// FIXME - problems when using above line -> descriptor_binding always uses first meta
+			auto ibuf = context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+			ibuf->fill(mg.rayTracingTmp.rtIndexData.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
+
+			// add texture coords in the same way
+			auto tbuf = context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtTexCoordData).describe_only_member(mg.rayTracingTmp.rtTexCoordData[0]));
+			tbuf->fill(mg.rayTracingTmp.rtTexCoordData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
+
+			// and store material index
+			materialIndices.push_back(mg.materialIndex);
 		}
 
+		// create a buffer holding all material indices
+		mRtMaterialIndexBuffer = context().create_buffer(memory_usage::device, { vk::BufferUsageFlagBits::eShaderDeviceAddressKHR }, storage_buffer_meta::create_from_data(materialIndices));
+		mRtMaterialIndexBuffer->fill(materialIndices.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+
+
 		// build bottom level acceleration structures, one per meshgroup
-		for (auto &mg : mSceneData.mMeshgroups) {
-			auto blas = context().create_bottom_level_acceleration_structure({ acceleration_structure_size_requirements::from_buffers(vertex_index_buffer_pair{mg.rayTracingTmp.rtVertexBuffer, mg.rayTracingTmp.rtIndexBuffer}) }, true);
+		for (auto iMg = 0; iMg < mSceneData.mMeshgroups.size(); iMg++) {
+			auto &mg = mSceneData.mMeshgroups[iMg];
+
+			auto blas = context().create_bottom_level_acceleration_structure({ acceleration_structure_size_requirements::from_buffers(vertex_index_buffer_pair{mg.rayTracingTmp.rtPositionBuffer, mg.rayTracingTmp.rtIndexBuffer}) }, true);
 			blas.enable_shared_ownership();
 			mSceneData.mBLASs.push_back(blas);
 
-			// TODO!! just for now, only use the first instance of each mg.
-			mSceneData.mGeometryInstances.push_back(
-				context().create_geometry_instance(blas).
-				set_transform_column_major(to_array(mg.perInstanceData[0].modelMatrix))
-				// TODO: custom index
-			);
+			// generate a geometry instance for each instance of the mesh group
+			for (auto &inst_data : mg.perInstanceData) {
+				mSceneData.mGeometryInstances.push_back(
+					context().create_geometry_instance(blas).
+						set_transform_column_major(to_array(inst_data.modelMatrix)).
+						set_custom_index(iMg)	// custom index = meshgroup id
+				);
+			}
 
-			mSceneData.mBLASs.back()->build({ vertex_index_buffer_pair{mg.rayTracingTmp.rtVertexBuffer, mg.rayTracingTmp.rtIndexBuffer} }, {},
+			mSceneData.mBLASs.back()->build({ vertex_index_buffer_pair{mg.rayTracingTmp.rtPositionBuffer, mg.rayTracingTmp.rtIndexBuffer} }, {},
 				avk::sync::with_barriers(
-					[posBfr = mg.rayTracingTmp.rtVertexBuffer, idxBfr = mg.rayTracingTmp.rtIndexBuffer](avk::command_buffer cb) {
+					[posBfr = mg.rayTracingTmp.rtPositionBuffer, idxBfr = mg.rayTracingTmp.rtIndexBuffer](avk::command_buffer cb) {
 						cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
 						gvk::context().main_window()->handle_lifetime(avk::owned(cb));
 					},
@@ -1594,13 +1631,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			define_shader_table(
 				ray_generation_shader("shaders/rt_test.rgen.spv"),
 				triangles_hit_group::create_with_rchit_only("shaders/rt_test.rchit.spv"),
-				miss_shader("shaders/rt_test.rmiss.spv")
+				triangles_hit_group::create_with_rchit_only("shaders/rt_test_shadowray.rchit.spv"),
+				miss_shader("shaders/rt_test.rmiss.spv"),
+				miss_shader("shaders/rt_test_shadowray.rmiss.spv")
 			),
 			context().get_max_ray_tracing_recursion_depth(),
 			push_constant_binding_data{shader_type::ray_generation | shader_type::closest_hit, 0, sizeof(push_constant_data_for_rt)},
-			descriptor_binding(1, 0, mRtImageViews[0]->as_storage_image()),
-			descriptor_binding(2, 0, mSceneData.mTLASs[0])
-		);
+			RAYTRACING_DESCRIPTOR_BINDINGS(0)
+);
 		mPipelineRayTrace->print_shader_binding_table_groups();
 
 	}
@@ -2241,8 +2279,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace gvk;
 		cmd->bind_pipeline(const_referenced(mPipelineRayTrace));
 		cmd->bind_descriptors(mPipelineRayTrace->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-			descriptor_binding(1, 0, mRtImageViews[fif]->as_storage_image()),
-			descriptor_binding(2, 0, mSceneData.mTLASs[fif])
+			RAYTRACING_DESCRIPTOR_BINDINGS(fif)
 			}));
 		push_constant_data_for_rt pushc;
 		pushc.mCameraTransform = mQuakeCam.global_transformation_matrix();
@@ -2284,7 +2321,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->begin_recording();
 
-		if (mDoRayTraceTest) do_raytrace_test(commandBuffer, fif);
+		if (mDoRayTraceTest) {
+			do_raytrace_test(commandBuffer, fif);
+		}
 
 		compute_frustum_culling(commandBuffer, fif);	// calculate frustum visibility
 
@@ -2450,6 +2489,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->end_render_pass();
 		rdoc::endSection(commandBuffer->handle());
+
+		if (mDoRayTraceTest) {
+			blit_image(mRtImageViews[fif]->get_image(), mFramebuffer[fif]->image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(*commandBuffer));
+		}
+
 		commandBuffer->end_recording();
 	}
 
@@ -3122,6 +3166,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			ppipe->enable_shared_ownership();
 			mUpdater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
 		}
+
+		std::vector<avk::ray_tracing_pipeline *> rtx_pipes = { &mPipelineRayTrace };
+		for (auto ppipe : rtx_pipes) {
+			ppipe->enable_shared_ownership();
+			mUpdater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+		}
+
 #endif
 		gvk::current_composition()->add_element(mUpdater);
 #endif
@@ -3957,6 +4008,9 @@ private: // v== Member variables ==v
 #if ENABLE_RAYTRACING
 	std::array<avk::image_view, cConcurrentFrames> mRtImageViews;					// target images for ray tracing
 	avk::ray_tracing_pipeline mPipelineRayTrace;
+	std::vector<avk::buffer_view> mRtIndexBuffersArray;
+	std::vector<avk::buffer_view> mRtTexCoordBuffersArray;
+	avk::buffer mRtMaterialIndexBuffer;
 #endif
 
 };

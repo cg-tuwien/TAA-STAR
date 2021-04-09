@@ -74,6 +74,8 @@
     <None Include="shaders\rt_test.rchit" />
     <None Include="shaders\rt_test.rgen" />
     <None Include="shaders\rt_test.rmiss" />
+    <None Include="shaders\rt_test_shadowray.rchit" />
+    <None Include="shaders\rt_test_shadowray.rmiss" />
     <None Include="shaders\shadowmap.vert" />
     <None Include="shaders\shadowmap_animated.vert" />
     <None Include="shaders\shadowmap_transparent.frag" />
