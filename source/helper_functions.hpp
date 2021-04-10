@@ -5,6 +5,26 @@
 
 namespace helpers
 {
+	// ac: Halton sequence, see https://en.wikipedia.org/wiki/Halton_sequence
+	static float halton(int i, int b) { // index, base; (index >= 1)
+		float f = 1.0f, r = 0.0f;
+		while (i > 0) {
+			f = f / b;
+			r = r + f * (i % b);
+			i = i / b;
+		}
+		return r;
+	}
+
+	template <size_t Len>
+	static std::array<glm::vec2, Len> halton_2_3(glm::vec2 aScale) {
+		std::array<glm::vec2, Len> result;
+		for (size_t i = 0; i < Len; i++) {
+			result[i] = aScale * glm::vec2{ halton(int(i) + 1, 2) - 0.5f, halton(int(i) + 1, 3) - 0.5f };
+		}
+		return result;
+	}
+
 	static void exclude_a_curtain(std::vector<std::tuple<avk::resource_reference<const gvk::model_t>, std::vector<size_t>>>& aSelectedModelsAndMeshes)
 	{
 		size_t a = 0;

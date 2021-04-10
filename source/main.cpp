@@ -36,7 +36,8 @@
 	raytracing:
 		using separate index/vertex buffers for now...
 		add subpixel jittering so taa can work on raytraced image?
-		really need geoinstanceoffset for transp? (could any-hit ever be called for opaques? - don't think so)
+		animated objects?
+		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
 
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -121,6 +122,8 @@
 												descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
 												descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
 												descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
+												descriptor_binding(0, 6, mRtNormalsBuffersArray),					\
+												descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
 												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
 												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
 
@@ -140,7 +143,7 @@
 #define IF_DEBUG_BUILD_ELSE(x,y) y
 #endif
 
-#define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
+//#define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
 
 void my_queue_submit_with_existing_fence(avk::queue &q, avk::command_buffer_t& aCommandBuffer, avk::fence &fen)
 {
@@ -273,6 +276,11 @@ class wookiee : public gvk::invokee
 	struct push_constant_data_for_rt {
 		glm::mat4 mCameraTransform;
 		glm::vec4 mLightDir;
+		glm::vec4 mDirLightIntensity;
+		glm::vec4 mAmbientLightIntensity;
+		float mMaxRayLength;
+		int  mNumSamples;
+		// pad?
 	};
 
 	struct CullingBoundingBox {
@@ -328,6 +336,7 @@ class wookiee : public gvk::invokee
 			std::vector<uint32_t>  rtIndexData;
 			std::vector<glm::vec3> rtPositionData;
 			std::vector<glm::vec2> rtTexCoordData;
+			std::vector<glm::vec3> rtNormalsData;
 		} rayTracingTmp;
 	};
 
@@ -1252,6 +1261,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 							mg.rayTracingTmp.rtIndexData    = indices;
 							mg.rayTracingTmp.rtPositionData = positions;
 							mg.rayTracingTmp.rtTexCoordData = texCoords;
+							mg.rayTracingTmp.rtNormalsData  = normals;
 						#endif			
 
 						mSceneData.mMeshgroups.push_back(mg);
@@ -1528,11 +1538,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// this is heavily based on the gears-vk raytracing example
 
+		vk::BufferUsageFlags bufferUsage = { vk::BufferUsageFlagBits::eShaderDeviceAddressKHR };
+
 		// create temp buffers for indices, vertices - FIXME!
 		std::vector<uint32_t> materialIndices;
 		for (auto &mg : mSceneData.mMeshgroups) {
-			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData), uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
-			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
+			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData), uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
 			mg.rayTracingTmp.rtIndexBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtPositionBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtIndexBuffer		->fill(mg.rayTracingTmp.rtIndexData.data(),    0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
@@ -1541,21 +1553,26 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// add index buffer to an array of (views to) the individual meshgroup index buffers
 			//mRtIndexBuffersArray.push_back( context().create_buffer_view(shared(mg.rayTracingTmp.rtIndexBuffer)) );
 			// FIXME - problems when using above line -> descriptor_binding always uses first meta
-			auto ibuf = context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+			auto ibuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
 			ibuf->fill(mg.rayTracingTmp.rtIndexData.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 			mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
 
 			// add texture coords in the same way
-			auto tbuf = context().create_buffer(memory_usage::device, {vk::BufferUsageFlagBits::eShaderDeviceAddressKHR}, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtTexCoordData).describe_only_member(mg.rayTracingTmp.rtTexCoordData[0]));
+			auto tbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtTexCoordData).describe_only_member(mg.rayTracingTmp.rtTexCoordData[0]));
 			tbuf->fill(mg.rayTracingTmp.rtTexCoordData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 			mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
+
+			// and normals...
+			auto nbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtNormalsData).describe_only_member(mg.rayTracingTmp.rtNormalsData[0]));
+			nbuf->fill(mg.rayTracingTmp.rtNormalsData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			mRtNormalsBuffersArray.push_back( context().create_buffer_view(owned(nbuf)) );
 
 			// and store material index
 			materialIndices.push_back(mg.materialIndex);
 		}
 
 		// create a buffer holding all material indices
-		mRtMaterialIndexBuffer = context().create_buffer(memory_usage::device, { vk::BufferUsageFlagBits::eShaderDeviceAddressKHR }, storage_buffer_meta::create_from_data(materialIndices));
+		mRtMaterialIndexBuffer = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(materialIndices));
 		mRtMaterialIndexBuffer->fill(materialIndices.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
 
 
@@ -1627,6 +1644,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mRtImageViews[i] = context().create_image_view(owned(offscreenImage));
 			assert((mRtImageViews[i]->config().subresourceRange.aspectMask & vk::ImageAspectFlagBits::eColor) == vk::ImageAspectFlagBits::eColor);
 		}
+
+		// create a halton sequence for sample offsets + a buffer for them
+		auto halton = helpers::halton_2_3<RAYTRACING_MAX_SAMPLES_PER_PIXEL>(glm::vec2(1.f));
+		//for (auto &v : halton) printf("%f %f\n", v.x, v.y);
+		mRtPixelOffsetBuffer = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(halton));
+		mRtPixelOffsetBuffer->fill(halton.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
 
 		// create ray tracing pipeline
 		mPipelineRayTrace = context().create_ray_tracing_pipeline_for(
@@ -2279,13 +2302,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if ENABLE_RAYTRACING
 		using namespace avk;
 		using namespace gvk;
+
 		cmd->bind_pipeline(const_referenced(mPipelineRayTrace));
 		cmd->bind_descriptors(mPipelineRayTrace->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 			RAYTRACING_DESCRIPTOR_BINDINGS(fif)
 			}));
 		push_constant_data_for_rt pushc;
-		pushc.mCameraTransform = mQuakeCam.global_transformation_matrix();
-		pushc.mLightDir = glm::vec4(mDirLight.dir, 0.f);
+		pushc.mCameraTransform			= mQuakeCam.global_transformation_matrix();
+		pushc.mLightDir					= glm::vec4(mDirLight.dir, 0.f);
+		pushc.mDirLightIntensity		= glm::vec4(mDirLight.intensity * mDirLight.boost, 0.f);
+		pushc.mAmbientLightIntensity	= glm::vec4(mAmbLight.col       * mAmbLight.boost, 0.f);
+		pushc.mMaxRayLength				= glm::distance(mSceneData.mBoundingBox.min, mSceneData.mBoundingBox.max); // use scene BB diagonal as max ray length
+		pushc.mNumSamples				= mRtSamplesPerPixel;
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -2782,6 +2810,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
 					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
 					Checkbox("Ray trace test", &mDoRayTraceTest);
+					SameLine();
+					if (InputIntW(80, "spp#RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
 
 					if (rdoc::active()) {
 						Separator();
@@ -4012,7 +4042,10 @@ private: // v== Member variables ==v
 	avk::ray_tracing_pipeline mPipelineRayTrace;
 	std::vector<avk::buffer_view> mRtIndexBuffersArray;
 	std::vector<avk::buffer_view> mRtTexCoordBuffersArray;
+	std::vector<avk::buffer_view> mRtNormalsBuffersArray;
 	avk::buffer mRtMaterialIndexBuffer;
+	avk::buffer mRtPixelOffsetBuffer;
+	int mRtSamplesPerPixel = 1;
 #endif
 
 };

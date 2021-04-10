@@ -1,49 +1,81 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : enable
 
-layout(push_constant) uniform PushConstants {
-	mat4 mCameraTransform;
-    vec4 mLightDir;
-} pushConstants;
+#include "shader_cpu_common.h"
+#include "shader_common_main.glsl"
 
+layout(push_constant) PUSHCONSTANTSDEF_RAYTRACING pushConstants;
+
+layout (std430, set = 0, binding = 7) readonly buffer PixelOffsetBuffer { vec2 pixel_offset[]; };
 layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 1, binding = 0, rgba8) uniform image2D image;
 
 layout(location = 0) rayPayloadEXT vec3 hitValue; // payload to traceRayEXT
 
+float rand(vec2 n) { 
+	return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453);
+}
+
+vec2 pixelOffset(int currentSample, int numSamples) {
+    //return vec2(rand(gl_LaunchIDEXT.xy), rand(gl_LaunchIDEXT.xy * 2));
+
+    //vec2 offsets[] = { {0.5, 0.5}, {0.25, 0.25}, {0.75, 0.25}, {0.75, 0.75}, {0.25, 0.75} };
+    //return offsets[currentSample % 5];
+
+    if (numSamples == 1) {
+        return vec2(0.5);
+    } else {
+        return vec2(0.5) + pixel_offset[currentSample];
+    }
+}
+
 void main() 
 {
-    const vec2 pixelCenter =      vec2(gl_LaunchIDEXT.xy  ) + vec2(0.5);
-    const vec2 inUV = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
+    // clear target pixel
+    //imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.0, 0.0, 0.0, 0.0));
 
-    // We are constructing the view rays in WORLD SPACE. 
-    // This means: 
-    //  ->  Forward is the camera's -Z direction
-    //  ->  +Y axis is pointing up 
-    //  ->  +X is pointing to the right
-    vec2 d = inUV * 2.0 - 1.0;
+    // TODO: better sampling pattern
+
+    int numSamples = clamp(pushConstants.mNumSamples, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
+    vec3 accumulated = vec3(0);
+
     float aspectRatio = float(gl_LaunchSizeEXT.x) / float(gl_LaunchSizeEXT.y);
-	
-    vec3 origin = vec3(0.0, 0.0, 0.0);
-    //                                                 Up == +Y in World, but UV-coordinates have +Y pointing down
-    //                                                   |    Forward == -Z n World Space
-    //                                                   |      |
-    //                                                   v      v 
-    vec3 direction = normalize(vec3(d.x * aspectRatio, -d.y, -sqrt(3))); // 1 => sqrt(3) is the scaling factor from a fov of 90 to 60
-	vec4 p1 = vec4(origin, 1.0);
-	vec4 p2 = vec4(origin + direction, 1.0);
-	vec4 vp1 = pushConstants.mCameraTransform * p1;
-	vec4 vp2 = pushConstants.mCameraTransform * p2;
-	origin = vec3(vp1);
-	direction = vec3(normalize(vp2 - vp1));
-	
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.0, 0.0, 0.0, 0.0));
 
-    uint rayFlags = gl_RayFlagsNoneEXT; //gl_RayFlagsOpaqueEXT;
-    uint cullMask = 0xff;
-    float tmin = 0.001;
-    float tmax = 100.0;
-    traceRayEXT(topLevelAS, rayFlags, cullMask, 0 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 0 /*missIndex*/, origin, tmin, direction, tmax, 0 /*payload*/);
+    for (int iSample = 0; iSample < numSamples; ++iSample) {
+	
+        //const vec2 pixelCenter =      vec2(gl_LaunchIDEXT.xy  ) + vec2(0.5);
+        const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + pixelOffset(iSample, numSamples);
+        const vec2 inUV = pixelCenter/vec2(gl_LaunchSizeEXT.xy);
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 0.0));
+        // We are constructing the view rays in WORLD SPACE. 
+        // This means: 
+        //  ->  Forward is the camera's -Z direction
+        //  ->  +Y axis is pointing up 
+        //  ->  +X is pointing to the right
+        vec2 d = inUV * 2.0 - 1.0;
+
+        vec3 origin = vec3(0.0, 0.0, 0.0);
+        //                                                 Up == +Y in World, but UV-coordinates have +Y pointing down
+        //                                                   |    Forward == -Z n World Space
+        //                                                   |      |
+        //                                                   v      v 
+        vec3 direction = normalize(vec3(d.x * aspectRatio, -d.y, -sqrt(3))); // 1 => sqrt(3) is the scaling factor from a fov of 90 to 60
+	    vec4 p1 = vec4(origin, 1.0);
+	    vec4 p2 = vec4(origin + direction, 1.0);
+	    vec4 vp1 = pushConstants.mCameraTransform * p1;
+	    vec4 vp2 = pushConstants.mCameraTransform * p2;
+	    origin = vec3(vp1);
+	    direction = vec3(normalize(vp2 - vp1));
+	
+        uint rayFlags = gl_RayFlagsNoneEXT; //gl_RayFlagsOpaqueEXT;
+        uint cullMask = 0xff;
+        float tmin = 0.001;
+        float tmax = pushConstants.mMaxRayLength; // 100.0;
+        traceRayEXT(topLevelAS, rayFlags, cullMask, 0 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 0 /*missIndex*/, origin, tmin, direction, tmax, 0 /*payload*/);
+
+        accumulated += hitValue;
+    }
+
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(accumulated / float(numSamples), 0.0));
 }

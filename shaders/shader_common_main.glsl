@@ -52,6 +52,16 @@
 	int   mShadowMapCascadeToBuild;																					\
 }
 
+// Push constants for ray tracing
+#define PUSHCONSTANTSDEF_RAYTRACING uniform PushConstantsRayTracing {												\
+	mat4 mCameraTransform;																							\
+    vec4 mLightDir;																									\
+	vec4 mDirLightIntensity;																						\
+	vec4 mAmbientLightIntensity;																					\
+	float mMaxRayLength;																							\
+	int  mNumSamples;																								\
+}
+
 
 // Uniform buffer containing camera matrices and user input:
 // It is updated every frame.

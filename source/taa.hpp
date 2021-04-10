@@ -121,26 +121,6 @@ public:
 		return res;
 	}
 
-	// ac: Halton sequence, see https://en.wikipedia.org/wiki/Halton_sequence
-	static float halton(int i, int b) { // index, base; (index >= 1)
-		float f = 1.0f, r = 0.0f;
-		while (i > 0) {
-			f = f / b;
-			r = r + f * (i % b);
-			i = i / b;
-		}
-		return r;
-	}
-
-	template <size_t Len>
-	static std::array<glm::vec2, Len> halton_2_3(glm::vec2 aScale) {
-		std::array<glm::vec2, Len> result;
-		for (size_t i = 0; i < Len; i++) {
-			result[i] = aScale * glm::vec2{ halton(int(i) + 1, 2) - 0.5f, halton(int(i) + 1, 3) - 0.5f };
-		}
-		return result;
-	}
-
 	// Compute an offset for the projection matrix based on the given frame-id
 	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId, std::vector<glm::vec2> *copyPatternDst = nullptr) const
 	{
@@ -162,8 +142,8 @@ public:
 			sPxSizeNDC * glm::vec2(0.25f, -0.25f),
 			sPxSizeNDC * glm::vec2(-0.25f, 0.25f)
 			);
-		const static auto sHalton23x8SampleOffsets = halton_2_3<8>(sPxSizeNDC);
-		const static auto sHalton23x16SampleOffsets = halton_2_3<16>(sPxSizeNDC);
+		const static auto sHalton23x8SampleOffsets  = helpers::halton_2_3<8> (sPxSizeNDC);
+		const static auto sHalton23x16SampleOffsets = helpers::halton_2_3<16>(sPxSizeNDC);
 
 		const float eighth = 1.f / 8.f;
 		const static auto sRegular16SampleOffsets = avk::make_array<glm::vec2>(	// just for testing
@@ -1143,7 +1123,7 @@ private:
 	avk::descriptor_cache mDescriptorCache;
 
 	// Settings, which can be modified via ImGui:
-	bool mTaaEnabled = true;
+	bool mTaaEnabled = false; // true;
 	bool mPostProcessEnabled = true;
 	int mSampleDistribution = 1;
 	bool mResetHistory = false;

@@ -19,6 +19,7 @@
 
 // enable raytracing?
 #define ENABLE_RAYTRACING 1
+#define RAYTRACING_MAX_SAMPLES_PER_PIXEL 32
 
 // max. bones for animations
 #define MAX_BONES	114
