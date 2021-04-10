@@ -11,20 +11,15 @@ layout(push_constant) uniform PushConstants {
 } pushConstants;
 
 layout(location = 0) rayPayloadInEXT vec3 hitValue;
-layout(location = 1) rayPayloadEXT float shadowHitValue;
 
 layout(set = 0, binding = 0) BUFFERDEF_Material materialsBuffer;
 layout(set = 0, binding = 1) uniform sampler2D textures[];
 layout(set = 0, binding = 2) uniform usamplerBuffer indexBuffers[];     // one index buffer per [meshgroupId]; contents of each buffer are in uvec3s
 layout(set = 0, binding = 3) uniform samplerBuffer  texCoordsBuffers[]; // ditto, entries are vec2  
 layout (std430, set = 0, binding = 4) readonly buffer MaterialIndexBuffer { uint materialIndices[]; };
-layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 5) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
 
-const int NUMCOLOR = 2*6;
-vec3 color[NUMCOLOR] = {
-    {1.0,0,0}, {0,1.0,0}, {0,0,1.0}, {1.0,1.0,0}, {1.0,0,1.0}, {0,1.0,1.0},
-    {0.3,0,0}, {0,0.3,0}, {0,0,0.3}, {0.3,0.3,0}, {0.3,0,0.3}, {0,0.3,0.3}
-};
+layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
 
 hitAttributeEXT vec2 bary2;
 
@@ -51,31 +46,7 @@ void main()
 
     uint materialIndex = materialIndices[meshgroupId];
 
-    vec4 surfaceColor = sample_from_diffuse_texture(materialIndex, uv);
-
-    // cast a shadow ray
-    vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-    vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
-    //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-    uint rayFlags = gl_RayFlagsTerminateOnFirstHitEXT;
-    uint cullMask = 0xff;
-    float tmin = 0.001;
-    float tmax = 100.0;
-    traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
-
-    hitValue = surfaceColor.rgb * (1.0 - 0.5 * shadowHitValue);
-
-    //hitValue = vec3(1,0,0) * gl_HitTEXT / 100.0;
-    //hitValue = color[gl_PrimitiveID % NUMCOLOR];
-    //hitValue = vec3(clamp(gl_PrimitiveID/1000.0,0,1));
-    //if (gl_PrimitiveID == 100) hitValue = vec3(1); else hitValue = vec3(0);
-    //hitValue = color[gl_InstanceCustomIndexEXT % NUMCOLOR];
-    //hitValue = barycentrics;
-    //hitValue = vec3(uv,0);
-    //hitValue = vec3(materialIndex[meshgroupId] / 100.0,0,0);
-
-
-    // gl_PrimitiveID = triangle id. ; if multiple meshgroup-instances -> multiple triangles with same gl_PrimitiveID
-    // gl_InstanceCustomIndexEXT = whatever is set in the GeometryInstance in user code
-
+    // alpha-test
+    float alpha = sample_from_diffuse_texture(materialIndex, uv).a;
+	if (alpha < uboMatUsr.mUserInput.w) ignoreIntersectionEXT;
 }

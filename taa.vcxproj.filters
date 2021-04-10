@@ -171,6 +171,9 @@
     <None Include="shaders\rt_test_shadowray.rmiss">
       <Filter>shaders</Filter>
     </None>
+    <None Include="shaders\rt_test_transp.rahit">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">

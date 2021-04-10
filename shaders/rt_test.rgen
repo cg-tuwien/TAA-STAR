@@ -39,7 +39,7 @@ void main()
 	
     imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.0, 0.0, 0.0, 0.0));
 
-    uint rayFlags = gl_RayFlagsOpaqueEXT;
+    uint rayFlags = gl_RayFlagsNoneEXT; //gl_RayFlagsOpaqueEXT;
     uint cullMask = 0xff;
     float tmin = 0.001;
     float tmax = 100.0;

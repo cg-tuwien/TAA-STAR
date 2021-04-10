@@ -36,6 +36,7 @@
 	raytracing:
 		using separate index/vertex buffers for now...
 		add subpixel jittering so taa can work on raytraced image?
+		really need geoinstanceoffset for transp? (could any-hit ever be called for opaques? - don't think so)
 
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -119,6 +120,7 @@
 												descriptor_binding(0, 2, mRtIndexBuffersArray),						\
 												descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
 												descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
+												descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
 												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
 												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
 
@@ -1567,11 +1569,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// generate a geometry instance for each instance of the mesh group
 			for (auto &inst_data : mg.perInstanceData) {
-				mSceneData.mGeometryInstances.push_back(
-					context().create_geometry_instance(blas).
-						set_transform_column_major(to_array(inst_data.modelMatrix)).
-						set_custom_index(iMg)	// custom index = meshgroup id
-				);
+				auto geoInstance = context().create_geometry_instance(blas);
+				geoInstance.set_transform_column_major(to_array(inst_data.modelMatrix));
+				geoInstance.set_custom_index(iMg);	// custom index = meshgroup id
+				if (mg.hasTransparency) geoInstance.force_non_opaque();
+				mSceneData.mGeometryInstances.push_back(std::move(geoInstance));
 			}
 
 			mSceneData.mBLASs.back()->build({ vertex_index_buffer_pair{mg.rayTracingTmp.rtPositionBuffer, mg.rayTracingTmp.rtIndexBuffer} }, {},
@@ -1630,8 +1632,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mPipelineRayTrace = context().create_ray_tracing_pipeline_for(
 			define_shader_table(
 				ray_generation_shader("shaders/rt_test.rgen.spv"),
-				triangles_hit_group::create_with_rchit_only("shaders/rt_test.rchit.spv"),
-				triangles_hit_group::create_with_rchit_only("shaders/rt_test_shadowray.rchit.spv"),
+				triangles_hit_group::create_with_rahit_and_rchit("shaders/rt_test_transp.rahit.spv", "shaders/rt_test.rchit.spv"),
+				triangles_hit_group::create_with_rahit_and_rchit("shaders/rt_test_transp.rahit.spv", "shaders/rt_test_shadowray.rchit.spv"),
 				miss_shader("shaders/rt_test.rmiss.spv"),
 				miss_shader("shaders/rt_test_shadowray.rmiss.spv")
 			),
