@@ -329,6 +329,7 @@ class wookiee : public gvk::invokee
 		std::vector<MeshgroupPerInstanceData> perInstanceData;
 		int      materialIndex;
 		bool     hasTransparency;
+		bool     isTwoSided; // redundant, also obtainable via material mCustomData[3]
 
 		// these are mainly for debugging:
 		uint32_t orcaModelId;
@@ -1194,6 +1195,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			assert (static_cast<size_t>(materialIndex + 1) == distinctMaterialConfigs.size());
 
 			bool materialHasTransparency = has_material_transparency(pair.first);
+			bool materialIsTwoSided      = pair.first.mCustomData[3] > 0;
 
 			// walk the meshdefs having the current material (over ALL orca-models)
 			for (const auto& modelAndMeshIndices : pair.second) {
@@ -1230,6 +1232,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						mg.baseVertex      = static_cast<uint32_t>(mSceneData.mPositions.size());
 						mg.materialIndex   = materialIndex;
 						mg.hasTransparency = materialHasTransparency;
+						mg.isTwoSided	   = materialIsTwoSided;
 						// for debugging:
 						mg.orcaModelId = static_cast<uint32_t>(modelAndMeshIndices.mModelIndex);
 						mg.orcaMeshId  = static_cast<uint32_t>(meshIndex);
@@ -1595,6 +1598,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				geoInstance.set_transform_column_major(to_array(inst_data.modelMatrix));
 				geoInstance.set_custom_index(iMg);	// custom index = meshgroup id
 				if (mg.hasTransparency) geoInstance.force_non_opaque();
+				if (mg.isTwoSided)      geoInstance.disable_culling();
 				mSceneData.mGeometryInstances.push_back(std::move(geoInstance));
 			}
 

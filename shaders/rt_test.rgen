@@ -68,7 +68,8 @@ void main()
 	    origin = vec3(vp1);
 	    direction = vec3(normalize(vp2 - vp1));
 	
-        uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT; //gl_RayFlagsNoneEXT; //gl_RayFlagsOpaqueEXT;
+        uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT;  // note: two-sided materials have culling disabled in their geometry instance
+        //uint rayFlags = gl_RayFlagsNoneEXT;
         uint cullMask = 0xff;
         float tmin = 0.001;
         float tmax = pushConstants.mMaxRayLength; // 100.0;
