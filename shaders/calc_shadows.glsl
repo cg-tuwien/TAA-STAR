@@ -37,7 +37,7 @@ float calc_shadow_factor(in vec4 positionWS) {
 	if (all(greaterThanEqual(p.xyz, vec3(0))) && all(lessThan(p.xyz, vec3(1)))) {
 		p.z -= uboMatUsr.mShadowBias;	// FIXME - using manual bias for now
 		light = texture(shadowMap[cascade], p.xyz);
-		light = 1.0 - (1.0 - light) * 0.75;
+		light = 1.0 - (1.0 - light) * SHADOW_OPACITY;
 	}
 
 	return light;

@@ -38,6 +38,11 @@
 		add subpixel jittering so taa can work on raytraced image?
 		animated objects?
 		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
+		weird building corner shadow at start? - normal (obj.space already) at floor is wrong AND z-fighting with pavement?
+			-> building floor is modeled as two coincident squares, one facing up and one down!
+			-> fix model by removing down facing part
+		similar problem with some banners?
+		-> or just fix all by using backface culling during ray tracing?
 
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
@@ -1016,9 +1021,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	// ac: output info about the scene structure
-	void print_scene_debug_info(gvk::orca_scene_t& aScene, bool withMeshNames = false)
+	void print_scene_debug_info(avk::resource_reference<gvk::orca_scene_t> aScene, bool withMeshNames = false)
 	{
-		auto &models = aScene.models();
+		auto &models = aScene->models();
 		std::cout << "Scene debug info" << std::endl;
 		std::cout << "#models " << models.size() << std::endl;
 		for (int iModel = 0; iModel < models.size(); iModel++) {
@@ -1196,6 +1201,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto& modelData = scene->model_at_index(modelAndMeshIndices.mModelIndex);
 				std::vector<std::tuple<resource_reference<const model_t>, std::vector<size_t>>> modelRefAndMeshIndices = { std::make_tuple(const_referenced(modelData.mLoadedModel), modelAndMeshIndices.mMeshIndices) };
 				helpers::exclude_a_curtain(modelRefAndMeshIndices);
+
 				if (modelRefAndMeshIndices.empty()) continue;
 
 				// walk the individual meshes (actually these correspond to "mesh groups", referring to the same meshId) in the same-material-group
@@ -1206,7 +1212,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 						std::vector<size_t> tmpMeshIndexVector = { meshIndex };
 						std::vector<std::tuple<resource_reference<const model_t>, std::vector<size_t>>> selection = { std::make_tuple(const_referenced(modelData.mLoadedModel), tmpMeshIndexVector) };
-
 
 						// build a meshgroup, covering ALL orca-instances
 						// TODO: this way of buffer-building is not very efficient; better build buffers for ALL meshes in one go...
@@ -2353,6 +2358,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		if (mDoRayTraceTest) {
 			do_raytrace_test(commandBuffer, fif);
+			commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
+			commandBuffer->next_subpass();
+			commandBuffer->end_render_pass();
+			blit_image(mRtImageViews[fif]->get_image(), mFramebuffer[fif]->image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(*commandBuffer));
+			commandBuffer->end_recording();
+			return;
 		}
 
 		compute_frustum_culling(commandBuffer, fif);	// calculate frustum visibility
@@ -2520,9 +2531,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		commandBuffer->end_render_pass();
 		rdoc::endSection(commandBuffer->handle());
 
-		if (mDoRayTraceTest) {
-			blit_image(mRtImageViews[fif]->get_image(), mFramebuffer[fif]->image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(*commandBuffer));
-		}
+		//if (mDoRayTraceTest) {
+		//	blit_image(mRtImageViews[fif]->get_image(), mFramebuffer[fif]->image_view_at(0)->get_image(), sync::with_barriers_into_existing_command_buffer(*commandBuffer));
+		//}
 
 		commandBuffer->end_recording();
 	}

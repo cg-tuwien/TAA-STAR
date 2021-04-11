@@ -17,6 +17,10 @@
 #error "SHADOWMAP_INITIAL_CASCADES > SHADOWMAP_MAX_CASCADES"
 #endif
 
+// Percentage of how much of a lightsource is removed when it is shadowed
+#define SHADOW_OPACITY 0.9f
+//#define SHADOW_OPACITY 1.0f
+
 // enable raytracing?
 #define ENABLE_RAYTRACING 1
 #define RAYTRACING_MAX_SAMPLES_PER_PIXEL 32

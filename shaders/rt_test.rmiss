@@ -5,7 +5,7 @@ layout(location = 0) rayPayloadInEXT vec3 hitValue;
 
 void main()
 {
-    hitValue = vec3(0.5,0.5,1);
+    //hitValue = vec3(1,0,1); return;
 
     // Skybox:
 	const float pi = 3.1415926535897932384626433832795;

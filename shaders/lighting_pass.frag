@@ -214,7 +214,8 @@ void main()
 	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess);
 
 	// Add all together:
-	vec4 blinnPhongColor = vec4(shadowFactor * vec3(ambientIllumination + emissive + diffAndSpecIllumination), 1.0);
+	//vec4 blinnPhongColor = vec4(shadowFactor * vec3(ambientIllumination + emissive + diffAndSpecIllumination), 1.0);
+	vec4 blinnPhongColor = vec4(vec3(ambientIllumination + emissive + shadowFactor * diffAndSpecIllumination), 1.0);
 
 
 	if (uboMatUsr.mUserInput.z < 1.f) {

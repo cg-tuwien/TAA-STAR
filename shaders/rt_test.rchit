@@ -3,6 +3,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : enable
 
+#include "shader_cpu_common.h"
 #include "shader_common_main.glsl"
 
 layout(push_constant) PUSHCONSTANTSDEF_RAYTRACING pushConstants;
@@ -86,13 +87,12 @@ void main()
     vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
     vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
     //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-    uint rayFlags = gl_RayFlagsTerminateOnFirstHitEXT;
+    uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsTerminateOnFirstHitEXT;
     uint cullMask = 0xff;
     float tmin = 0.001;
     float tmax = pushConstants.mMaxRayLength; //100.0;
     traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
 
-    
     // simple light calculation
     // we only support one directional light here (+ ambient)
     vec3 n0 = texelFetch(normalsBuffers[meshgroupId], indices.x).xyz;
@@ -117,10 +117,11 @@ void main()
     vec3 toLightWS = normalize(-pushConstants.mLightDir.xyz);
     vec3 toEyeWS   = -gl_WorldRayDirectionEXT;
     vec3 diffAndSpec = dirLightIntensity * calc_blinn_phong_contribution(toLightWS, toEyeWS, normalWS, diff, spec, shininess, twoSided);
-    float shadowFactor = 1.0 - 0.75 * shadowHitValue;
-	vec4 blinnPhongColor = vec4(shadowFactor * vec3(ambientIllumination + emissive + diffAndSpec), 1.0);
+    float shadowFactor = 1.0 - SHADOW_OPACITY * shadowHitValue;
+	vec4 blinnPhongColor = vec4(vec3(ambientIllumination + emissive + shadowFactor * diffAndSpec), 1.0);
 
     hitValue = blinnPhongColor.rgb;
+    //hitValue = normalOS * 0.5 + 0.5;
 
     // gl_PrimitiveID = triangle id. ; if multiple meshgroup-instances -> multiple triangles with same gl_PrimitiveID
     // gl_InstanceCustomIndexEXT = whatever is set in the GeometryInstance in user code

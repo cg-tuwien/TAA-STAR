@@ -289,7 +289,8 @@ void main()
 	vec3 diffAndSpecIllumination = calc_illumination_in_vs(positionVS, normalVS, diff, spec, shininess, twoSided);
 
 	// Add all together:
-	vec4 blinnPhongColor = vec4(calc_shadow_factor(fs_in.positionWS) * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
+	//vec4 blinnPhongColor = vec4(calc_shadow_factor(fs_in.positionWS) * vec3(ambientIllumination + emissive + diffAndSpecIllumination), alpha);
+	vec4 blinnPhongColor = vec4(vec3(ambientIllumination + emissive + calc_shadow_factor(fs_in.positionWS) * diffAndSpecIllumination), alpha);
 
 	if (uboMatUsr.mUserInput.z < 1.f) {
 		oFragColor = blinnPhongColor;
@@ -310,6 +311,8 @@ void main()
 
 		//oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;
 	}
+	//oFragColor = vec4(normalize(fs_in.normalOS.xyz) * 0.5 + 0.5, 1.0);
+	//oFragColor = vec4(normalize(normalVS.xyz) * 0.5 + 0.5, 1.0);
 }
 // -------------------------------------------------------
 
