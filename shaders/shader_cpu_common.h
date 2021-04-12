@@ -22,7 +22,7 @@
 //#define SHADOW_OPACITY 1.0f
 
 // enable raytracing?
-#define ENABLE_RAYTRACING 0
+#define ENABLE_RAYTRACING 1
 #define RAYTRACING_MAX_SAMPLES_PER_PIXEL 32
 
 // max. bones for animations
