@@ -3419,9 +3419,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if (beenThereDoneThat) return;
 		beenThereDoneThat = true;
 
+		mUpdater.emplace();
+
 		// allow the updater to reload shaders
 #if USE_GVK_UPDATER
-		mAntiAliasing.init_updater(mUpdater);
+		mAntiAliasing.init_updater();
 
 		// updating the pipelines crashes when using pre-recorded command buffers! (because pipeline is still in use)
 #if RERECORD_CMDBUFFERS_ALWAYS
@@ -3441,17 +3443,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		for (auto ppipe : gfx_pipes) {
 			ppipe->enable_shared_ownership();
-			mUpdater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
 		}
 
 		std::vector<avk::ray_tracing_pipeline *> rtx_pipes = { &mPipelineRayTrace };
 		for (auto ppipe : rtx_pipes) {
 			ppipe->enable_shared_ownership();
-			mUpdater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
 		}
 
 #endif
-		gvk::current_composition()->add_element(mUpdater);
+		//gvk::current_composition()->add_element(mUpdater);
 #endif
 	}
 
@@ -4107,7 +4109,7 @@ private: // v== Member variables ==v
 	taa<cConcurrentFrames> mAntiAliasing;
 
 #if USE_GVK_UPDATER
-	gvk::updater mUpdater;	// handles shader hot reloading, window resizing
+	//gvk::updater mUpdater;	// handles shader hot reloading, window resizing
 #endif
 
 	int mLightingMode = 0; // 0 = typical; 1 = no lights, just diff color;  2 = debug

@@ -537,12 +537,13 @@ public:
 	}
 
 	// called from main
-	void init_updater(gvk::updater &updater) {
+	void init_updater() {
 		LOG_DEBUG("TAA: initing updater");
+		mUpdater.emplace();
 		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline, &mPostProcessPipeline };
 		for (auto ppipe : comp_pipes) {
 			ppipe->enable_shared_ownership();
-			updater.on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
 		}
 	}
 
