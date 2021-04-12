@@ -34,16 +34,12 @@
 /* TODO:
 
 	raytracing:
-		using separate index/vertex buffers for now...
-		add subpixel jittering so taa can work on raytraced image?
+		using separate, duplicated index/vertex buffers (and others) for now... need to extend some avk functions, esp. for AS building
+		add subpixel jittering so taa can work on raytraced image? do we need that actually?
 		animated objects?
 		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
-		weird building corner shadow at start? - normal (obj.space already) at floor is wrong AND z-fighting with pavement?
-			-> building floor is modeled as two coincident squares, one facing up and one down!
-			-> fix model by removing down facing part
-		similar problem with some banners?
-		-> or just fix all by using backface culling during ray tracing?
-
+		use main shadow settings to enable/disable raytraced shadows
+		lighting looks different from raster version in test scene?
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -131,7 +127,6 @@
 												descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
 												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
 												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
-
 #endif
 
 
@@ -148,7 +143,7 @@
 #define IF_DEBUG_BUILD_ELSE(x,y) y
 #endif
 
-//#define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
+#define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
 
 void my_queue_submit_with_existing_fence(avk::queue &q, avk::command_buffer_t& aCommandBuffer, avk::fence &fen)
 {
@@ -241,6 +236,10 @@ class wookiee : public gvk::invokee
 		std::vector<glm::uvec4> mBoneIndices;
 
 		int mMaterialIndex;
+
+#if ENABLE_RAYTRACING
+		avk::bottom_level_acceleration_structure mBLAS;
+#endif
 	};
 
 	struct dynamic_object_part {
@@ -266,6 +265,10 @@ class wookiee : public gvk::invokee
 		std::vector<glm::mat4> mBoneMatricesPrev;
 
 		float mAnimTime = 0.f;				// set by application
+
+		bool mIsInAccelerationStructure = false;	// is this included in the current acceleration structure?
+		glm::mat4 mMovementMatrix_in_AS;
+		uint32_t mRtCustomIndexBase;				// geometry indices custom index base value for this dynObj, actual custom indices = base + meshIndex
 	};
 
 	// push constants for DrawIndexedIndirect (also used for single dynamic models)
@@ -406,6 +409,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mStartCaptureEarly = false;
 
 	bool mDoRayTraceTest = true; // false;
+	bool mDoRayTraceUpdateTest = false;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -1172,8 +1176,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		
 		auto bufferUsageFlags = vk::BufferUsageFlags{};
-#ifdef RTX_ON
-		assert(cgb::settings::gEnableBufferDeviceAddress);
+#if ENABLE_RAYTRACING
+		//assert(cgb::settings::gEnableBufferDeviceAddress);
 		bufferUsageFlags |= vk::BufferUsageFlagBits::eShaderDeviceAddressKHR;	// TODO: need this for raytracing ?
 #endif
 
@@ -1579,6 +1583,33 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			materialIndices.push_back(mg.materialIndex);
 		}
 
+		// do the same for dynamic objects (and set their mRtCustomIndexBase property)
+		uint32_t dynObj_nextCustomIndex = static_cast<uint32_t>(mSceneData.mMeshgroups.size());
+		for (auto &dynObj : mDynObjects) {
+			dynObj.mRtCustomIndexBase = dynObj_nextCustomIndex;
+			dynObj_nextCustomIndex += static_cast<uint32_t>(dynObj.mMeshData.size());	// each *mesh* of the dynObj needs its own custom index (to index texcoords,normals,indexbufs etc.)
+			assert(dynObj.mRtCustomIndexBase == mRtIndexBuffersArray.size());
+
+			for (auto &mesh : dynObj.mMeshData) {
+				mesh.mIndexBuffer.enable_shared_ownership();
+				mesh.mPositionsBuffer.enable_shared_ownership();
+
+				auto ibuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mIndices).set_format<glm::uvec3>());
+				ibuf->fill(mesh.mIndices.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
+
+				auto tbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mTexCoords).describe_only_member(mesh.mTexCoords[0]));
+				tbuf->fill(mesh.mTexCoords.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
+
+				auto nbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mNormals).describe_only_member(mesh.mNormals[0]));
+				nbuf->fill(mesh.mNormals.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				mRtNormalsBuffersArray.push_back( context().create_buffer_view(owned(nbuf)) );
+
+				materialIndices.push_back(mesh.mMaterialIndex);
+			}
+		}
+
 		// create a buffer holding all material indices
 		mRtMaterialIndexBuffer = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(materialIndices));
 		mRtMaterialIndexBuffer->fill(materialIndices.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
@@ -1600,23 +1631,88 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				if (mg.hasTransparency) geoInstance.force_non_opaque();
 				if (mg.isTwoSided)      geoInstance.disable_culling();
 				mSceneData.mGeometryInstances.push_back(std::move(geoInstance));
+				mSceneData.mDebugGeoInstTransforms.push_back(inst_data.modelMatrix);
 			}
 
 			mSceneData.mBLASs.back()->build({ vertex_index_buffer_pair{mg.rayTracingTmp.rtPositionBuffer, mg.rayTracingTmp.rtIndexBuffer} }, {},
-				avk::sync::with_barriers(
-					[posBfr = mg.rayTracingTmp.rtPositionBuffer, idxBfr = mg.rayTracingTmp.rtIndexBuffer](avk::command_buffer cb) {
-						cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
-						gvk::context().main_window()->handle_lifetime(avk::owned(cb));
-					},
-					{}, {}
-				)
+				sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())
+				//avk::sync::with_barriers(
+				//	[posBfr = mg.rayTracingTmp.rtPositionBuffer, idxBfr = mg.rayTracingTmp.rtIndexBuffer](avk::command_buffer cb) {
+				//		cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
+				//		gvk::context().main_window()->handle_lifetime(avk::owned(cb));
+				//	},
+				//	{}, {}
+				//)
 			);
 		}
+
+		// ... and build BLASs for dynamic objects (but no geo instances yet)
+		size_t maxGeometryInstancesForDynObjs = 0;
+		for (int iDynObj = 0; iDynObj < mDynObjects.size(); ++iDynObj) {
+			auto &dynObj = mDynObjects[iDynObj];
+			for (int iMesh = 0; iMesh < dynObj.mMeshData.size(); ++iMesh) {
+				auto &mesh = dynObj.mMeshData[iMesh];
+
+#if 0
+				// doesn't work - NSight says the corresponding vertex buffer in AS is all zero - WHY???
+
+				mesh.mBLAS = context().create_bottom_level_acceleration_structure({ acceleration_structure_size_requirements::from_buffers(vertex_index_buffer_pair{mesh.mPositionsBuffer, mesh.mIndexBuffer}) }, true);
+				mesh.mBLAS.enable_shared_ownership();
+
+				mesh.mBLAS->build({ vertex_index_buffer_pair{mesh.mPositionsBuffer, mesh.mIndexBuffer} }, {},
+					sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())
+					//avk::sync::with_barriers(
+					//	[posBfr = mesh.mPositionsBuffer, idxBfr = mesh.mIndexBuffer](avk::command_buffer cb) {		// TODO!! : check if deleter is appropriate here! probably not!
+					//		cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
+					//		gvk::context().main_window()->handle_lifetime(avk::owned(cb));
+					//	},
+					//	{}, {}
+					//)
+				);
+#else
+
+				// --- debug! this works
+				auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices));
+				auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(mesh.mPositions).describe_only_member(mesh.mPositions[0], content_description::position));
+				tmpIndexBuffer.enable_shared_ownership();
+				tmpPositionsBuffer.enable_shared_ownership();
+				tmpIndexBuffer		->fill(mesh.mIndices.data(),   0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+				tmpPositionsBuffer	->fill(mesh.mPositions.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
+
+				mesh.mBLAS = context().create_bottom_level_acceleration_structure({ acceleration_structure_size_requirements::from_buffers(vertex_index_buffer_pair{tmpPositionsBuffer, tmpIndexBuffer}) }, true);
+				mesh.mBLAS.enable_shared_ownership();
+
+				mesh.mBLAS->build({ vertex_index_buffer_pair{tmpPositionsBuffer, tmpIndexBuffer} }, {},
+					//sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())
+					avk::sync::with_barriers(
+						[posBfr = tmpPositionsBuffer, idxBfr = tmpIndexBuffer](avk::command_buffer cb) {		// TODO!! : check if deleter is appropriate here! probably not!
+							cb->set_custom_deleter([lPosBfr = std::move(posBfr), lIdxBfr = std::move(idxBfr)](){});
+							gvk::context().main_window()->handle_lifetime(avk::owned(cb));
+						},
+						{}, {}
+					)
+				);
+				// ---
+#endif
+			}
+
+			maxGeometryInstancesForDynObjs = std::max(maxGeometryInstancesForDynObjs, dynObj.mParts.size());
+		}
+
+		//// just for debugging - add first dynObj to static geo
+		//auto &dynObj = mDynObjects[0];
+		//for (auto &part : dynObj.mParts) {
+		//	auto &mesh = dynObj.mMeshData[part.mMeshIndex];
+		//	auto geoInstance = context().create_geometry_instance(mesh.mBLAS);
+		//	geoInstance.set_transform_column_major(to_array(/*dynObj.mMovementMatrix_in_AS * */ dynObj.mBaseTransform * part.mMeshTransform)); // TODO: check! not for animated objs...
+		//	geoInstance.set_custom_index(dynObj.mRtCustomIndexBase + part.mMeshIndex);
+		//	mSceneData.mGeometryInstances.push_back(std::move(geoInstance));
+		//}
 
 		// build top level acceleration structure, one per frame
 		auto numFif = context().main_window()->number_of_frames_in_flight();
 		for (decltype(numFif) i = 0; i < numFif; ++i) {
-			auto tlas = context().create_top_level_acceleration_structure(static_cast<uint32_t>(mSceneData.mGeometryInstances.size()), true);
+			auto tlas = context().create_top_level_acceleration_structure(static_cast<uint32_t>(mSceneData.mGeometryInstances.size() + maxGeometryInstancesForDynObjs), true);
 
 			tlas->build(mSceneData.mGeometryInstances, {}, avk::sync::with_barriers(
 				gvk::context().main_window()->command_buffer_lifetime_handler(),
@@ -1676,6 +1772,139 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mPipelineRayTrace->print_shader_binding_table_groups();
 
 	}
+
+	void update_acceleration_structures() {
+		// update acceleration structure because:
+		// - dynamic object has been toggled on/off
+		// - dynamic object has been switched to a different model
+		// - dynamic object has moved
+		// - TODO: animation
+		// - or because we need extend a previous update for the remaining frames in flight
+		if (mDoRayTraceUpdateTest) {
+			update_acceleration_structures_test();
+			return;
+		}
+
+		using namespace avk;
+		using namespace gvk;
+
+		static int64_t updateUntilFrame  = -1;
+		static int64_t rebuildUntilFrame = -1;
+
+		// check if we need to rebuild due to object switch or enable toggle
+		bool needRebuild = false;
+		for (int iDynObj = 0; iDynObj < mDynObjects.size(); ++iDynObj) {
+			auto &dynObj = mDynObjects[iDynObj];
+			if ((mMovingObject.enabled && mMovingObject.moverId == iDynObj) != dynObj.mIsInAccelerationStructure) {
+				needRebuild = true;
+				break;
+			}
+		}
+		// check if we need to update due to object movement
+		bool needUpdate = (mMovingObject.enabled && mDynObjects[mMovingObject.moverId].mMovementMatrix_in_AS != mDynObjects[mMovingObject.moverId].mMovementMatrix_current);
+
+		if (needRebuild) rebuildUntilFrame = context().main_window()->current_frame() + context().main_window()->number_of_frames_in_flight() - 1;
+		if (needUpdate)  updateUntilFrame  = context().main_window()->current_frame() + context().main_window()->number_of_frames_in_flight() - 1;
+		if (context().main_window()->current_frame() > updateUntilFrame && context().main_window()->current_frame() > rebuildUntilFrame) return;
+
+		// clear all mIsInAccelerationStructure flags
+		for (auto &dynObj : mDynObjects) dynObj.mIsInAccelerationStructure = false;
+
+		std::vector<avk::geometry_instance> allGeometryInstances = mSceneData.mGeometryInstances;
+
+		if (mMovingObject.enabled) {
+			// add geometry instances for active object
+			auto &dynObj = mDynObjects[mMovingObject.moverId];
+			dynObj.mIsInAccelerationStructure = true;
+			dynObj.mMovementMatrix_in_AS = dynObj.mMovementMatrix_current;
+
+			for (auto &part : dynObj.mParts) {
+				auto &mesh = dynObj.mMeshData[part.mMeshIndex];
+				auto geoInstance = context().create_geometry_instance(mesh.mBLAS);
+				geoInstance.set_transform_column_major(to_array(dynObj.mMovementMatrix_in_AS * dynObj.mBaseTransform * part.mMeshTransform)); // TODO: check! not for animated objs...
+				geoInstance.set_custom_index(dynObj.mRtCustomIndexBase + part.mMeshIndex);
+				allGeometryInstances.push_back(std::move(geoInstance));
+			}
+		}
+
+		// rebuild or update TLAS for the current frame in flight
+		auto fif = context().main_window()->in_flight_index_for_frame();
+		if (context().main_window()->current_frame() <= rebuildUntilFrame) {
+			// full rebuild
+			mSceneData.mTLASs[fif]->build(allGeometryInstances, {}, avk::sync::with_barriers(
+				gvk::context().main_window()->command_buffer_lifetime_handler(),
+				// Sync before building the TLAS:
+				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage destinationStage, std::optional<avk::read_memory_access> readAccess){
+					assert(avk::pipeline_stage::acceleration_structure_build == destinationStage);
+					assert(!readAccess.has_value() || avk::memory_access::acceleration_structure_read_access == readAccess.value().value());
+					// Wait on all the BLAS builds that happened before (and their memory):
+					commandBuffer.establish_global_memory_barrier_rw(
+						avk::pipeline_stage::acceleration_structure_build, destinationStage,
+						avk::memory_access::acceleration_structure_write_access, readAccess
+					);
+				},
+				// Whatever comes after must wait for this TLAS build to finish (and its memory to be made available):
+				//   However, that's exactly what the default_handler_after_operation
+				//   does, so let's just use that (it is also the default value for
+				//   this handler)
+				avk::sync::presets::default_handler_after_operation
+			));
+			PRINT_DEBUGMARK("TLAS-Rebuild");
+		} else {
+			// just update existing TLAS
+			mSceneData.mTLASs[fif]->update(allGeometryInstances, {}, avk::sync::with_barriers(
+				gvk::context().main_window()->command_buffer_lifetime_handler(),
+				{}, // Nothing to wait for
+				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess){
+					// We want this update to be as efficient/as tight as possible
+					commandBuffer.establish_global_memory_barrier_rw(
+						srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
+						srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
+					);
+				}
+			));
+			PRINT_DEBUGMARK("TLAS-Update");
+		}
+	}
+
+	void update_acceleration_structures_test() {
+		// just update the existing geometries
+
+		using namespace avk;
+		using namespace gvk;
+
+		const float angle_per_sec = glm::radians(10.0f);
+		static float angle = 0;
+		static double tLast = 0.0;
+		double t = gvk::context().get_time();
+		if (tLast == 0.0) { tLast = t; return; }
+		double dt = t - tLast;
+		tLast = t;
+		angle += angle_per_sec * float(dt);
+
+		auto rotMat = glm::rotate(angle, glm::vec3(0, 1, 0));
+		for (auto i = 0; i < mSceneData.mGeometryInstances.size(); ++i) {
+			auto &geo = mSceneData.mGeometryInstances[i];
+			glm::mat4 m = mSceneData.mDebugGeoInstTransforms[i];
+			geo.set_transform_column_major(to_array(rotMat * m));
+		}
+
+		auto fif = context().main_window()->in_flight_index_for_frame();
+		mSceneData.mTLASs[fif]->update(mSceneData.mGeometryInstances, {}, avk::sync::with_barriers(
+			gvk::context().main_window()->command_buffer_lifetime_handler(),
+			{}, // Nothing to wait for
+			[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess){
+				// We want this update to be as efficient/as tight as possible
+				commandBuffer.establish_global_memory_barrier_rw(
+					srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
+					srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
+				);
+			}
+		));
+
+		PRINT_DEBUGMARK("TLAS-Update-Test");
+	}
+
 #endif
 
 	void upload_materials_and_vertex_data_to_gpu()
@@ -2827,6 +3056,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("Ray trace test", &mDoRayTraceTest);
 					SameLine();
 					if (InputIntW(80, "spp#RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
+					Checkbox("RT update test", &mDoRayTraceUpdateTest);
 
 					if (rdoc::active()) {
 						Separator();
@@ -3476,6 +3706,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// helpers::animate_lights(helpers::get_lights(), gvk::time().absolute_time());
+
+#if ENABLE_RAYTRACING
+		// update the ray tracing acceleration structures if necessary
+		if (mDoRayTraceTest) update_acceleration_structures();
+#endif
 	}
 
 	void render() override
@@ -3971,6 +4206,7 @@ private: // v== Member variables ==v
 		std::vector<avk::bottom_level_acceleration_structure> mBLASs;					// bottom level acceleration structures (one per object, shared for each TLAS)
 		std::array<avk::top_level_acceleration_structure, cConcurrentFrames> mTLASs;	// top level acceleration structures, one per frame
 		std::vector<avk::geometry_instance> mGeometryInstances;							// geometry instances for the BLASs
+		std::vector<glm::mat4> mDebugGeoInstTransforms;
 #endif
 
 		bool mRegeneratePerFrame = true;
