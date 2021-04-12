@@ -2589,6 +2589,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		commandBuffer->begin_recording();
 
+#if ENABLE_RAYTRACING
 		if (mDoRayTraceTest) {
 			do_raytrace_test(commandBuffer, fif);
 			commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
@@ -2598,6 +2599,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			commandBuffer->end_recording();
 			return;
 		}
+#endif
 
 		compute_frustum_culling(commandBuffer, fif);	// calculate frustum visibility
 
@@ -3053,10 +3055,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
 					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
+#if ENABLE_RAYTRACING
 					Checkbox("Ray trace test", &mDoRayTraceTest);
 					SameLine();
 					if (InputIntW(80, "spp#RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
 					Checkbox("RT update test", &mDoRayTraceUpdateTest);
+#endif
 
 					if (rdoc::active()) {
 						Separator();
@@ -3445,12 +3449,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			ppipe->enable_shared_ownership();
 			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
 		}
-
-		std::vector<avk::ray_tracing_pipeline *> rtx_pipes = { &mPipelineRayTrace };
-		for (auto ppipe : rtx_pipes) {
-			ppipe->enable_shared_ownership();
-			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
-		}
+		#if ENABLE_RAYTRACING
+			std::vector<avk::ray_tracing_pipeline *> rtx_pipes = { &mPipelineRayTrace };
+			for (auto ppipe : rtx_pipes) {
+				ppipe->enable_shared_ownership();
+				mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
+			}
+		#endif
 
 #endif
 		//gvk::current_composition()->add_element(mUpdater);
