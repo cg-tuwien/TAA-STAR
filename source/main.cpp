@@ -40,6 +40,8 @@
 		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
 		use main shadow settings to enable/disable raytraced shadows
 		lighting looks different from raster version in test scene?
+		do normal mapping
+		sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -125,6 +127,8 @@
 												descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
 												descriptor_binding(0, 6, mRtNormalsBuffersArray),					\
 												descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
+												descriptor_binding(0, 8, mRtAnimObjNormalsBufferView[fif_]),		\
+												descriptor_binding(0, 9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
 												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
 												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
 #endif
@@ -288,6 +292,8 @@ class wookiee : public gvk::invokee
 		glm::vec4 mAmbientLightIntensity;
 		float mMaxRayLength;
 		int  mNumSamples;
+		int  mAnimObjFirstMeshId;
+		int  mAnimObjNumMeshes;
 		// pad?
 	};
 
@@ -409,7 +415,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mStartCaptureEarly = false;
 
 	bool mDoRayTraceTest = true; // false;
-	bool mDoRayTraceUpdateTest = false;
+	bool mDoRayTraceUpdateTest = true;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -1757,6 +1763,32 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mRtPixelOffsetBuffer = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(halton));
 		mRtPixelOffsetBuffer->fill(halton.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
 
+		// create animated object normals and normals-offset buffers
+		// first determine max size
+		size_t maxAnimObjNormals = 0;
+		size_t maxAnimObjMeshes  = 0;
+		for (auto &dynObj : mDynObjects) {
+			if (dynObj.mIsAnimated) {
+				size_t cntNrm = 0;
+				for (auto &mesh : dynObj.mMeshData) cntNrm += mesh.mNormals.size();
+				maxAnimObjMeshes  = std::max(maxAnimObjMeshes, dynObj.mMeshData.size());
+				maxAnimObjNormals = std::max(maxAnimObjNormals, cntNrm);
+			}
+		}
+		std::vector<glm::vec3> dummyNormals(maxAnimObjNormals);
+		std::vector<uint32_t>  dummyNrmOff(maxAnimObjMeshes);
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			//mRtAnimObjNormalsBuffer[i]			= context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNormals));
+			mRtAnimObjNormalsBuffer[i]			= context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyNormals).set_format<glm::vec3>());
+			mRtAnimObjNormalsOffsetBuffer[i]	= context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNrmOff));
+			mRtAnimObjNormalsBuffer[i]			->fill(dummyNormals.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjNormalsOffsetBuffer[i]	->fill(dummyNrmOff.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjNormalsBuffer[i].enable_shared_ownership();
+			mRtAnimObjNormalsBufferView[i] = context().create_buffer_view(shared(mRtAnimObjNormalsBuffer[i]));
+			// note: storage buffers with vec3's are bad! that's why we use a uniform_texel_buffer for normals
+		}
+
+
 		// create ray tracing pipeline
 		mPipelineRayTrace = context().create_ray_tracing_pipeline_for(
 			define_shader_table(
@@ -1804,6 +1836,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if (needUpdate)  updateUntilFrame  = context().main_window()->current_frame() + context().main_window()->number_of_frames_in_flight() - 1;
 		if (context().main_window()->current_frame() > updateUntilFrame && context().main_window()->current_frame() > rebuildUntilFrame) return;
 
+		auto fif = context().main_window()->in_flight_index_for_frame();
+
 		// clear all mIsInAccelerationStructure flags
 		for (auto &dynObj : mDynObjects) dynObj.mIsInAccelerationStructure = false;
 
@@ -1823,10 +1857,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				geoInstance.set_custom_index(dynObj.mRtCustomIndexBase + part.mMeshIndex);
 				mAllGeometryInstances.push_back(std::move(geoInstance));
 			}
+
 		}
 
 		// rebuild or update TLAS for the current frame in flight
-		auto fif = context().main_window()->in_flight_index_for_frame();
 		if (context().main_window()->current_frame() <= rebuildUntilFrame) {
 			// full rebuild
 			mSceneData.mTLASs[fif]->build(mAllGeometryInstances, {}, avk::sync::with_barriers(
@@ -1867,6 +1901,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void update_bottom_level_acceleration_structures() {
 		// this updates the BLASs of animated objects
+		// TODO: update over multiple fifs, like above?
 
 		using namespace avk;
 		using namespace gvk;
@@ -1877,15 +1912,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		vk::BufferUsageFlags bufferUsage = { vk::BufferUsageFlagBits::eShaderDeviceAddressKHR };
 
+		auto fif = context().main_window()->in_flight_index_for_frame();
+
 		// seems like updating the BLASs is not enough, if the changed positions leave the initial AABB -> looks cut off
 		// so update the TLASs afterwards too, then it's fine
 
 		// blas index buffer stays the same, but the vertex buffer needs to be changed   TODO: -> compute shader
+		std::vector<glm::vec3> allNewNormals;
 		for (int iMesh = 0; iMesh < dynObj.mMeshData.size(); ++iMesh) {
 			auto &mesh = dynObj.mMeshData[iMesh];
 
 			//auto newPositions = calc_new_mesh_positions_for_testing_only(mesh.mPositions);
-			auto newPositions = calc_new_mesh_positions_for_animated_object(dynObj, iMesh);
+			auto [newPositions, newNormals] = calc_new_mesh_positions_and_normals_for_animated_object(dynObj, iMesh);
 
 			auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices));
 			auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(newPositions).describe_only_member(newPositions[0], content_description::position));
@@ -1903,10 +1941,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					{}, {}
 				)
 			);
+
+			insert_into(allNewNormals, newNormals);
+			//insert_into(allNewNormals, mesh.mNormals); // just for debugging!
 		}
 
-		// update TLAS - TODO: multiple fifs, like before...
-		auto fif = context().main_window()->in_flight_index_for_frame();
+		// update TLAS
 		mSceneData.mTLASs[fif]->update(mAllGeometryInstances, {}, avk::sync::with_barriers(
 			gvk::context().main_window()->command_buffer_lifetime_handler(),
 			// Sync before building the TLAS:
@@ -1929,16 +1969,25 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		));
 
 
-		// !!TODO: normals ? -> pass bonematrix to shader
+		// update normals- and vertex-count buffers for anim object
+		update_normals_buffer_for_animated_object(dynObj, allNewNormals, fif);
+		//context().device().waitIdle(); // FIXME
 	}
 
-	std::vector<glm::vec3> calc_new_mesh_positions_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {
+	std::tuple<std::vector<glm::vec3>,std::vector<glm::vec3>> calc_new_mesh_positions_and_normals_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {
 		// bone matrices have to be calculated already
 		// TODO: do this in a compute shader
 		auto &mesh = dynObj.mMeshData[iMeshIndex];
 		int bonesBaseIndex = iMeshIndex * MAX_BONES;
-		std::vector<glm::vec3> posNew = dynObj.mMeshData[iMeshIndex].mPositions;
-		for (auto i = 0; i < posNew.size(); ++i) {
+		auto &posOrg = dynObj.mMeshData[iMeshIndex].mPositions;
+		auto &nrmOrg = dynObj.mMeshData[iMeshIndex].mNormals;
+
+		const size_t numVertices = posOrg.size();
+		assert(nrmOrg.size() == numVertices);
+
+		std::vector<glm::vec3> posNew(numVertices), nrmNew(numVertices);
+		
+		for (auto i = 0; i < numVertices; ++i) {
 			auto &aBoneIndices = mesh.mBoneIndices[i];
 			auto &aBoneWeights = mesh.mBoneWeights[i];
 			glm::mat4 boneMat =
@@ -1947,10 +1996,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				dynObj.mBoneMatrices[bonesBaseIndex + aBoneIndices[2]] * aBoneWeights[2] +
 				dynObj.mBoneMatrices[bonesBaseIndex + aBoneIndices[3]] * aBoneWeights[3];
 
-			// TODO: remember problem with storing pos in a vec3 ? dragon?
-			posNew[i] = glm::vec3(boneMat * glm::vec4(posNew[i], 1.0f));
+			posNew[i] = glm::vec3(boneMat * glm::vec4(posOrg[i], 1.0f));	// TODO: afair there was a problem with storing pos in a vec3 in the original raster code? (.w != 1) dragon?
+
+			//glm::mat3 nrmMatrix = glm::mat3(glm::inverse(glm::transpose(boneMat)));
+			//nrmNew[i] = glm::normalize(nrmMatrix * glm::normalize(nrmOrg[i]));
+
+			glm::mat4 nrmMatrix = glm::inverse(glm::transpose(boneMat));
+			nrmNew[i] = glm::normalize(glm::vec3(nrmMatrix * glm::vec4(glm::normalize(nrmOrg[i]), 0)));
 		}
-		return posNew;
+
+		return std::make_tuple(std::move(posNew), std::move(nrmNew));
 	}
 
 	std::vector<glm::vec3> calc_new_mesh_positions_for_testing_only(std::vector<glm::vec3> &posOrg) {
@@ -1972,6 +2027,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		return posNew;
+	}
+
+	void update_normals_buffer_for_animated_object(dynamic_object &dynObj, std::vector<glm::vec3> &normals, gvk::window::frame_id_t fif) {
+		// normals-offset per mesh
+		uint32_t cnt = 0;
+		std::vector<uint32_t> nrmOff;
+		for (auto &mesh : dynObj.mMeshData) {
+			nrmOff.push_back(cnt);
+			cnt += static_cast<uint32_t>(mesh.mPositions.size());
+		}
+
+		// sanity check		
+		if (normals.size() != cnt) {
+			throw avk::runtime_error("update_normals_buffer_for_animated_object sanity check failed !");
+		}
+
+		mRtAnimObjNormalsBuffer[fif]		->fill(normals.data(), 0, 0, normals.size() * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjNormalsOffsetBuffer[fif]	->fill(nrmOff.data(),  0, 0, nrmOff.size()  * sizeof(uint32_t),  avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 	}
 
 	void update_acceleration_structures_test() {
@@ -2659,6 +2732,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mAmbientLightIntensity	= glm::vec4(mAmbLight.col       * mAmbLight.boost, 0.f);
 		pushc.mMaxRayLength				= glm::distance(mSceneData.mBoundingBox.min, mSceneData.mBoundingBox.max); // use scene BB diagonal as max ray length
 		pushc.mNumSamples				= mRtSamplesPerPixel;
+		pushc.mAnimObjFirstMeshId		= static_cast<int>(mDynObjects[mMovingObject.moverId].mRtCustomIndexBase);
+		pushc.mAnimObjNumMeshes			= static_cast<int>((mMovingObject.enabled && mDynObjects[mMovingObject.moverId].mIsAnimated) ? mDynObjects[mMovingObject.moverId].mMeshData.size() : 0);
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -4413,7 +4488,10 @@ private: // v== Member variables ==v
 	avk::buffer mRtMaterialIndexBuffer;
 	avk::buffer mRtPixelOffsetBuffer;
 	int mRtSamplesPerPixel = 1;
-	std::vector<avk::geometry_instance> mAllGeometryInstances;			// all geometry instances in the current TLAS
+	std::vector<avk::geometry_instance> mAllGeometryInstances;					// all geometry instances in the current TLAS
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsBuffer;			// one normals buffer for *all* meshes of the current animated object
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsOffsetBuffer;	// start index of first normal in above buffer for each mesh of the current animated object
+	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjNormalsBufferView;		// for uniform_texel_buffer
 #endif
 
 };

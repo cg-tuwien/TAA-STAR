@@ -60,6 +60,8 @@
 	vec4 mAmbientLightIntensity;																					\
 	float mMaxRayLength;																							\
 	int  mNumSamples;																								\
+	int  mAnimObjFirstMeshId;																						\
+	int  mAnimObjNumMeshes;																							\
 }
 
 

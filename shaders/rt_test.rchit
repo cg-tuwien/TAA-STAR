@@ -17,7 +17,10 @@ layout(set = 0, binding = 2) uniform usamplerBuffer indexBuffers[];     // one i
 layout(set = 0, binding = 3) uniform samplerBuffer  texCoordsBuffers[]; // ditto, entries are vec2  
 layout (std430, set = 0, binding = 4) readonly buffer MaterialIndexBuffer { uint materialIndices[]; };
 layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = 6) uniform samplerBuffer  normalsBuffers[]; // ditto, entries are vec3
+layout(set = 0, binding = 6) uniform samplerBuffer  normalsBuffers[];        // entries are vec3
+//layout (std430, set = 0, binding = 8) readonly buffer AnimObjNormalsBuffer       { vec3 animObjNormals[]; }; // contains normals of all meshes of current anim object
+layout (set = 0, binding = 8) uniform samplerBuffer animObjNormals; // contains normals of all meshes of current anim object
+layout (std430, set = 0, binding = 9) readonly buffer AnimObjNormalsOffsetBuffer { uint animObjNrmOff[];  }; // .[meshIndex] = start index in animObjNormals[] for mesh meshIndex of current anim object
 
 hitAttributeEXT vec2 bary2;
 
@@ -95,9 +98,21 @@ void main()
 
     // simple light calculation
     // we only support one directional light here (+ ambient)
-    vec3 n0 = texelFetch(normalsBuffers[meshgroupId], indices.x).xyz;
-    vec3 n1 = texelFetch(normalsBuffers[meshgroupId], indices.y).xyz;
-    vec3 n2 = texelFetch(normalsBuffers[meshgroupId], indices.z).xyz;
+
+    // get normal - this works different for animated objects
+    bool isAnimObject = meshgroupId >= pushConstants.mAnimObjFirstMeshId && meshgroupId < (pushConstants.mAnimObjFirstMeshId + pushConstants.mAnimObjNumMeshes);
+    vec3 n0,n1,n2;
+    if (isAnimObject) {
+        int meshIndex = meshgroupId - pushConstants.mAnimObjFirstMeshId;
+        ivec3 newIndices = indices + int(animObjNrmOff[meshIndex]);
+        n0 = texelFetch(animObjNormals, newIndices.x).xyz;
+        n1 = texelFetch(animObjNormals, newIndices.y).xyz;
+        n2 = texelFetch(animObjNormals, newIndices.z).xyz;
+    } else {
+        n0 = texelFetch(normalsBuffers[meshgroupId], indices.x).xyz;
+        n1 = texelFetch(normalsBuffers[meshgroupId], indices.y).xyz;
+        n2 = texelFetch(normalsBuffers[meshgroupId], indices.z).xyz;
+    }
     vec3 normalOS = normalize(n0 * barycentrics.x + n1 * barycentrics.y + n2 * barycentrics.z);
     vec3 normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
 
