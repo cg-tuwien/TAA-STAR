@@ -31,85 +31,6 @@
 // set working directory to path of executable (necessary if taa.vcproj.user is misconfigured or newly created)
 #define SET_WORKING_DIRECTORY 1
 
-/* TODO:
-
-	raytracing:
-		using separate, duplicated index/vertex buffers (and others) for now... need to extend some avk functions, esp. for AS building
-		add subpixel jittering so taa can work on raytraced image? do we need that actually?
-		animated objects?
-		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
-		use main shadow settings to enable/disable raytraced shadows
-		lighting looks different from raster version in test scene?
-		do normal mapping
-		dark spots in anim-models are self-shadows.. need very high tmin
-
-		ok, fixed:
-			sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
-				(this was first experienced after the "fix" of setting mRtCustomIndexBase for animobjfirstmeshid)
-
-				Frame 25734, fif 0 before anim TLAS-Update
-				Frame 25734, fif 0 after anim TLAS-Update
-				Frame 25734, fif 0 TLAS-Rebuild
-				Frame 25735, fif 1 before anim TLAS-Update
-				*crash*
-				-> anim update BEFORE TLAS rebuild??
-
-
-	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
-
-	ok - move any buffer updates from update() to render()! Update can be called for fif, if previous (same) fif is still executing!
-
-	- frustum culling notes:					startup view/view at park (Emerald Square, no shadows, taa on)
-		- before separate scene data:			29/42 ms
-			per-fif buffers: same
-			host_coherent instead of device:	31/45
-		- with first version cpu culling:		10.5/35		(dev buffers)
-												10.8/37		(host-coherent buffers)
-		- second version:						~same results
-		- first version GPU culling:            11/36 (but now ~same with CPU - due to new/changed buffer setup?)
-
-
-	ok - avoid necessity of re-recording command buffers with culling (use vkCmdDrawIndexedIndirectCount)
-
-	- shadows: need backface culling disabled - why? something to do with upside-down shadow camera?
-
-	- Performance! Esp. w/ shadows!
-	  Note: shadows of transparent obj. consumes much time, but NOT due to sampling diff. texture (diff=only ~2ms at ES park) ! It's just the amount of additional objects
-
-	ok Shadows: remove manual bias, add polygon offsets
-
-	- cleanup TODO list ;-)   remove obsolete stuff, add notes from scratchpads
-
-	ok - do on-GPU visibility culling?
-
-	- make mDynObjectInstances (so we can have more than one instance of a model - need to move prevTransform etc. there)
-
-	- TAAU: WHY subtract jitter instead of add
-	- TAAU: with 4x upsampling and 4 samples -> why are there no "holes" in history? (because hist is cleared to full image?)
-	- TAAU: still some bugs? examine sponza lionhead border with 4xup
-
-	- soccerball model is badly reduced, has some holes
-
-	- moving objs with more than one mesh/material
-
-	- when using deferred shading - any point in using a compute shader for the lighting pass ?
-
-	- motion vectors problems, like: object coming into view from behind an obstacle. tags?
-
-	- is there any point to keep using 2 render-subpasses in forward rendering?
-
-	- recheck lighting, esp. w.r.t. twosided materials
-
-	- fix changed lighting flags in deferred shader
-
-	- shadows?
-
-	- need different alpha thresholds for blending/not blending
-
-	NOTES:
-	- transparency pass without blending isn't bad either - needs larger alpha threshold ~0.5
-*/
-
 #define SCENE_DATA_BUFFER_ON_DEVICE 1
 
 // use fences to avoid processing a frame-in-flight that is still executing - note: this shouldn't be necessary! if it is: is there perhaps a GPU resource update in update()
@@ -1986,7 +1907,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// update normals- and vertex-count buffers for anim object
 		update_normals_buffer_for_animated_object(dynObj, allNewNormals, fif);
-		//context().device().waitIdle(); // FIXME
 	}
 
 	std::tuple<std::vector<glm::vec3>,std::vector<glm::vec3>> calc_new_mesh_positions_and_normals_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {

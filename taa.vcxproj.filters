@@ -204,4 +204,7 @@
       <Filter>assets\images</Filter>
     </Image>
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="todo.txt" />
+  </ItemGroup>
 </Project>
