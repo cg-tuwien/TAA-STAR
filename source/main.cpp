@@ -41,7 +41,19 @@
 		use main shadow settings to enable/disable raytraced shadows
 		lighting looks different from raster version in test scene?
 		do normal mapping
-		sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
+		dark spots in anim-models are self-shadows.. need very high tmin
+
+		ok, fixed:
+			sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
+				(this was first experienced after the "fix" of setting mRtCustomIndexBase for animobjfirstmeshid)
+
+				Frame 25734, fif 0 before anim TLAS-Update
+				Frame 25734, fif 0 after anim TLAS-Update
+				Frame 25734, fif 0 TLAS-Rebuild
+				Frame 25735, fif 1 before anim TLAS-Update
+				*crash*
+				-> anim update BEFORE TLAS rebuild??
+
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 
@@ -1947,6 +1959,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// update TLAS
+		// !be sure that at this point the TLAS is built including the current dynObj! -> otherwise may lose device
+		//PRINT_DEBUGMARK("before anim TLAS-Update");
 		mSceneData.mTLASs[fif]->update(mAllGeometryInstances, {}, avk::sync::with_barriers(
 			gvk::context().main_window()->command_buffer_lifetime_handler(),
 			// Sync before building the TLAS:
@@ -1967,6 +1981,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				);
 			}
 		));
+		//PRINT_DEBUGMARK("after anim TLAS-Update");
 
 
 		// update normals- and vertex-count buffers for anim object
@@ -3945,8 +3960,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if ENABLE_RAYTRACING
 		// after updating bone matrices!
 		// update the ray tracing acceleration structures if necessary
-		if (mDoRayTraceUpdateTest) update_bottom_level_acceleration_structures();
-		if (mDoRayTraceTest) update_top_level_acceleration_structure();
+		if (mDoRayTraceTest) update_top_level_acceleration_structure();				// first! - rebuild TLAS if dynObj was changed!
+		if (mDoRayTraceUpdateTest) update_bottom_level_acceleration_structures();	// second! - will only update TLAS due to AABB changes (and that might go away)
 #endif
 
 		#if RERECORD_CMDBUFFERS_ALWAYS
