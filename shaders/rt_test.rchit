@@ -87,14 +87,20 @@ void main()
     uint matIndex = materialIndices[meshgroupId];
 
     // cast a shadow ray
-    vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-    vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
-    //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-    uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-    uint cullMask = 0xff;
-    float tmin = 0.001;
-    float tmax = pushConstants.mMaxRayLength; //100.0;
-    traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
+    float shadowFactor;
+    if ((pushConstants.mDoShadows & 0x01) != 0) {
+        vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+        vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
+        //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+        uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+        uint cullMask = (pushConstants.mDoShadows & 0x02) != 0 ? RAYTRACING_CULLMASK_OPAQUE | RAYTRACING_CULLMASK_TRANSPARENT : RAYTRACING_CULLMASK_OPAQUE;
+        float tmin = 0.001;
+        float tmax = pushConstants.mMaxRayLength; //100.0;
+        traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
+        shadowFactor = 1.0 - SHADOW_OPACITY * shadowHitValue;
+    } else {
+        shadowFactor = 1.0;
+    }
 
     // simple light calculation
     // we only support one directional light here (+ ambient)
@@ -132,7 +138,6 @@ void main()
     vec3 toLightWS = normalize(-pushConstants.mLightDir.xyz);
     vec3 toEyeWS   = -gl_WorldRayDirectionEXT;
     vec3 diffAndSpec = dirLightIntensity * calc_blinn_phong_contribution(toLightWS, toEyeWS, normalWS, diff, spec, shininess, twoSided);
-    float shadowFactor = 1.0 - SHADOW_OPACITY * shadowHitValue;
 	vec4 blinnPhongColor = vec4(vec3(ambientIllumination + emissive + shadowFactor * diffAndSpec), 1.0);
 
     hitValue = blinnPhongColor.rgb;

@@ -24,6 +24,8 @@
 // enable raytracing?
 #define ENABLE_RAYTRACING 1
 #define RAYTRACING_MAX_SAMPLES_PER_PIXEL 32
+#define RAYTRACING_CULLMASK_OPAQUE      0x01
+#define RAYTRACING_CULLMASK_TRANSPARENT 0x02
 
 // max. bones for animations
 #define MAX_BONES	114

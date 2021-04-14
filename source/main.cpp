@@ -227,6 +227,7 @@ class wookiee : public gvk::invokee
 		int  mNumSamples;
 		int  mAnimObjFirstMeshId;
 		int  mAnimObjNumMeshes;
+		uint32_t mDoShadows;		// bit 0: general shadows, bit 1: shadows of transp. objs
 		// pad?
 	};
 
@@ -348,7 +349,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	bool mStartCaptureEarly = false;
 
 	bool mDoRayTraceTest = true; // false;
-	bool mDoRayTraceUpdateTest = true;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -1567,6 +1567,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto geoInstance = context().create_geometry_instance(blas);
 				geoInstance.set_transform_column_major(to_array(inst_data.modelMatrix));
 				geoInstance.set_custom_index(iMg);	// custom index = meshgroup id
+				geoInstance.set_mask(mg.hasTransparency ? RAYTRACING_CULLMASK_TRANSPARENT : RAYTRACING_CULLMASK_OPAQUE);
 				if (mg.hasTransparency) geoInstance.force_non_opaque();
 				if (mg.isTwoSided)      geoInstance.disable_culling();
 				mSceneData.mGeometryInstances.push_back(std::move(geoInstance));
@@ -1788,6 +1789,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				auto geoInstance = context().create_geometry_instance(mesh.mBLAS);
 				geoInstance.set_transform_column_major(to_array(dynObj.mMovementMatrix_in_AS * tform));
 				geoInstance.set_custom_index(dynObj.mRtCustomIndexBase + part.mMeshIndex);
+				geoInstance.set_mask(RAYTRACING_CULLMASK_OPAQUE);
 				mAllGeometryInstances.push_back(std::move(geoInstance));
 			}
 
@@ -2669,6 +2671,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mNumSamples				= mRtSamplesPerPixel;
 		pushc.mAnimObjFirstMeshId		= static_cast<int>(mDynObjects[mMovingObject.moverId].mRtCustomIndexBase);
 		pushc.mAnimObjNumMeshes			= static_cast<int>((mMovingObject.enabled && mDynObjects[mMovingObject.moverId].mIsAnimated) ? mDynObjects[mMovingObject.moverId].mMeshData.size() : 0);
+		pushc.mDoShadows				= (mShadowMap.enable ? 0x01 : 0x00) | (mShadowMap.enableForTransparency ? 0x02 : 0x00);
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -3037,14 +3040,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				if (CollapsingHeader("Rendering")) {
+#if ENABLE_RAYTRACING
+					Checkbox("Ray trace", &mDoRayTraceTest);
+					SameLine();
+					if (InputIntW(80, "spp##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
+#endif
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
-				if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
-				HelpMarker("When disabled, simple alpha-testing is used.");
-				PushItemWidth(60);
-				InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
-				PopItemWidth();
-				SameLine();
-				Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
+					if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
+					HelpMarker("When disabled, simple alpha-testing is used.");
+					PushItemWidth(60);
+					InputFloat("lod bias", &mLodBias, 0.f, 0.f, "%.1f");
+					PopItemWidth();
+					SameLine();
+					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
 					if (Button("Re-record commands")) invalidate_command_buffers();
 				}
@@ -3172,12 +3180,6 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 					Checkbox("Regen.scene buffers", &mSceneData.mRegeneratePerFrame);
 					Checkbox("Cull view frustum",   &mSceneData.mCullViewFrustum);
-#if ENABLE_RAYTRACING
-					Checkbox("Ray trace test", &mDoRayTraceTest);
-					SameLine();
-					if (InputIntW(80, "spp#RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
-					Checkbox("RT update test", &mDoRayTraceUpdateTest);
-#endif
 
 					if (rdoc::active()) {
 						Separator();
@@ -3880,8 +3882,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if ENABLE_RAYTRACING
 		// after updating bone matrices!
 		// update the ray tracing acceleration structures if necessary
-		if (mDoRayTraceTest) update_top_level_acceleration_structure();				// first! - rebuild TLAS if dynObj was changed!
-		if (mDoRayTraceUpdateTest) update_bottom_level_acceleration_structures();	// second! - will only update TLAS due to AABB changes (and that might go away)
+		if (mDoRayTraceTest) {
+			update_top_level_acceleration_structure();		// first! - rebuild TLAS if dynObj was changed!
+			update_bottom_level_acceleration_structures();	// second! - will only update TLAS due to AABB changes (and that might go away)
+		}
 #endif
 
 		#if RERECORD_CMDBUFFERS_ALWAYS

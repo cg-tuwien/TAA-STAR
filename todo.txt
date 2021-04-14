@@ -5,10 +5,11 @@ TODOs:
 		add subpixel jittering so taa can work on raytraced image? do we need that actually?
 		ok - animated objects?
 		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
-		use main shadow settings to enable/disable raytraced shadows
+		ok - use main shadow settings to enable/disable raytraced shadows
 		lighting looks different from raster version in test scene?
 		do normal mapping
 		dark spots in anim-models are self-shadows.. need very high tmin
+		refactor tlas/blas rebuilding
 
 		ok, fixed:
 			sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
