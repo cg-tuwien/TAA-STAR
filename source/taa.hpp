@@ -55,7 +55,8 @@ class taa : public gvk::invokee
 		float    mVelBasedAlphaMax			= 0.2f;
 		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
-		// float pad1;
+		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
+		float pad1,pad2,pad3;
 
 		// -- aligned again here
 		glm::vec4 mDebugMask				= glm::vec4(1,1,1,0);
@@ -235,32 +236,21 @@ public:
 
 	// Store pointers to some resources passed from class wookiee::initialize(), 
 	// and also create mHistoryImages, and mResultImages:
-	template <typename SRCCOLOR, typename SRCD, typename SRCVELOCITY>
-	void set_source_image_views(glm::uvec2 targetResolution, SRCCOLOR& aSourceColorImageViews, SRCD& aSourceDepthImageViews, SRCVELOCITY& aSourceVelocityImageViews)
+	void set_source_image_views(
+		glm::uvec2 targetResolution,
+		std::array<avk::image_view_t*, CF>& aSourceColorImageViews,
+		std::array<avk::image_view_t*, CF>& aSourceDepthImageViews,
+		std::array<avk::image_view_t*, CF>& aSourceVelocityImageViews,
+		std::array<avk::image_view_t*, CF>& aSourceMatIdImageViews)
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
 
 		for (size_t i = 0; i < CF; ++i) {
-			// Store pointers to the source color result images
-			if constexpr (std::is_pointer<typename SRCCOLOR::value_type>::value) {
-				mSrcColor[i] = aSourceColorImageViews[i];
-			} else {
-				mSrcColor[i] = aSourceColorImageViews[i];
-			}
-
-			// Store pointers to the source depth images
-			if constexpr (std::is_pointer<typename SRCD::value_type>::value) {
-				mSrcDepth[i] = aSourceDepthImageViews[i];
-			} else {
-				mSrcDepth[i] = aSourceDepthImageViews[i];
-			}
-
-			// Store pointers to the source velocity result images
-			if constexpr (std::is_pointer<typename SRCVELOCITY::value_type>::value) {
-				mSrcVelocity[i] = aSourceVelocityImageViews[i];
-			} else {
-				mSrcVelocity[i] = aSourceVelocityImageViews[i];
-			}
+			
+			mSrcColor[i]	= aSourceColorImageViews[i];	// Store pointers to the source color result images
+			mSrcDepth[i]	= aSourceDepthImageViews[i];	// Store pointers to the source depth images
+			mSrcVelocity[i]	= aSourceVelocityImageViews[i];	// Store pointers to the source velocity images
+			mSrcMatId[i]	= aSourceMatIdImageViews[i];	// Store pointers to the source material id images
 
 
 			//auto w = mSrcColor[i]->get_image().width();
@@ -299,6 +289,12 @@ public:
 			);
 			rdoc::labelImage(mPostProcessImages[i]->get_image().handle(), "taa.mPostProcessImages", i);
 			layoutTransitions.emplace_back(std::move(mPostProcessImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
+			mSegmentationImages[i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_SEGMASK, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mSegmentationImages[i]->get_image().handle(), "taa.mSegmentationImages", i);
+			layoutTransitions.emplace_back(std::move(mSegmentationImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
 			mInputResolution = glm::uvec2(mSrcColor[0]->get_image().width(), mSrcColor[0]->get_image().height());
 			mOutputResolution = targetResolution;
@@ -427,6 +423,7 @@ public:
 						InputFloatW(60, "max", &param.mVelBasedAlphaMax,    0.f, 0.f, "%.2f"); SameLine();
 						InputFloatW(60, "fac", &param.mVelBasedAlphaFactor, 0.f, 0.f, "%.3f");
 
+						CheckboxB32("ray trace augment", &param.mRayTraceAugment);
 
 						if (isPrimary) {
 							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
@@ -435,10 +432,12 @@ public:
 						} else {
 							SetCursorPosY(GetCursorPosY() + checkbox_height);
 						}
+
+						//
 					}
 
 					if (CollapsingHeader("Debug")) {
-						static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "pixel-speed", "screen-result", "history-result", "debug" /* always last */ };
+						static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "pixel-speed", "screen-result", "history-result", "seg mask", "debug" /* "debug" always last */ };
 						CheckboxB32("debug##show debug", &param.mDebugToScreenOutput);
 						SameLine();
 						Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
@@ -566,18 +565,22 @@ public:
 
 		mTaaPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/taa.comp.spv"),
-			descriptor_binding(0, 0, mSampler),
-			descriptor_binding(0, 1, *mSrcColor[0]),
-			descriptor_binding(0, 2, *mSrcDepth[0]),
-			descriptor_binding(0, 3, *mResultImages[0]),
-			descriptor_binding(0, 4, *mSrcDepth[0]),
-			descriptor_binding(0, 5, mResultImages[0]->as_storage_image()),		// output for screen
-			descriptor_binding(0, 6, mDebugImages[0]->as_storage_image()),
-			descriptor_binding(0, 7, *mSrcVelocity[0]),
-			descriptor_binding(0, 8, mHistoryImages[0]->as_storage_image()),	// output for history
-			descriptor_binding(1, 0, mUniformsBuffer[0])
+			descriptor_binding(0,  0, mSampler),
+			descriptor_binding(0,  1, *mSrcColor[0]),
+			descriptor_binding(0,  2, *mSrcDepth[0]),
+			descriptor_binding(0,  3, *mResultImages[0]),
+			descriptor_binding(0,  4, *mSrcDepth[0]),
+			descriptor_binding(0,  5, mResultImages[0]->as_storage_image()),		// output for screen
+			descriptor_binding(0,  6, mDebugImages[0]->as_storage_image()),
+			descriptor_binding(0,  7, *mSrcVelocity[0]),
+			descriptor_binding(0,  8, mHistoryImages[0]->as_storage_image()),	// output for history
+			descriptor_binding(0,  9, mSegmentationImages[0]->as_storage_image()),
+			descriptor_binding(0, 10, (mSrcMatId[0])->as_storage_image()),
+			//descriptor_binding(0, 10, *mSrcMatId[0]),
+			descriptor_binding(1,  0, mUniformsBuffer[0])
 			//push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
+
 
 		mSharpenerPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/sharpen.comp.spv"),
@@ -879,16 +882,19 @@ public:
 			// Apply Temporal Anti-Aliasing:
 			cmdbfr->bind_pipeline(const_referenced(mTaaPipeline));
 			cmdbfr->bind_descriptors(mTaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-				descriptor_binding(0, 0, mSampler),
-				descriptor_binding(0, 1, *mSrcColor[inFlightIndex]),							// -> shader: uCurrentFrame
-				descriptor_binding(0, 2, *mSrcDepth[inFlightIndex]),							// -> shader: uCurrentDepth
-				descriptor_binding(0, 3, *mHistoryImages[inFlightLastIndex]),					// -> shader: uHistoryFrame
-				descriptor_binding(0, 4, *mSrcDepth[inFlightLastIndex]),						// -> shader: uHistoryDepth
-				descriptor_binding(0, 5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResultScreen
-				descriptor_binding(0, 6, mDebugImages[inFlightIndex]->as_storage_image()),		// -> shader: uDebug
-				descriptor_binding(0, 7, *mSrcVelocity[inFlightIndex]),							// -> shader: uCurrentVelocity
-				descriptor_binding(0, 8, mHistoryImages[inFlightIndex]->as_storage_image()),	// -> shader: uResultHistory
-				descriptor_binding(1, 0, mUniformsBuffer[inFlightIndex])
+				descriptor_binding(0,  0, mSampler),
+				descriptor_binding(0,  1, *mSrcColor[inFlightIndex]),								// -> shader: uCurrentFrame
+				descriptor_binding(0,  2, *mSrcDepth[inFlightIndex]),								// -> shader: uCurrentDepth
+				descriptor_binding(0,  3, *mHistoryImages[inFlightLastIndex]),						// -> shader: uHistoryFrame
+				descriptor_binding(0,  4, *mSrcDepth[inFlightLastIndex]),							// -> shader: uHistoryDepth
+				descriptor_binding(0,  5, mResultImages[inFlightIndex]->as_storage_image()),		// -> shader: uResultScreen
+				descriptor_binding(0,  6, mDebugImages[inFlightIndex]->as_storage_image()),			// -> shader: uDebug
+				descriptor_binding(0,  7, *mSrcVelocity[inFlightIndex]),							// -> shader: uCurrentVelocity
+				descriptor_binding(0,  8, mHistoryImages[inFlightIndex]->as_storage_image()),		// -> shader: uResultHistory
+				descriptor_binding(0,  9, mSegmentationImages[inFlightIndex]->as_storage_image()),	// -> shader: uSegMask
+				descriptor_binding(0, 10, (mSrcMatId[inFlightIndex])->as_storage_image()),			// -> shader: uCurrentMaterial
+				//descriptor_binding(0, 10, *mSrcMatId[inFlightIndex]),								// -> shader: uCurrentMaterial
+				descriptor_binding(1,  0, mUniformsBuffer[inFlightIndex])
 				}));
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
@@ -1020,6 +1026,7 @@ public:
 			iniWriteBool32	(ini, sec, "mVelBasedAlpha",			param.mVelBasedAlpha);
 			iniWriteFloat	(ini, sec, "mVelBasedAlphaMax",			param.mVelBasedAlphaMax);
 			iniWriteFloat	(ini, sec, "mVelBasedAlphaFactor",		param.mVelBasedAlphaFactor);
+			iniWriteBool32	(ini, sec, "mRayTraceAugment",			param.mRayTraceAugment);
 		}
 
 		sec = "TAA_Primary";
@@ -1088,6 +1095,10 @@ public:
 			iniReadFloat	(ini, sec, "mDebugScale",				param.mDebugScale);
 			iniReadBool32	(ini, sec, "mDebugCenter",				param.mDebugCenter);
 			iniReadBool32	(ini, sec, "mDebugToScreenOutput",		param.mDebugToScreenOutput);
+			iniReadBool32	(ini, sec, "mVelBasedAlpha",			param.mVelBasedAlpha);
+			iniReadFloat	(ini, sec, "mVelBasedAlphaMax",			param.mVelBasedAlphaMax);
+			iniReadFloat	(ini, sec, "mVelBasedAlphaFactor",		param.mVelBasedAlphaFactor);
+			iniReadBool32	(ini, sec, "mRayTraceAugment",			param.mRayTraceAugment);
 		}
 
 		sec = "TAA_Primary";
@@ -1124,7 +1135,7 @@ private:
 	avk::descriptor_cache mDescriptorCache;
 
 	// Settings, which can be modified via ImGui:
-	bool mTaaEnabled = false; // true;
+	bool mTaaEnabled = true;
 	bool mPostProcessEnabled = true;
 	int mSampleDistribution = 1;
 	bool mResetHistory = false;
@@ -1133,12 +1144,14 @@ private:
 	std::array<avk::image_view_t*, CF> mSrcColor;
 	std::array<avk::image_view_t*, CF> mSrcDepth;
 	std::array<avk::image_view_t*, CF> mSrcVelocity;
+	std::array<avk::image_view_t*, CF> mSrcMatId;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
 	std::array<avk::image_view, CF> mTempImages;
 	std::array<avk::image_view, CF> mDebugImages;
 	std::array<avk::image_view, CF> mPostProcessImages;
 	std::array<avk::image_view, CF> mHistoryImages;			// use a separate history buffer for now, makes life easier..
+	std::array<avk::image_view, CF> mSegmentationImages;
 
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;

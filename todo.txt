@@ -13,7 +13,7 @@ TODOs:
 		determine mip level for texture sampling? -> see papers "Improved Shader and Texture Level of Detail Using Ray Cones" and "Texture Level of Detail Strategies for Real-Time Ray Tracing"
 		is it really necessary to update TLAS after updating BLAS?
 
-
+	test scene:	normal mapping wrong? (models have no proper tangents/bitangents?)
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!
 

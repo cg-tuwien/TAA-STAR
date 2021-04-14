@@ -348,7 +348,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	int mCaptureFramesLeft = 0;
 	bool mStartCaptureEarly = false;
 
-	bool mDoRayTraceTest = true; // false;
+	bool mDoRayTraceTest = false;
 
 	bool mFlipTexturesInLoader	= false;
 	bool mFlipUvWithAssimp		= false;
@@ -681,7 +681,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto depthAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
-			auto matIdAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			auto matIdAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment | image_usage::general_storage_image);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto velocityAttachment = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_VELOCITY, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
 			velocityAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
@@ -701,10 +701,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			// Before we are attaching the images to a framebuffer, we have to "wrap" them with an image view:
 			auto colorAttachmentView = context().create_image_view(std::move(colorAttachment));
-			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
 			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
 			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
 			auto velocityAttachmentView = context().create_image_view(std::move(velocityAttachment));
+			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
+			depthAttachmentView.enable_shared_ownership(); // set all that are used in taa to shared ownership too
+			matIdAttachmentView.enable_shared_ownership();
+			velocityAttachmentView.enable_shared_ownership();
 #if (!FORWARD_RENDERING)
 			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
 #endif
@@ -767,12 +770,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mFramebuffer[i] = context().create_framebuffer(
 				shared(mRenderpass),
 				shared(   colorAttachmentView),
-				owned(    depthAttachmentView),
+				shared(   depthAttachmentView),
 #if (!FORWARD_RENDERING)
 				owned(    uvNrmAttachmentView),
 #endif
-				owned(    matIdAttachmentView),
-				owned(    velocityAttachmentView)
+				shared(   matIdAttachmentView),
+				shared(   velocityAttachmentView)
 			);
 			mFramebuffer[i]->initialize_attachments(sync::wait_idle(true));
 
@@ -3511,19 +3514,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		std::array<image_view_t*, cConcurrentFrames> srcDepthImages;
 //		std::array<image_view_t*, cConcurrentFrames> srcUvNrmImages;
-//		std::array<image_view_t*, cConcurrentFrames> srcMatIdImages;
+		std::array<image_view_t*, cConcurrentFrames> srcMatIdImages;
 		std::array<image_view_t*, cConcurrentFrames> srcColorImages;
 		std::array<image_view_t*, cConcurrentFrames> srcVelocityImages;
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
 			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1).get();
-//			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2);
-//			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(3);
+//			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2).get();
+			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 2 : 3).get();
 			srcColorImages[i]    = &mFramebuffer[i]->image_view_at(0).get();
 			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4).get();
 		}
 
-		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages);
+		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages, srcMatIdImages);
 		current_composition()->add_element(mAntiAliasing);
 
 		init_debug_stuff();

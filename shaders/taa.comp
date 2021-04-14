@@ -21,15 +21,18 @@
 // NOTE: if tonemapping is used: history buffer always contains tonemapped samples
 
 // ###### SRC/DST IMAGES #################################
-layout(set = 0, binding = 0) uniform sampler uSampler;
-layout(set = 0, binding = 1) uniform texture2D uCurrentFrame;
-layout(set = 0, binding = 2) uniform texture2D uCurrentDepth;
-layout(set = 0, binding = 7) uniform texture2D uCurrentVelocity;
-layout(set = 0, binding = 3) uniform texture2D uHistoryFrame;
-layout(set = 0, binding = 4) uniform texture2D uHistoryDepth;
-layout(set = 0, binding = 5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultScreen;
-layout(set = 0, binding = 8, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultHistory;
-layout(set = 0, binding = 6, rgba16f) writeonly uniform restrict image2D uDebug;
+layout(set = 0, binding =  0) uniform sampler uSampler;
+layout(set = 0, binding =  1) uniform texture2D uCurrentFrame;
+layout(set = 0, binding =  2) uniform texture2D uCurrentDepth;
+layout(set = 0, binding =  7) uniform texture2D uCurrentVelocity;
+//layout(set = 0, binding = 10) uniform texture2D uCurrentMaterial;
+layout(set = 0, binding = 10, r32ui) readonly uniform restrict uimage2D uCurrentMaterial;
+layout(set = 0, binding =  3) uniform texture2D uHistoryFrame;
+layout(set = 0, binding =  4) uniform texture2D uHistoryDepth;
+layout(set = 0, binding =  5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultScreen;
+layout(set = 0, binding =  8, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultHistory;
+layout(set = 0, binding =  9, TAA_SHADER_FORMAT_SEGMASK) writeonly uniform restrict uimage2D uSegMask;
+layout(set = 0, binding =  6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
 // texelFetch is undefined when sampling outside the texture, so always clamp
@@ -70,8 +73,8 @@ struct Parameters {
 	bool  mVelBasedAlpha;			// let velocity influence alpha
 	float mVelBasedAlphaMax;
 	float mVelBasedAlphaFactor;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
-
-	//float pad1;
+	bool mRayTraceAugment;			// ray tracing augmentation
+	float pad1,pad2,pad3;
 
 	// -- aligned again here
 	vec4 mDebugMask;
@@ -541,6 +544,26 @@ vec4 noise(vec2 uv) {
 	return sRand * params.mNoiseFactor;
 }
 
+uint calc_segmentation_value(ivec2 iuv, vec2 historyUv, float historyDepth) {
+	// out of screen disocclusion?
+	if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
+		return 1;
+	}
+
+	// TODO: make sure velocity samples are all valid!
+	// should we just use the pixel speed value from getHistoryPosition?
+
+	// TODO: use mesh ids instead of material ids ?
+	// TODO: precalc derivatives in a separate compute pass, instead of sampling neighbourhood for every pixel here?
+
+	// calc material id "derivatives"
+	//float x = texture(sampler2D(uCurrentMaterial, uSampler), vec2(iuv + 0.5)).r;
+	uint x = imageLoad(uCurrentMaterial, iuv).r;
+	gDebugValue = vec4(x,0,0,0);
+
+	return 0;
+}
+
 // -------------------------------------------------------
 
 // ################## COMPUTE SHADER MAIN ###################
@@ -557,6 +580,8 @@ void main()
 	int paramsIdx = (ubo.splitScreen && iuv.x > ubo.splitX) ? 1 : 0;
 	params = ubo.param[paramsIdx];
 
+	// generate segmentation mask if any of the params require it
+	bool generateSegmentationMask = ubo.param[0].mRayTraceAugment || ubo.param[1].mRayTraceAugment;
 
 	ivec2 iuv_lores = uv_to_tc(uv, textureSize_loRes);
 
@@ -606,6 +631,15 @@ void main()
 	vec3 historyColor = maybe_rgb_to_ycocg(historyRaw.rgb);
 
 	float alpha = params.mAlpha;
+
+	// build segmentation mask
+	uint segMaskValue;
+	if (generateSegmentationMask) {
+		segMaskValue = calc_segmentation_value(iuv, historyUv, expectedHistoryDepth);
+	} else {
+		segMaskValue = 0;
+	}
+
 
 	// ---- history rejection ----
 	// reject out-of-texture history samples
@@ -678,7 +712,7 @@ void main()
 		if (params.mVelBasedAlpha) {
 			float oldAlpha = alpha;
 			alpha = max(alpha, mix(alpha, params.mVelBasedAlphaMax, clamp(pixelSpeed * params.mVelBasedAlphaFactor, 0, 1)));
-			gDebugValue = vec4(alpha, oldAlpha, abs(alpha - oldAlpha), 0);
+			//gDebugValue = vec4(alpha, oldAlpha, abs(alpha - oldAlpha), 0);
 		}
 
 		// dynamic luma weighting - see Timothy Lottes https://www.youtube.com/watch?v=WzpLWzGvFK4&t=18m
@@ -752,6 +786,12 @@ void main()
 		gDebugValue = output_to_screen;
 	} else if (params.mDebugMode == 7) {
 		gDebugValue = output_to_history;
+	} else if (params.mDebugMode == 8) {
+		switch (segMaskValue & 3) {
+			case 0:	gDebugValue = vec4(0,0,1,0); break;	// use TAA
+			case 1:	gDebugValue = vec4(1,0,0,0); break;	// use FXAA
+			case 2:	gDebugValue = vec4(1,1,0,0); break;	// use Ray Tracing
+		}
 	}
 	// else keep current gDebugValue
 
@@ -771,5 +811,7 @@ void main()
 	imageStore(uResultHistory, iuv, output_to_history);
 	imageStore(uResultScreen,  iuv, output_to_screen);
 	imageStore(uDebug,  iuv, gDebugValue);
+
+	if (generateSegmentationMask) imageStore(uSegMask, iuv, uvec4(segMaskValue,0,0,0));
 }
 
