@@ -10,17 +10,9 @@ TODOs:
 		do normal mapping
 		dark spots in anim-models are self-shadows.. need very high tmin
 		refactor tlas/blas rebuilding
+		determine mip level for texture sampling? -> see papers "Improved Shader and Texture Level of Detail Using Ray Cones" and "Texture Level of Detail Strategies for Real-Time Ray Tracing"
+		is it really necessary to update TLAS after updating BLAS?
 
-		ok, fixed:
-			sometimes losing device when updating TLAS in update_bottom_level_acceleration_structures() when switching around models, esp. when activating Dude
-				(this was first experienced after the "fix" of setting mRtCustomIndexBase for animobjfirstmeshid)
-
-				Frame 25734, fif 0 before anim TLAS-Update
-				Frame 25734, fif 0 after anim TLAS-Update
-				Frame 25734, fif 0 TLAS-Rebuild
-				Frame 25735, fif 1 before anim TLAS-Update
-				*crash*
-				-> anim update BEFORE TLAS rebuild??
 
 
 	still problems with slow-mo when capturing frames - use /frame instead of /sec when capturing for now!

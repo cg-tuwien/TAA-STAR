@@ -1849,7 +1849,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		auto fif = context().main_window()->in_flight_index_for_frame();
 
-		// seems like updating the BLASs is not enough, if the changed positions leave the initial AABB -> looks cut off
+		const bool alsoUpdateTLAS = true;
+		// seems like updating the BLASs is not enough, if the changed positions leave the initial AABB -> looks cut off (e.g. dragon, dude)
 		// so update the TLASs afterwards too, then it's fine
 
 		// blas index buffer stays the same, but the vertex buffer needs to be changed   TODO: -> compute shader
@@ -1881,31 +1882,34 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//insert_into(allNewNormals, mesh.mNormals); // just for debugging!
 		}
 
-		// update TLAS
-		// !be sure that at this point the TLAS is built including the current dynObj! -> otherwise may lose device
-		//PRINT_DEBUGMARK("before anim TLAS-Update");
-		mSceneData.mTLASs[fif]->update(mAllGeometryInstances, {}, avk::sync::with_barriers(
-			gvk::context().main_window()->command_buffer_lifetime_handler(),
-			// Sync before building the TLAS:
-			[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage destinationStage, std::optional<avk::read_memory_access> readAccess){
-				assert(avk::pipeline_stage::acceleration_structure_build == destinationStage);
-				assert(!readAccess.has_value() || avk::memory_access::acceleration_structure_read_access == readAccess.value().value());
-				// Wait on all the BLAS builds that happened before (and their memory):
-				commandBuffer.establish_global_memory_barrier_rw(
-					avk::pipeline_stage::acceleration_structure_build, destinationStage,
-					avk::memory_access::acceleration_structure_write_access, readAccess
-				);
-			},
-			[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess){
-				// We want this update to be as efficient/as tight as possible
-				commandBuffer.establish_global_memory_barrier_rw(
-					srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
-					srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
-				);
-			}
-		));
-		//PRINT_DEBUGMARK("after anim TLAS-Update");
-
+		if (alsoUpdateTLAS) {
+			// update TLAS
+			// !be sure that at this point the TLAS is built including the current dynObj! -> otherwise may lose device
+			//PRINT_DEBUGMARK("before anim TLAS-Update");
+			mSceneData.mTLASs[fif]->update(mAllGeometryInstances, {}, avk::sync::with_barriers(
+				gvk::context().main_window()->command_buffer_lifetime_handler(),
+				// Sync before building the TLAS:
+				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage destinationStage, std::optional<avk::read_memory_access> readAccess) {
+					assert(avk::pipeline_stage::acceleration_structure_build == destinationStage);
+					assert(!readAccess.has_value() || avk::memory_access::acceleration_structure_read_access == readAccess.value().value());
+					// Wait on all the BLAS builds that happened before (and their memory):
+					commandBuffer.establish_global_memory_barrier_rw(
+						avk::pipeline_stage::acceleration_structure_build, destinationStage,
+						avk::memory_access::acceleration_structure_write_access, readAccess
+					);
+				},
+				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
+					// We want this update to be as efficient/as tight as possible
+					commandBuffer.establish_global_memory_barrier_rw(
+						srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
+						srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
+					);
+				}
+				));
+			//PRINT_DEBUGMARK("after anim TLAS-Update");
+		} else {
+			context().device().waitIdle(); // FIXME - wait for all BLASs to be rebuilt
+		}
 
 		// update normals- and vertex-count buffers for anim object
 		update_normals_buffer_for_animated_object(dynObj, allNewNormals, fif);

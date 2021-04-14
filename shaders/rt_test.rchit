@@ -86,25 +86,6 @@ void main()
 
     uint matIndex = materialIndices[meshgroupId];
 
-    // cast a shadow ray
-    float shadowFactor;
-    if ((pushConstants.mDoShadows & 0x01) != 0) {
-        vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-        vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
-        //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-        uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsTerminateOnFirstHitEXT;
-        uint cullMask = (pushConstants.mDoShadows & 0x02) != 0 ? RAYTRACING_CULLMASK_OPAQUE | RAYTRACING_CULLMASK_TRANSPARENT : RAYTRACING_CULLMASK_OPAQUE;
-        float tmin = 0.001;
-        float tmax = pushConstants.mMaxRayLength; //100.0;
-        traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
-        shadowFactor = 1.0 - SHADOW_OPACITY * shadowHitValue;
-    } else {
-        shadowFactor = 1.0;
-    }
-
-    // simple light calculation
-    // we only support one directional light here (+ ambient)
-
     // get normal - this works different for animated objects
     bool isAnimObject = meshgroupId >= pushConstants.mAnimObjFirstMeshId && meshgroupId < (pushConstants.mAnimObjFirstMeshId + pushConstants.mAnimObjNumMeshes);
     vec3 n0,n1,n2;
@@ -121,6 +102,26 @@ void main()
     }
     vec3 normalOS = normalize(n0 * barycentrics.x + n1 * barycentrics.y + n2 * barycentrics.z);
     vec3 normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
+
+    // cast a shadow ray
+    float shadowFactor;
+    if ((pushConstants.mDoShadows & 0x01) != 0) {
+        vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+        //origin += normalWS * 0.1; // just testing - this helps a bit against the self-shadows on goblin; however 0.1 seems a bit much for a general offset
+        vec3 direction = normalize(-pushConstants.mLightDir.xyz); // mLightDir is the direction FROM the light source
+        //uint rayFlags = gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+        uint rayFlags = gl_RayFlagsCullBackFacingTrianglesEXT | gl_RayFlagsTerminateOnFirstHitEXT;
+        uint cullMask = (pushConstants.mDoShadows & 0x02) != 0 ? RAYTRACING_CULLMASK_OPAQUE | RAYTRACING_CULLMASK_TRANSPARENT : RAYTRACING_CULLMASK_OPAQUE;
+        float tmin = 0.001;
+        float tmax = pushConstants.mMaxRayLength; //100.0;
+        traceRayEXT(topLevelAS, rayFlags, cullMask, 1 /*sbtRecordOffset*/, 0 /*sbtRecordStride*/, 1 /*missIndex*/, origin, tmin, direction, tmax, 1 /*payload*/);
+        shadowFactor = 1.0 - SHADOW_OPACITY * shadowHitValue;
+    } else {
+        shadowFactor = 1.0;
+    }
+
+    // simple light calculation
+    // we only support one directional light here (+ ambient)
 
     vec4 diffTexColorRGBA  = sample_from_diffuse_texture (matIndex, uv);
 	float specTexValue     = sample_from_specular_texture(matIndex, uv).r;
