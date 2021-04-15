@@ -63,6 +63,7 @@
 	int  mAnimObjFirstMeshId;																						\
 	int  mAnimObjNumMeshes;																							\
 	uint mDoShadows;		/* bit 0: general shadows, bit 1: shadows of transp. objs */							\
+	bool mAugmentTAA;																								\
 }
 
 

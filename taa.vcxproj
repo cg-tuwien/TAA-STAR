@@ -43,6 +43,7 @@
     <ClInclude Include="source\imgui_stdlib.h" />
     <ClInclude Include="source\IniUtil.h" />
     <ClInclude Include="source\InterpolationCurve.hpp" />
+    <ClInclude Include="source\RayTraceCallback.h" />
     <ClInclude Include="source\rdoc_helper.hpp" />
     <ClInclude Include="source\imgui_helper.hpp" />
     <ClInclude Include="source\ShadowMap.hpp" />

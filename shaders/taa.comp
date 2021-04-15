@@ -621,7 +621,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 1,  1))) ) );
 	}
 
-	// normals - TODO
+	// normals - TODO - do we even have them in forward shading?
 
 	// material id "derivative"
 	if ((params.mRayTraceAugmentFlags & 0x10) != 0) {
@@ -648,6 +648,9 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	            + matValue * params.mRayTraceAugment_WMId
 	            + lumValue * params.mRayTraceAugment_WLum;
 	if (total > params.mRayTraceAugment_Thresh) return 2;
+
+	// TODO: take care of bootstrapping - when are the prevframe buffers valid?!
+	// TODO: consider prevoid frame's segmask ("segmask history")
 
 	return 0;
 }

@@ -57,6 +57,7 @@
     <ClInclude Include="source\ShadowMap.hpp" />
     <ClInclude Include="source\BoundingBox.hpp" />
     <ClInclude Include="source\FrustumCulling.hpp" />
+    <ClInclude Include="source\RayTraceCallback.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">

@@ -10,6 +10,7 @@
 #include "rdoc_helper.hpp"
 #include "IniUtil.h"
 #include "shader_cpu_common.h"
+#include "RayTraceCallback.h"
 
 // FidelityFX-CAS
 #include <stdint.h>
@@ -249,7 +250,8 @@ public:
 		std::array<avk::image_view_t*, CF>& aSourceColorImageViews,
 		std::array<avk::image_view_t*, CF>& aSourceDepthImageViews,
 		std::array<avk::image_view_t*, CF>& aSourceVelocityImageViews,
-		std::array<avk::image_view_t*, CF>& aSourceMatIdImageViews)
+		std::array<avk::image_view_t*, CF>& aSourceMatIdImageViews,
+		std::array<avk::image_view_t*, CF>& aRayTracedImageViews)
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
 
@@ -259,6 +261,7 @@ public:
 			mSrcDepth[i]	= aSourceDepthImageViews[i];	// Store pointers to the source depth images
 			mSrcVelocity[i]	= aSourceVelocityImageViews[i];	// Store pointers to the source velocity images
 			mSrcMatId[i]	= aSourceMatIdImageViews[i];	// Store pointers to the source material id images
+			mSrcRayTraced[i]= aRayTracedImageViews[i];
 
 
 			//auto w = mSrcColor[i]->get_image().width();
@@ -322,6 +325,10 @@ public:
 		int dZoomBrd = int(round(w / (96.f * 2.f)));
 		mPostProcessPushConstants.zoomSrcLTWH = { (w - dZoomSrc) / 2, (h - dZoomSrc) / 2, dZoomSrc, dZoomSrc };
 		mPostProcessPushConstants.zoomDstLTWH = { w - dZoomDst - dZoomBrd, dZoomBrd, dZoomDst, dZoomDst };
+	}
+
+	void register_raytrace_callback(RayTraceCallback *callback) {
+		mRayTraceCallback = callback;
 	}
 
 	// Return the result of the GPU timer query:
@@ -935,8 +942,21 @@ public:
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
-
 			auto pLastProducedImageView = &mResultImages[inFlightIndex];
+
+			#if ENABLE_RAYTRACING
+				if (mParameters[0].mRayTraceAugment || mParameters[1].mRayTraceAugment) {
+					// sparse ray trace pixels marked for RTX in segmask
+					// callback main
+					if (mRayTraceCallback) {
+						gvk::context().device().waitIdle(); // FIXME - sync
+						mRayTraceCallback->ray_trace_callback(cmdbfr);
+						gvk::context().device().waitIdle(); // FIXME - sync
+
+						blit_image(mSrcRayTraced[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
+					}
+				}
+			#endif
 
 			if (mSharpener) {
 				cmdbfr->establish_global_memory_barrier(
@@ -1166,6 +1186,11 @@ public:
 		iniReadIVec4	(ini, sec, "zoomDstLTWH",					pp.zoomDstLTWH);
 	}
 
+	avk::image_view * getRayTraceSegMask()    { return &(mSegmentationImages[gvk::context().main_window()->in_flight_index_for_frame()]); }
+	avk::image_view * getRayTraceInputImage() { return &(mResultImages      [gvk::context().main_window()->in_flight_index_for_frame()]); }
+
+	bool needRayTraceAssist() { return mParameters[0].mRayTraceAugment || mParameters[1].mRayTraceAugment; }
+
 private:
 	avk::queue* mQueue;
 	avk::descriptor_cache mDescriptorCache;
@@ -1181,6 +1206,7 @@ private:
 	std::array<avk::image_view_t*, CF> mSrcDepth;
 	std::array<avk::image_view_t*, CF> mSrcVelocity;
 	std::array<avk::image_view_t*, CF> mSrcMatId;
+	std::array<avk::image_view_t*, CF> mSrcRayTraced;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
 	std::array<avk::image_view, CF> mTempImages;
@@ -1236,4 +1262,6 @@ private:
 	float mLastResetHistoryTime = 0.f;
 
 	std::vector<glm::vec2> mDebugSampleOffsets = { {0.f, 0.f} };
+
+	RayTraceCallback *mRayTraceCallback = nullptr;
 };

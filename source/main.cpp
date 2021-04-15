@@ -14,6 +14,7 @@
 #include "BoundingBox.hpp"
 #include "ShadowMap.hpp"
 #include "FrustumCulling.hpp"
+#include "RayTraceCallback.h"
 
 // for implementing/testing new features in gvk/avk, which are not yet merged to master
 // if code doesn't compile for you (although you have pulled the latest master on *both* submodules: gears_vk AND auto_vk), set it to 0
@@ -52,20 +53,19 @@
 #endif
 
 #if ENABLE_RAYTRACING
-#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)	descriptor_binding(0, 0, mMaterialBuffer),							\
-												descriptor_binding(0, 1, mImageSamplers),							\
-												descriptor_binding(0, 2, mRtIndexBuffersArray),						\
-												descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
-												descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
-												descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
-												descriptor_binding(0, 6, mRtNormalsBuffersArray),					\
-												descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
-												descriptor_binding(0, 8, mRtAnimObjNormalsBufferView[fif_]),		\
-												descriptor_binding(0, 9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
-												descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
-												descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
+#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)		descriptor_binding(0, 0, mMaterialBuffer),							\
+													descriptor_binding(0, 1, mImageSamplers),							\
+													descriptor_binding(0, 2, mRtIndexBuffersArray),						\
+													descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
+													descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
+													descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
+													descriptor_binding(0, 6, mRtNormalsBuffersArray),					\
+													descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
+													descriptor_binding(0, 8, mRtAnimObjNormalsBufferView[fif_]),		\
+													descriptor_binding(0, 9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
+													descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
+													descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
 #endif
-
 
 // convenience macros
 #ifdef _DEBUG
@@ -103,7 +103,7 @@ void my_queue_submit_with_existing_fence(avk::queue &q, avk::command_buffer_t& a
 }
 
 
-class wookiee : public gvk::invokee
+class wookiee : public gvk::invokee, public RayTraceCallback
 {
 	// Struct definition for data used as UBO across different pipelines, containing matrices and user input
 	struct matrices_and_user_input
@@ -228,6 +228,7 @@ class wookiee : public gvk::invokee
 		int  mAnimObjFirstMeshId;
 		int  mAnimObjNumMeshes;
 		uint32_t mDoShadows;		// bit 0: general shadows, bit 1: shadows of transp. objs
+		VkBool32 mAugmentTAA;
 		// pad?
 	};
 
@@ -360,6 +361,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		: mQueue{ &aQueue }
 		, mAntiAliasing{ &aQueue }
 	{}
+
+	void ray_trace_callback(avk::command_buffer &cmd) {
+#if ENABLE_RAYTRACING
+		std::cout << "callback...";
+		do_raytrace_test(cmd, gvk::context().main_window()->in_flight_index_for_frame(), true);
+		std::cout << "... done" << std::endl;
+#endif
+	}
 
 	void prepare_matrices_ubo()
 	{
@@ -1680,19 +1689,30 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// create images to render into
+		std::vector<avk::command_buffer> layoutTransitions;
 		auto win = context().main_window();
 		//const auto wdth = win->resolution().x;
 		//const auto hght = win->resolution().y;
 		//const auto frmt = format_from_window_color_buffer(win);
 		const auto wdth = mLoResolution.x;
 		const auto hght = mLoResolution.y;
-		const auto frmt = IMAGE_FORMAT_COLOR;
+		const auto frmt = IMAGE_FORMAT_RAYTRACE;
 		for (decltype(numFif) i = 0; i < numFif; ++i) {
 			auto offscreenImage = context().create_image(wdth, hght, frmt, 1, memory_usage::device, image_usage::general_storage_image);
 			offscreenImage->transition_to_layout({}, sync::with_barriers(win->command_buffer_lifetime_handler()));
 			mRtImageViews[i] = context().create_image_view(owned(offscreenImage));
 			assert((mRtImageViews[i]->config().subresourceRange.aspectMask & vk::ImageAspectFlagBits::eColor) == vk::ImageAspectFlagBits::eColor);
 		}
+		{
+			auto dummySegMask = context().create_image(1, 1, TAA_IMAGE_FORMAT_SEGMASK, 1, memory_usage::device, image_usage::general_storage_image);
+			mRtDummySegMask = context().create_image_view(owned(dummySegMask));
+			layoutTransitions.emplace_back(std::move(mRtDummySegMask->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+		}
+		std::vector<avk::resource_reference<avk::command_buffer_t>> commandBufferReferences;
+		std::transform(std::begin(layoutTransitions), std::end(layoutTransitions), std::back_inserter(commandBufferReferences), [](avk::command_buffer& cb) { return avk::referenced(*cb); });
+		auto fen = mQueue->submit_with_fence(commandBufferReferences);
+		fen->wait_until_signalled();
+
 
 		// create a halton sequence for sample offsets + a buffer for them
 		auto halton = helpers::halton_2_3<RAYTRACING_MAX_SAMPLES_PER_PIXEL>(glm::vec2(1.f));
@@ -1737,8 +1757,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			),
 			context().get_max_ray_tracing_recursion_depth(),
 			push_constant_binding_data{shader_type::ray_generation | shader_type::closest_hit, 0, sizeof(push_constant_data_for_rt)},
-			RAYTRACING_DESCRIPTOR_BINDINGS(0)
-);
+			RAYTRACING_DESCRIPTOR_BINDINGS(0),
+			descriptor_binding(3, 0, mRtImageViews[0]->as_storage_image()),	// when rendering, TASS result image is used
+			descriptor_binding(3, 1, mRtDummySegMask->as_storage_image())	// when rendering, TASS segmask is used
+		);
 		mPipelineRayTrace->print_shader_binding_table_groups();
 
 	}
@@ -2660,14 +2682,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 	}
 
-	void do_raytrace_test(avk::command_buffer &cmd, gvk::window::frame_id_t fif) {
+	void do_raytrace_test(avk::command_buffer &cmd, gvk::window::frame_id_t fif, bool taaAssist) {
 #if ENABLE_RAYTRACING
 		using namespace avk;
 		using namespace gvk;
 
 		cmd->bind_pipeline(const_referenced(mPipelineRayTrace));
 		cmd->bind_descriptors(mPipelineRayTrace->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-			RAYTRACING_DESCRIPTOR_BINDINGS(fif)
+			RAYTRACING_DESCRIPTOR_BINDINGS(fif),
+			descriptor_binding(3, 0, taaAssist ? mAntiAliasing.getRayTraceInputImage()->get().as_storage_image() : mRtImageViews[0]->as_storage_image()),	// when augmenting, TASS result image is used, else this is ignored
+			descriptor_binding(3, 1, taaAssist ? mAntiAliasing.getRayTraceSegMask()   ->get().as_storage_image() : mRtDummySegMask ->as_storage_image())	// when augmenting, TASS segmask is used, else this is ignored
 			}));
 		push_constant_data_for_rt pushc;
 		pushc.mCameraTransform			= mQuakeCam.global_transformation_matrix();
@@ -2679,6 +2703,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mAnimObjFirstMeshId		= static_cast<int>(mDynObjects[mMovingObject.moverId].mRtCustomIndexBase);
 		pushc.mAnimObjNumMeshes			= static_cast<int>((mMovingObject.enabled && mDynObjects[mMovingObject.moverId].mIsAnimated) ? mDynObjects[mMovingObject.moverId].mMeshData.size() : 0);
 		pushc.mDoShadows				= (mShadowMap.enable ? 0x01 : 0x00) | (mShadowMap.enableForTransparency ? 0x02 : 0x00);
+		pushc.mAugmentTAA				= taaAssist ? VK_TRUE : VK_FALSE;
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -2718,7 +2743,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #if ENABLE_RAYTRACING
 		if (mDoRayTraceTest) {
-			do_raytrace_test(commandBuffer, fif);
+			do_raytrace_test(commandBuffer, fif, false);
 			commandBuffer->begin_render_pass_for_framebuffer(firstPipe->get_renderpass(), mFramebuffer[fif]);
 			commandBuffer->next_subpass();
 			commandBuffer->end_render_pass();
@@ -3517,6 +3542,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		std::array<image_view_t*, cConcurrentFrames> srcMatIdImages;
 		std::array<image_view_t*, cConcurrentFrames> srcColorImages;
 		std::array<image_view_t*, cConcurrentFrames> srcVelocityImages;
+		std::array<image_view_t*, cConcurrentFrames> srcRayTracedImages;
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
 			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1).get();
@@ -3524,9 +3550,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 2 : 3).get();
 			srcColorImages[i]    = &mFramebuffer[i]->image_view_at(0).get();
 			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4).get();
+			srcRayTracedImages[i] = &mRtImageViews[i].get();
 		}
 
-		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages, srcMatIdImages);
+		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages, srcMatIdImages, srcRayTracedImages);
+		mAntiAliasing.register_raytrace_callback(this);
 		current_composition()->add_element(mAntiAliasing);
 
 		init_debug_stuff();
@@ -3889,7 +3917,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if ENABLE_RAYTRACING
 		// after updating bone matrices!
 		// update the ray tracing acceleration structures if necessary
-		if (mDoRayTraceTest) {
+		if (mDoRayTraceTest || mAntiAliasing.needRayTraceAssist()) {
 			update_top_level_acceleration_structure();		// first! - rebuild TLAS if dynObj was changed!
 			update_bottom_level_acceleration_structures();	// second! - will only update TLAS due to AABB changes (and that might go away)
 		}
@@ -4427,6 +4455,8 @@ private: // v== Member variables ==v
 
 #if ENABLE_RAYTRACING
 	std::array<avk::image_view, cConcurrentFrames> mRtImageViews;					// target images for ray tracing
+	avk::image_view mRtDummySegMask;
+	avk::image_view mRtDummyInputImg;
 	avk::ray_tracing_pipeline mPipelineRayTrace;
 	std::vector<avk::buffer_view> mRtIndexBuffersArray;
 	std::vector<avk::buffer_view> mRtTexCoordBuffersArray;

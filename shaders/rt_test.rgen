@@ -9,7 +9,9 @@ layout(push_constant) PUSHCONSTANTSDEF_RAYTRACING pushConstants;
 
 layout (std430, set = 0, binding = 7) readonly buffer PixelOffsetBuffer { vec2 pixel_offset[]; };
 layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
-layout(set = 1, binding = 0, rgba8) uniform image2D image;
+layout(set = 1, binding = 0, SHADER_FORMAT_RAYTRACE) uniform image2D image;
+layout(set = 3, binding = 0, TAA_SHADER_OUTPUT_FORMAT)  uniform image2D  taaInput;
+layout(set = 3, binding = 1, TAA_SHADER_FORMAT_SEGMASK) uniform uimage2D taaSegMask;
 
 layout(location = 0) rayPayloadEXT vec3 hitValue; // payload to traceRayEXT
 
@@ -36,6 +38,15 @@ void main()
     //imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.0, 0.0, 0.0, 0.0));
 
     // TODO: better sampling pattern
+
+    if (pushConstants.mAugmentTAA) {
+        //imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(1,0,1,1));
+        uint segMask = imageLoad(taaSegMask, ivec2(gl_LaunchIDEXT.xy)).r & 3;
+        if (segMask != 2) {
+            imageStore(image, ivec2(gl_LaunchIDEXT.xy), imageLoad(taaInput, ivec2(gl_LaunchIDEXT.xy)));
+            return;
+        }
+    }
 
     int numSamples = clamp(pushConstants.mNumSamples, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
     vec3 accumulated = vec3(0);
