@@ -259,7 +259,7 @@ void main()
 	if (transparentPass == SPECCONST_VAL_TRANSPARENT && alpha < uboMatUsr.mUserInput.w) { discard; return; }
 
 	// write material // TODO: better flag specific/problematic materials that require different TAA handling
-	oFragMatId = fs_in.materialIndex;
+	oFragMatId = (fs_in.materialIndex + 1) | (fs_in.movingObjectId != 0 ? 0x80000000 : 0);
 
 	// calculate and write velocity
 	vec3 positionNDC      = fs_in.positionCS.xyz      / fs_in.positionCS.w;

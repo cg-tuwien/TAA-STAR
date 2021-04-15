@@ -56,7 +56,13 @@ class taa : public gvk::invokee
 		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
 		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
-		float pad1,pad2,pad3;
+		uint32_t mRayTraceAugmentFlags		= 0xffffffff;
+		float    mRayTraceAugment_WNrm		= 1.0;				// weight for normals
+		float    mRayTraceAugment_WDpt		= 1.0;				// weight for depth
+		float    mRayTraceAugment_WMId		= 1.0;				// weight for material
+		float    mRayTraceAugment_WLum		= 1.0;				// weight for luminance
+		float    mRayTraceAugment_Thresh	= 1.0;				// threshold for sum of weighted indicators
+		float pad1;
 
 		// -- aligned again here
 		glm::vec4 mDebugMask				= glm::vec4(1,1,1,0);
@@ -100,8 +106,10 @@ class taa : public gvk::invokee
 		VkBool32    mUpsampling;
 		VkBool32    mBypassHistoryUpdate		= VK_FALSE;		// used by jitter debug slow motion
 		VkBool32    mResetHistory				= VK_FALSE;
+		float		mCamNearPlane;
+		float		mCamFarPlane;
 
-		float pad1,pad2,pad3;
+		float pad1;
 	};
 	static_assert(sizeof(uniforms_for_taa) % 16 == 0, "uniforms_for_taa struct is not padded"); // very crude check for padding to 16-bytes
 
@@ -423,7 +431,33 @@ public:
 						InputFloatW(60, "max", &param.mVelBasedAlphaMax,    0.f, 0.f, "%.2f"); SameLine();
 						InputFloatW(60, "fac", &param.mVelBasedAlphaFactor, 0.f, 0.f, "%.3f");
 
-						CheckboxB32("ray trace augment", &param.mRayTraceAugment);
+						if (CollapsingHeader("Ray trace augment")) {
+							PushID("RTaugment");
+							CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
+							
+							Text("Segmentation:");
+							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum;
+							flgOut = ((param.mRayTraceAugmentFlags & 0x01) != 0);
+							flgDis = ((param.mRayTraceAugmentFlags & 0x02) != 0);
+							flgNrm = ((param.mRayTraceAugmentFlags & 0x04) != 0);
+							flgDpt = ((param.mRayTraceAugmentFlags & 0x08) != 0);
+							flgMId = ((param.mRayTraceAugmentFlags & 0x10) != 0);
+							flgLum = ((param.mRayTraceAugmentFlags & 0x20) != 0);
+							Checkbox("offscreen",   &flgOut);
+							Checkbox("disoccl. ",   &flgDis);
+							Checkbox("normals  ",   &flgNrm);	SameLine(); SliderFloatW(80, "##wNrm", &param.mRayTraceAugment_WNrm, 0.f, 1.f);
+							Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
+							Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
+							Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
+							param.mRayTraceAugmentFlags = (flgOut ? 0x01 : 0)
+														| (flgDis ? 0x02 : 0)
+														| (flgNrm ? 0x04 : 0)
+														| (flgDpt ? 0x08 : 0)
+														| (flgMId ? 0x10 : 0)
+														| (flgLum ? 0x20 : 0);
+							SliderFloatW(80, "Threshold", &param.mRayTraceAugment_Thresh, 0.f, 1.f);
+							PopID();
+						}
 
 						if (isPrimary) {
 							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
@@ -576,7 +610,7 @@ public:
 			descriptor_binding(0,  8, mHistoryImages[0]->as_storage_image()),	// output for history
 			descriptor_binding(0,  9, mSegmentationImages[0]->as_storage_image()),
 			descriptor_binding(0, 10, (mSrcMatId[0])->as_storage_image()),
-			//descriptor_binding(0, 10, *mSrcMatId[0]),
+			descriptor_binding(0, 11, (mSrcMatId[0])->as_storage_image()),
 			descriptor_binding(1,  0, mUniformsBuffer[0])
 			//push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -830,6 +864,8 @@ public:
 		mTaaUniforms.splitX      = mSplitX;
 		mTaaUniforms.mBypassHistoryUpdate = bypassHistUpdate;
 		mTaaUniforms.mResetHistory = mResetHistory;
+		mTaaUniforms.mCamNearPlane = quakeCamera->near_plane_distance();
+		mTaaUniforms.mCamFarPlane  = quakeCamera->far_plane_distance();
 
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
 
@@ -893,7 +929,7 @@ public:
 				descriptor_binding(0,  8, mHistoryImages[inFlightIndex]->as_storage_image()),		// -> shader: uResultHistory
 				descriptor_binding(0,  9, mSegmentationImages[inFlightIndex]->as_storage_image()),	// -> shader: uSegMask
 				descriptor_binding(0, 10, (mSrcMatId[inFlightIndex])->as_storage_image()),			// -> shader: uCurrentMaterial
-				//descriptor_binding(0, 10, *mSrcMatId[inFlightIndex]),								// -> shader: uCurrentMaterial
+				descriptor_binding(0, 11, (mSrcMatId[inFlightLastIndex])->as_storage_image()),		// -> shader: uPreviousMaterial
 				descriptor_binding(1,  0, mUniformsBuffer[inFlightIndex])
 				}));
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);

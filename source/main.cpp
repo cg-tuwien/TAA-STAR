@@ -3000,9 +3000,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				// misc warnings of incompatible settings here
-				if ((mShadowMap.enable || mShadowMap.enableForTransparency) && mSceneData.mRegeneratePerFrame && mSceneData.mCullViewFrustum) {
-					TextColored(ImVec4(1.f, 0.f, 0.f, 1.f), "WARN: Shadows & frustum culling");
-				}
+				//if ((mShadowMap.enable || mShadowMap.enableForTransparency) && mSceneData.mRegeneratePerFrame && mSceneData.mCullViewFrustum) {
+				//	TextColored(ImVec4(1.f, 0.f, 0.f, 1.f), "WARN: Shadows & frustum culling");
+				//}
 
 				Text("%.3f ms/frame (%.1f FPS)", 1000.0f / GetIO().Framerate, GetIO().Framerate);
 				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));

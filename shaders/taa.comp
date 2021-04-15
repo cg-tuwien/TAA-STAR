@@ -27,6 +27,7 @@ layout(set = 0, binding =  2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding =  7) uniform texture2D uCurrentVelocity;
 //layout(set = 0, binding = 10) uniform texture2D uCurrentMaterial;
 layout(set = 0, binding = 10, r32ui) readonly uniform restrict uimage2D uCurrentMaterial;
+layout(set = 0, binding = 11, r32ui) readonly uniform restrict uimage2D uPreviousMaterial;
 layout(set = 0, binding =  3) uniform texture2D uHistoryFrame;
 layout(set = 0, binding =  4) uniform texture2D uHistoryDepth;
 layout(set = 0, binding =  5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultScreen;
@@ -36,7 +37,7 @@ layout(set = 0, binding =  6, rgba16f) writeonly uniform restrict image2D uDebug
 // -------------------------------------------------------
 
 // texelFetch is undefined when sampling outside the texture, so always clamp
-#define CLAMP_TO_TEX(v) clamp((v), ivec2(0), textureSize(uCurrentFrame,0))
+#define CLAMP_TO_TEX(v) clamp((v), ivec2(0), textureSize(uCurrentFrame,0)-1)
 
 // shortcut to texture(sampler2D(texture, uSampler), uv)
 #define SAMPLE_TEX(tex_,uv_) texture(sampler2D((tex_),uSampler), uv_)
@@ -74,7 +75,13 @@ struct Parameters {
 	float mVelBasedAlphaMax;
 	float mVelBasedAlphaFactor;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 	bool mRayTraceAugment;			// ray tracing augmentation
-	float pad1,pad2,pad3;
+	uint mRayTraceAugmentFlags;
+	float mRayTraceAugment_WNrm;	// weight for normals
+	float mRayTraceAugment_WDpt;	// weight for depth
+	float mRayTraceAugment_WMId;	// weight for material
+	float mRayTraceAugment_WLum;	// weight for luminance
+	float mRayTraceAugment_Thresh;	// threshold for sum of weighted indicators
+	float pad1;
 
 	// -- aligned again here
 	vec4 mDebugMask;
@@ -99,11 +106,12 @@ layout(set = 1, binding = 0) uniform Matrices {
 	bool		splitScreen;
 	int			splitX;
 	bool        mUpsampling;
-
 	bool        mBypassHistoryUpdate;
 	bool        mResetHistory;
+	float		mCamNearPlane;
+	float		mCamFarPlane;
 
-	float pad1,pad2,pad3;
+	float pad1;
 } ubo;
 // -------------------------------------------------------
 
@@ -544,22 +552,102 @@ vec4 noise(vec2 uv) {
 	return sRand * params.mNoiseFactor;
 }
 
-uint calc_segmentation_value(ivec2 iuv, vec2 historyUv, float historyDepth) {
+// linearize depth - from https://stackoverflow.com/questions/51108596/linearize-depth
+float linearize_depth(float d,float zNear,float zFar) {
+    return zNear * zFar / (zFar + d * (zNear - zFar));
+}
+float linearize_depth(float d) {
+	return linearize_depth(d, ubo.mCamNearPlane, ubo.mCamFarPlane);
+}
+
+float sample_linear_depth(ivec2 iuv) {
+	return linearize_depth(texelFetch(uCurrentDepth, iuv, 0).r, ubo.mCamNearPlane, ubo.mCamFarPlane);
+}
+
+float sample_luminance(ivec2 iuv) {
+	return rgb_to_ycocg(texelFetch(uCurrentFrame, iuv, 0).rgb).x;
+}
+
+vec2 sobel(float c00, float c01, float c02, float c10, /* float c11, */ float c12, float c20, float c21, float c22) {
+	vec2 g;
+	g.x = c00 - c20 + 2 * c01 - 2 * c21 + c02 - c22;
+	g.y = c00 - c02 + 2 * c10 - 2 * c12 + c20 - c22;
+	return g;
+}
+
+uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDepth) {
+	//gDebugValue = vec4(linearize_depth(texelFetch(uCurrentDepth, iuv, 0).r), 0, 0, 0);
+
 	// out of screen disocclusion?
-	if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
-		return 1;
+	if ((params.mRayTraceAugmentFlags & 0x01) != 0) {
+		if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
+			return 1;
+		}
 	}
 
 	// TODO: make sure velocity samples are all valid!
-	// should we just use the pixel speed value from getHistoryPosition?
+	// should we just use the pixel speed value from getHistoryPosition? or better save the vel vector calculated there in a global?
+
+	uint matId = imageLoad(uCurrentMaterial, iuv).r;
+
+	// determine disocclusions by moving or animated objects
+	if ((params.mRayTraceAugmentFlags & 0x02) != 0) {
+		ivec2 tcPrev = uv_to_tc(historyUv, textureSize_loRes);
+		if (all(greaterThanEqual(tcPrev, ivec2(0))) && all(lessThan(tcPrev, textureSize_loRes))) {
+			uint prevMatId = imageLoad(uPreviousMaterial, uv_to_tc(historyUv, textureSize_loRes)).r;
+			if (prevMatId != matId && (prevMatId & 0x80000000) != 0) // MSB indicates moving object
+				return 2;
+		}
+	}
 
 	// TODO: use mesh ids instead of material ids ?
 	// TODO: precalc derivatives in a separate compute pass, instead of sampling neighbourhood for every pixel here?
 
-	// calc material id "derivatives"
-	//float x = texture(sampler2D(uCurrentMaterial, uSampler), vec2(iuv + 0.5)).r;
-	uint x = imageLoad(uCurrentMaterial, iuv).r;
-	gDebugValue = vec4(x,0,0,0);
+	// calc derivatives
+	float nrmValue = 0.0;
+	float dptValue = 0.0;
+	float matValue = 0.0;
+	float lumValue = 0.0;
+
+	// depth dervative
+	if ((params.mRayTraceAugmentFlags & 0x08) != 0) {
+		dptValue = length( sobel( sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2(-1, -1))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 0, -1))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 1, -1))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2(-1,  0))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 1,  0))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2(-1,  1))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 0,  1))),
+			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 1,  1))) ) );
+	}
+
+	// normals - TODO
+
+	// material id "derivative"
+	if ((params.mRayTraceAugmentFlags & 0x10) != 0) {
+		if ((matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(-1,0))).r) || (matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(1,0))).r) ||
+			(matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(0,-1))).r) || (matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(0,1))).r)) {
+			matValue = 1.0;
+		}
+	}
+
+	// luminance derivative
+	if ((params.mRayTraceAugmentFlags & 0x20) != 0) {
+		lumValue = length( sobel( sample_luminance(CLAMP_TO_TEX(iuv + ivec2(-1, -1))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 0, -1))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 1, -1))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2(-1,  0))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 1,  0))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2(-1,  1))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 0,  1))),
+			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 1,  1))) ) );
+	}
+
+	float total = nrmValue * params.mRayTraceAugment_WNrm
+	            + dptValue * params.mRayTraceAugment_WDpt
+	            + matValue * params.mRayTraceAugment_WMId
+	            + lumValue * params.mRayTraceAugment_WLum;
+	if (total > params.mRayTraceAugment_Thresh) return 2;
 
 	return 0;
 }
@@ -635,7 +723,7 @@ void main()
 	// build segmentation mask
 	uint segMaskValue;
 	if (generateSegmentationMask) {
-		segMaskValue = calc_segmentation_value(iuv, historyUv, expectedHistoryDepth);
+		segMaskValue = calc_segmentation_value(iuv, uv, historyUv, expectedHistoryDepth);	// TODO: check! iuv vs iuvLoRes !!
 	} else {
 		segMaskValue = 0;
 	}

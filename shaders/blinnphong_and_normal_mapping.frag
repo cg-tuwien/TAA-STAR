@@ -134,7 +134,7 @@ void main()
 	vec2 sphericalVS = vec2((l == 0) ? 0 : acos(clamp(normalVS.x / l, -1, 1)), asin(normalVS.z));
 	if (normalVS.y < 0) sphericalVS.x = TAU - sphericalVS.x;
 	oFragUvNrm = vec4(fs_in.texCoords, sphericalVS);
-	oFragMatId = fs_in.materialIndex;
+	oFragMatId = (fs_in.materialIndex + 1) | (fs_in.movingObjectId != 0 ? 0x80000000 : 0);
 
 	// calculate and write velocity
 	vec3 positionNDC      = fs_in.positionCS.xyz      / fs_in.positionCS.w;
