@@ -37,8 +37,6 @@ void main()
     // clear target pixel
     //imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.0, 0.0, 0.0, 0.0));
 
-    // TODO: better sampling pattern
-
     if (pushConstants.mAugmentTAA) {
         //imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(1,0,1,1));
         uint segMask = imageLoad(taaSegMask, ivec2(gl_LaunchIDEXT.xy)).r & 3;

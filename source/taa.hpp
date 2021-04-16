@@ -57,7 +57,7 @@ class taa : public gvk::invokee
 		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
 		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
-		uint32_t mRayTraceAugmentFlags		= 0xffffffff;
+		uint32_t mRayTraceAugmentFlags		= 0x7f;
 		float    mRayTraceAugment_WNrm		= 1.0;				// weight for normals
 		float    mRayTraceAugment_WDpt		= 1.0;				// weight for depth
 		float    mRayTraceAugment_WMId		= 1.0;				// weight for material
@@ -443,25 +443,28 @@ public:
 							CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
 							
 							Text("Segmentation:");
-							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum;
+							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum, flgAll;
 							flgOut = ((param.mRayTraceAugmentFlags & 0x01) != 0);
 							flgDis = ((param.mRayTraceAugmentFlags & 0x02) != 0);
 							flgNrm = ((param.mRayTraceAugmentFlags & 0x04) != 0);
 							flgDpt = ((param.mRayTraceAugmentFlags & 0x08) != 0);
 							flgMId = ((param.mRayTraceAugmentFlags & 0x10) != 0);
 							flgLum = ((param.mRayTraceAugmentFlags & 0x20) != 0);
+							flgAll = ((param.mRayTraceAugmentFlags & 0x80) != 0);
 							Checkbox("offscreen",   &flgOut);
 							Checkbox("disoccl. ",   &flgDis);
 							Checkbox("normals  ",   &flgNrm);	SameLine(); SliderFloatW(80, "##wNrm", &param.mRayTraceAugment_WNrm, 0.f, 1.f);
 							Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
 							Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
 							Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
+							Checkbox("RT ALL   ",   &flgAll);	HelpMarker("Just for debugging - raytrace everything");
 							param.mRayTraceAugmentFlags = (flgOut ? 0x01 : 0)
 														| (flgDis ? 0x02 : 0)
 														| (flgNrm ? 0x04 : 0)
 														| (flgDpt ? 0x08 : 0)
 														| (flgMId ? 0x10 : 0)
-														| (flgLum ? 0x20 : 0);
+														| (flgLum ? 0x20 : 0)
+														| (flgAll ? 0x80 : 0);
 							SliderFloatW(80, "Threshold", &param.mRayTraceAugment_Thresh, 0.f, 1.f);
 							PopID();
 						}
@@ -945,7 +948,7 @@ public:
 			auto pLastProducedImageView = &mResultImages[inFlightIndex];
 
 			#if ENABLE_RAYTRACING
-				if (mParameters[0].mRayTraceAugment || mParameters[1].mRayTraceAugment) {
+				if (needRayTraceAssist()) {
 					// sparse ray trace pixels marked for RTX in segmask
 					// callback main
 					if (mRayTraceCallback) {
@@ -1189,7 +1192,7 @@ public:
 	avk::image_view * getRayTraceSegMask()    { return &(mSegmentationImages[gvk::context().main_window()->in_flight_index_for_frame()]); }
 	avk::image_view * getRayTraceInputImage() { return &(mResultImages      [gvk::context().main_window()->in_flight_index_for_frame()]); }
 
-	bool needRayTraceAssist() { return mParameters[0].mRayTraceAugment || mParameters[1].mRayTraceAugment; }
+	bool needRayTraceAssist() { return mParameters[0].mRayTraceAugment || (mSplitScreen && mParameters[1].mRayTraceAugment); }
 
 private:
 	avk::queue* mQueue;

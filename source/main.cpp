@@ -364,9 +364,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 	void ray_trace_callback(avk::command_buffer &cmd) {
 #if ENABLE_RAYTRACING
-		std::cout << "callback...";
+		//std::cout << "callback...";
 		do_raytrace_test(cmd, gvk::context().main_window()->in_flight_index_for_frame(), true);
-		std::cout << "... done" << std::endl;
+		//std::cout << "... done" << std::endl;
 #endif
 	}
 
@@ -3028,6 +3028,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				//if ((mShadowMap.enable || mShadowMap.enableForTransparency) && mSceneData.mRegeneratePerFrame && mSceneData.mCullViewFrustum) {
 				//	TextColored(ImVec4(1.f, 0.f, 0.f, 1.f), "WARN: Shadows & frustum culling");
 				//}
+				if (mAntiAliasing.taa_enabled() && mAntiAliasing.needRayTraceAssist() && mNormalMappingStrength > 0.0f) {
+					TextColored(ImVec4(1.f, 0.f, 0.f, 1.f), "WARN: RT-assist + nrm mapping");
+				}
 
 				Text("%.3f ms/frame (%.1f FPS)", 1000.0f / GetIO().Framerate, GetIO().Framerate);
 				Text("%.3f ms/mSkyboxCommandBuffer", helpers::get_timing_interval_in_ms(fmt::format("mSkyboxCommandBuffer{} time", inFlightIndex)));
