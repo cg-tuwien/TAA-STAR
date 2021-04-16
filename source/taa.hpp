@@ -90,9 +90,13 @@ class taa : public gvk::invokee
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
 		glm::ivec4 zoomSrcLTWH	= { 960 - 10, 540 - 10, 20, 20 };
 		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
+		glm::vec4 debugL_mask = glm::vec4(1,1,1,0);
+		glm::vec4 debugR_mask = glm::vec4(1,1,1,0);
 		VkBool32 zoom			= false;
 		VkBool32 showZoomBox	= true;
 		int splitX = -1;
+		VkBool32  debugL_show = false;
+		VkBool32  debugR_show = false;
 	};
 
 	struct uniforms_for_taa {
@@ -283,11 +287,17 @@ public:
 			rdoc::labelImage(mHistoryImages[i]->get_image().handle(), "taa.mHistoryImages", i);
 			layoutTransitions.emplace_back(std::move(mHistoryImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
-			mTempImages[i] = gvk::context().create_image_view(
+			mTempImages[0][i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
 			);
-			rdoc::labelImage(mTempImages[i]->get_image().handle(), "taa.mTempImages", i);
-			layoutTransitions.emplace_back(std::move(mTempImages[i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+			rdoc::labelImage(mTempImages[0][i]->get_image().handle(), "taa.mTempImages_0", i);
+			layoutTransitions.emplace_back(std::move(mTempImages[0][i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
+			mTempImages[1][i] = gvk::context().create_image_view(
+				gvk::context().create_image(w, h, TAA_IMAGE_FORMAT_RGB, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
+			);
+			rdoc::labelImage(mTempImages[1][i]->get_image().handle(), "taa.mTempImages_1", i);
+			layoutTransitions.emplace_back(std::move(mTempImages[1][i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
 
 			mDebugImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR16G16B16A16Sfloat, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
@@ -629,21 +639,22 @@ public:
 		mSharpenerPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/sharpen.comp.spv"),
 			descriptor_binding(0, 1, *mResultImages[0]),
-			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
+			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_sharpener) }
 		);
 
 		mCasPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/sharpen_cas.comp.spv"),
 			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
-			descriptor_binding(0, 2, mTempImages[0]->as_storage_image()),
+			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_cas) }
 		);
 
 		mPostProcessPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/post_process.comp.spv"),
 			descriptor_binding(0, 1, *mResultImages[0]),
-			descriptor_binding(0, 2, mPostProcessImages[0]->as_storage_image()),
+			descriptor_binding(0, 2, *mDebugImages[0]),
+			descriptor_binding(0, 3, mPostProcessImages[0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_postprocess) }
 		);
 
@@ -878,6 +889,10 @@ public:
 		mTaaUniforms.mCamFarPlane  = quakeCamera->far_plane_distance();
 
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
+		mPostProcessPushConstants.debugL_mask = mParameters[0].mDebugMask;
+		mPostProcessPushConstants.debugR_mask = mParameters[1].mDebugMask;
+		mPostProcessPushConstants.debugL_show = mParameters[0].mDebugToScreenOutput;
+		mPostProcessPushConstants.debugR_show = mParameters[1].mDebugToScreenOutput;
 
 		static float prevSharpenFactor = -1.f;
 		if (mSharpenFactor != prevSharpenFactor) {
@@ -946,6 +961,7 @@ public:
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
 			image_view_t* pLastProducedImageView_t = &mResultImages[inFlightIndex].get();
+			int nextTempImageIndex = 0;
 
 			#if ENABLE_RAYTRACING
 				if (needRayTraceAssist()) {
@@ -972,23 +988,24 @@ public:
 					cmdbfr->bind_pipeline(const_referenced(mSharpenerPipeline));
 					cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 						descriptor_binding(0, 1, *pLastProducedImageView_t),
-						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
+						descriptor_binding(0, 2, mTempImages[nextTempImageIndex][inFlightIndex]->as_storage_image())
 						}));
 
 					cmdbfr->push_constants(mSharpenerPipeline->layout(), mSharpenerPushConstants);
-					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+					cmdbfr->handle().dispatch((mTempImages[nextTempImageIndex][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[nextTempImageIndex][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 				} else {
 					cmdbfr->bind_pipeline(const_referenced(mCasPipeline));
 					cmdbfr->bind_descriptors(mCasPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 						descriptor_binding(0, 1, pLastProducedImageView_t->as_storage_image()),
-						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
+						descriptor_binding(0, 2, mTempImages[nextTempImageIndex][inFlightIndex]->as_storage_image())
 						}));
 
 					cmdbfr->push_constants(mCasPipeline->layout(), mCasPushConstants);
-					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+					cmdbfr->handle().dispatch((mTempImages[nextTempImageIndex][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[nextTempImageIndex][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 				}
 
-				pLastProducedImageView_t = &mTempImages[inFlightIndex].get();
+				pLastProducedImageView_t = &mTempImages[nextTempImageIndex][inFlightIndex].get();
+				nextTempImageIndex ^= 1;
 			}
 
 			if (mPostProcessEnabled) {
@@ -1002,7 +1019,8 @@ public:
 				cmdbfr->bind_pipeline(const_referenced(mPostProcessPipeline));
 				cmdbfr->bind_descriptors(mPostProcessPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
 					descriptor_binding(0, 1, *pLastProducedImageView_t),
-					descriptor_binding(0, 2, mPostProcessImages[inFlightIndex]->as_storage_image())
+					descriptor_binding(0, 2, mDebugImages[inFlightIndex]),
+					descriptor_binding(0, 3, mPostProcessImages[inFlightIndex]->as_storage_image())
 					}));
 				cmdbfr->push_constants(mPostProcessPipeline->layout(), mPostProcessPushConstants);
 				cmdbfr->handle().dispatch((mPostProcessImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mPostProcessImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
@@ -1213,7 +1231,7 @@ private:
 	std::array<avk::image_view_t*, CF> mSrcRayTraced;
 	// Destination images per frame in flight:
 	std::array<avk::image_view, CF> mResultImages;
-	std::array<avk::image_view, CF> mTempImages;
+	std::array<avk::image_view, CF> mTempImages[2];
 	std::array<avk::image_view, CF> mDebugImages;
 	std::array<avk::image_view, CF> mPostProcessImages;
 	std::array<avk::image_view, CF> mHistoryImages;			// use a separate history buffer for now, makes life easier..

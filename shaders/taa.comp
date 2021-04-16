@@ -900,13 +900,14 @@ void main()
 	gDebugValue *= params.mDebugScale * params.mDebugMask;
 	if (params.mDebugCenter) gDebugValue = gDebugValue * 0.5 + 0.5;
 
-	if (params.mDebugToScreenOutput) {
-		output_to_screen = vec4(gDebugValue.rgb, 1);
-		// make alpha channel visible
-		if (params.mDebugMask.a > 0) {
-			output_to_screen.rb += gDebugValue.a;
-		}
-	}
+	// debug-to-screen display is now handled in post_process shader
+//	if (params.mDebugToScreenOutput) {
+//		output_to_screen = vec4(gDebugValue.rgb, 1);
+//		// make alpha channel visible
+//		if (params.mDebugMask.a > 0) {
+//			output_to_screen.rb += gDebugValue.a;
+//		}
+//	}
 	// -------------------------------------------------------
 
 	// store outputs

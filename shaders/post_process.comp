@@ -6,16 +6,21 @@
 
 // ###### SRC/DST IMAGES #################################
 layout(set = 0, binding = 1) uniform texture2D uInputFrame;
-layout(set = 0, binding = 2, TAA_SHADER_FORMAT_POSTPROCESS) writeonly uniform restrict image2D uOutput;
+layout(set = 0, binding = 2) uniform texture2D uDebugFrame;
+layout(set = 0, binding = 3, TAA_SHADER_FORMAT_POSTPROCESS) writeonly uniform restrict image2D uOutput;
 // -------------------------------------------------------
 
 // ###### PUSH CONSTANTS AND UBOs ########################
 layout(push_constant) uniform PushConstants {
 	ivec4 zoomSrcLTWH;
 	ivec4 zoomDstLTWH;
+	vec4 debugL_mask;
+	vec4 debugR_mask;
 	bool zoom;
 	bool showZoomBox;
 	int splitX;
+	bool debugL_show;
+	bool debugR_show;
 } pushConstants;
 
 // -------------------------------------------------------
@@ -60,7 +65,25 @@ void main()
 		iuvFetchFrom = ivec2(pushConstants.zoomSrcLTWH.xy + zoomUv * pushConstants.zoomSrcLTWH.zw);
 	}
 
-	vec4 val = texelFetch(uInputFrame, iuvFetchFrom, 0);
+	// show data from input image or debug image
+	bool leftside = (pushConstants.splitX < 0) || (iuv.x < pushConstants.splitX);
+	bool showdebug;
+	vec4 debugMask;
+	if (leftside) {
+		showdebug = pushConstants.debugL_show;
+		debugMask = pushConstants.debugL_mask;
+	} else {
+		showdebug = pushConstants.debugR_show;
+		debugMask = pushConstants.debugR_mask;
+	}
+	vec4 val;
+	if (showdebug) {
+		vec4 dbg = texelFetch(uDebugFrame, iuvFetchFrom, 0);
+		val = vec4(dbg.rgb, 1);
+		if (debugMask.a > 0) val.rb += dbg.a;	// make alpha channel visible
+	} else {
+		val = texelFetch(uInputFrame, iuvFetchFrom, 0);
+	}
 	imageStore(uOutput, iuv, val);
 }
 
