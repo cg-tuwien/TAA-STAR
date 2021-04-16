@@ -945,7 +945,7 @@ public:
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
 			cmdbfr->handle().dispatch((mResultImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mResultImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
-			auto pLastProducedImageView = &mResultImages[inFlightIndex];
+			image_view_t* pLastProducedImageView_t = &mResultImages[inFlightIndex].get();
 
 			#if ENABLE_RAYTRACING
 				if (needRayTraceAssist()) {
@@ -956,7 +956,8 @@ public:
 						mRayTraceCallback->ray_trace_callback(cmdbfr);
 						gvk::context().device().waitIdle(); // FIXME - sync
 
-						blit_image(mSrcRayTraced[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
+						//blit_image(mSrcRayTraced[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
+						pLastProducedImageView_t = mSrcRayTraced[inFlightIndex];
 					}
 				}
 			#endif
@@ -970,7 +971,7 @@ public:
 				if (mSharpener == 1) {
 					cmdbfr->bind_pipeline(const_referenced(mSharpenerPipeline));
 					cmdbfr->bind_descriptors(mSharpenerPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-						descriptor_binding(0, 1, *mResultImages[inFlightIndex]),
+						descriptor_binding(0, 1, *pLastProducedImageView_t),
 						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
 						}));
 
@@ -979,7 +980,7 @@ public:
 				} else {
 					cmdbfr->bind_pipeline(const_referenced(mCasPipeline));
 					cmdbfr->bind_descriptors(mCasPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-						descriptor_binding(0, 1, mResultImages[inFlightIndex]->as_storage_image()),
+						descriptor_binding(0, 1, pLastProducedImageView_t->as_storage_image()),
 						descriptor_binding(0, 2, mTempImages[inFlightIndex]->as_storage_image())
 						}));
 
@@ -987,7 +988,7 @@ public:
 					cmdbfr->handle().dispatch((mTempImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 				}
 
-				pLastProducedImageView = &mTempImages[inFlightIndex];
+				pLastProducedImageView_t = &mTempImages[inFlightIndex].get();
 			}
 
 			if (mPostProcessEnabled) {
@@ -1000,16 +1001,16 @@ public:
 
 				cmdbfr->bind_pipeline(const_referenced(mPostProcessPipeline));
 				cmdbfr->bind_descriptors(mPostProcessPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-					descriptor_binding(0, 1, **pLastProducedImageView),
+					descriptor_binding(0, 1, *pLastProducedImageView_t),
 					descriptor_binding(0, 2, mPostProcessImages[inFlightIndex]->as_storage_image())
 					}));
 				cmdbfr->push_constants(mPostProcessPipeline->layout(), mPostProcessPushConstants);
 				cmdbfr->handle().dispatch((mPostProcessImages[inFlightIndex]->get_image().width() + 15u) / 16u, (mPostProcessImages[inFlightIndex]->get_image().height() + 15u) / 16u, 1);
 
-				pLastProducedImageView = &mPostProcessImages[inFlightIndex];
+				pLastProducedImageView_t = &mPostProcessImages[inFlightIndex].get();
 			}
 
-			auto &image_to_show = (*pLastProducedImageView)->get_image();
+			auto &image_to_show = pLastProducedImageView_t->get_image();
 
 			// TODO: is this barrier needed?
 			cmdbfr->establish_global_memory_barrier(
