@@ -33,6 +33,7 @@ layout(set = 0, binding =  4) uniform texture2D uHistoryDepth;
 layout(set = 0, binding =  5, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultScreen;
 layout(set = 0, binding =  8, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uResultHistory;
 layout(set = 0, binding =  9, TAA_SHADER_FORMAT_SEGMASK) writeonly uniform restrict uimage2D uSegMask;
+layout(set = 0, binding = 12, TAA_SHADER_FORMAT_SEGMASK) readonly uniform restrict uimage2D uPreviousSegMask;
 layout(set = 0, binding =  6, rgba16f) writeonly uniform restrict image2D uDebug;
 // -------------------------------------------------------
 
@@ -81,7 +82,8 @@ struct Parameters {
 	float mRayTraceAugment_WMId;	// weight for material
 	float mRayTraceAugment_WLum;	// weight for luminance
 	float mRayTraceAugment_Thresh;	// threshold for sum of weighted indicators
-	float pad1;
+	int   mRayTraceHistoryCount;	// how long to keep ray trace flag around
+//	float pad1;
 
 	// -- aligned again here
 	vec4 mDebugMask;
@@ -583,6 +585,10 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 		return 2;
 	}
 
+	// use history counter?
+	bool useHistoryCount = ((params.mRayTraceAugmentFlags & 0x40) != 0);
+	uint newCountValue = useHistoryCount ? params.mRayTraceHistoryCount << 16 : 0;
+
 	// out of screen disocclusion?
 	if ((params.mRayTraceAugmentFlags & 0x01) != 0) {
 		if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
@@ -601,7 +607,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 		if (all(greaterThanEqual(tcPrev, ivec2(0))) && all(lessThan(tcPrev, textureSize_loRes))) {
 			uint prevMatId = imageLoad(uPreviousMaterial, uv_to_tc(historyUv, textureSize_loRes)).r;
 			if (prevMatId != matId && (prevMatId & 0x80000000) != 0) // MSB indicates moving object
-				return 2;
+				return 2 | newCountValue;
 		}
 	}
 
@@ -652,11 +658,19 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	            + dptValue * params.mRayTraceAugment_WDpt
 	            + matValue * params.mRayTraceAugment_WMId
 	            + lumValue * params.mRayTraceAugment_WLum;
-	if (total > params.mRayTraceAugment_Thresh) return 2;
+	if (total > params.mRayTraceAugment_Thresh) return 2 | newCountValue;
 
 	// TODO: take care of bootstrapping - when are the prevframe buffers valid?!
 	// TODO: consider prevoid frame's segmask ("segmask history")
 
+	// pixel is not marked for ray tracing now, but check if it still has an active history count
+	if (useHistoryCount) {
+		// TODO: should we add the velocity vector here?
+		uint oldCnt = (imageLoad(uPreviousSegMask, iuv).r & 0xffff0000) >> 16;
+		if (oldCnt > 0) {
+			return 2 | ((oldCnt - 1) << 16);
+		}
+	}
 	return 0;
 }
 

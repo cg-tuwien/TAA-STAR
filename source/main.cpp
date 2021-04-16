@@ -229,6 +229,7 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		int  mAnimObjNumMeshes;
 		uint32_t mDoShadows;		// bit 0: general shadows, bit 1: shadows of transp. objs
 		VkBool32 mAugmentTAA;
+		VkBool32 mAugmentTAADebug;
 		// pad?
 	};
 
@@ -2704,6 +2705,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mAnimObjNumMeshes			= static_cast<int>((mMovingObject.enabled && mDynObjects[mMovingObject.moverId].mIsAnimated) ? mDynObjects[mMovingObject.moverId].mMeshData.size() : 0);
 		pushc.mDoShadows				= (mShadowMap.enable ? 0x01 : 0x00) | (mShadowMap.enableForTransparency ? 0x02 : 0x00);
 		pushc.mAugmentTAA				= taaAssist ? VK_TRUE : VK_FALSE;
+		pushc.mAugmentTAADebug			= taaAssist && mRtDebugSparse ? VK_TRUE : VK_FALSE;
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -3076,9 +3078,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 				if (CollapsingHeader("Rendering")) {
 #if ENABLE_RAYTRACING
-					Checkbox("Ray trace", &mDoRayTraceTest);
-					SameLine();
-					if (InputIntW(80, "spp##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
+					Checkbox("Ray trace whole scene", &mDoRayTraceTest);
+					if (InputIntW(80, "RT samples##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
+					Checkbox("RT debug sparse tracing", &mRtDebugSparse); HelpMarker("Show areas to be sparsely traced instead of actually ray tracing them");
 #endif
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
 					if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
@@ -4471,6 +4473,7 @@ private: // v== Member variables ==v
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsBuffer;			// one normals buffer for *all* meshes of the current animated object
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsOffsetBuffer;	// start index of first normal in above buffer for each mesh of the current animated object
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjNormalsBufferView;		// for uniform_texel_buffer
+	bool mRtDebugSparse = false;
 #endif
 
 };

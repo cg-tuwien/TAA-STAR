@@ -44,6 +44,10 @@ void main()
             imageStore(image, ivec2(gl_LaunchIDEXT.xy), imageLoad(taaInput, ivec2(gl_LaunchIDEXT.xy)));
             return;
         }
+        if (pushConstants.mAugmentTAADebug) {
+            imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(1,1,0,1));
+            return;
+        }
     }
 
     int numSamples = clamp(pushConstants.mNumSamples, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);

@@ -63,7 +63,8 @@ class taa : public gvk::invokee
 		float    mRayTraceAugment_WMId		= 1.0;				// weight for material
 		float    mRayTraceAugment_WLum		= 1.0;				// weight for luminance
 		float    mRayTraceAugment_Thresh	= 1.0;				// threshold for sum of weighted indicators
-		float pad1;
+		int      mRayTraceHistoryCount      = 0;				// how long to keep ray trace flag around
+		//float pad1;
 
 		// -- aligned again here
 		glm::vec4 mDebugMask				= glm::vec4(1,1,1,0);
@@ -453,13 +454,14 @@ public:
 							CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
 							
 							Text("Segmentation:");
-							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum, flgAll;
+							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum, flgCnt, flgAll;
 							flgOut = ((param.mRayTraceAugmentFlags & 0x01) != 0);
 							flgDis = ((param.mRayTraceAugmentFlags & 0x02) != 0);
 							flgNrm = ((param.mRayTraceAugmentFlags & 0x04) != 0);
 							flgDpt = ((param.mRayTraceAugmentFlags & 0x08) != 0);
 							flgMId = ((param.mRayTraceAugmentFlags & 0x10) != 0);
 							flgLum = ((param.mRayTraceAugmentFlags & 0x20) != 0);
+							flgCnt = ((param.mRayTraceAugmentFlags & 0x40) != 0);
 							flgAll = ((param.mRayTraceAugmentFlags & 0x80) != 0);
 							Checkbox("offscreen",   &flgOut);
 							Checkbox("disoccl. ",   &flgDis);
@@ -467,6 +469,7 @@ public:
 							Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
 							Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
 							Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
+							Checkbox("use count",   &flgCnt);	HelpMarker("Use history counter - also ray trace pixels marked in previous frames");
 							Checkbox("RT ALL   ",   &flgAll);	HelpMarker("Just for debugging - raytrace everything");
 							param.mRayTraceAugmentFlags = (flgOut ? 0x01 : 0)
 														| (flgDis ? 0x02 : 0)
@@ -474,8 +477,10 @@ public:
 														| (flgDpt ? 0x08 : 0)
 														| (flgMId ? 0x10 : 0)
 														| (flgLum ? 0x20 : 0)
+														| (flgCnt ? 0x40 : 0)
 														| (flgAll ? 0x80 : 0);
 							SliderFloatW(80, "Threshold", &param.mRayTraceAugment_Thresh, 0.f, 1.f);
+							InputInt("History counter", &param.mRayTraceHistoryCount);
 							PopID();
 						}
 
@@ -631,6 +636,7 @@ public:
 			descriptor_binding(0,  9, mSegmentationImages[0]->as_storage_image()),
 			descriptor_binding(0, 10, (mSrcMatId[0])->as_storage_image()),
 			descriptor_binding(0, 11, (mSrcMatId[0])->as_storage_image()),
+			descriptor_binding(0, 12, mSegmentationImages[0]->as_storage_image()),
 			descriptor_binding(1,  0, mUniformsBuffer[0])
 			//push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -955,6 +961,7 @@ public:
 				descriptor_binding(0,  9, mSegmentationImages[inFlightIndex]->as_storage_image()),	// -> shader: uSegMask
 				descriptor_binding(0, 10, (mSrcMatId[inFlightIndex])->as_storage_image()),			// -> shader: uCurrentMaterial
 				descriptor_binding(0, 11, (mSrcMatId[inFlightLastIndex])->as_storage_image()),		// -> shader: uPreviousMaterial
+				descriptor_binding(0, 12, mSegmentationImages[inFlightLastIndex]->as_storage_image()),	// -> shader: uPreviousSegMask
 				descriptor_binding(1,  0, mUniformsBuffer[inFlightIndex])
 				}));
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
