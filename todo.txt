@@ -12,6 +12,9 @@ TODOs:
 		refactor tlas/blas rebuilding
 		determine mip level for texture sampling? -> see papers "Improved Shader and Texture Level of Detail Using Ray Cones" and "Texture Level of Detail Strategies for Real-Time Ray Tracing"
 		is it really necessary to update TLAS after updating BLAS?
+		lighting on tree leaves and grass is slightly different from rastered version
+
+	!add new settings to save/load funcs - main and taa
 
 	test scene:	normal mapping wrong? (models have no proper tangents/bitangents?)
 

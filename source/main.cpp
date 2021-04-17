@@ -128,9 +128,11 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		glm::vec4 mShadowMapMaxDepth;	// for up to 4 cascades
 
 		float mLodBias;
+		VkBool32 mAlwaysUseLod0;
 		VkBool32 mUseShadowMap;
 		float mShadowBias;
 		int mShadowNumCascades;
+		float pad1, pad2, pad3;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -401,6 +403,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mCamPos				= glm::translate(mQuakeCam.translation());
 		mMatricesAndUserInput.mUserInput			= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias				= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
+		mMatricesAndUserInput.mAlwaysUseLod0		= mAlwaysUseLod0;
 		mMatricesAndUserInput.mUseShadowMap			= mShadowMap.enable;
 		mMatricesAndUserInput.mShadowBias			= mShadowMap.bias;
 		mMatricesAndUserInput.mShadowNumCascades	= mShadowMap.numCascades;
@@ -3090,6 +3093,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					PopItemWidth();
 					SameLine();
 					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
+					Checkbox("always use lod 0", &mAlwaysUseLod0); HelpMarker("To match ray tracing image");
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
 					if (Button("Re-record commands")) invalidate_command_buffers();
 				}
@@ -4045,6 +4049,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniWriteBool	(ini, sec, "mUseAlphaBlending",				mUseAlphaBlending);
 		iniWriteFloat	(ini, sec, "mLodBias",						mLodBias);
 		iniWriteBool	(ini, sec, "mLoadBiasTaaOnly",				mLoadBiasTaaOnly);
+		iniWriteBool	(ini, sec, "mAlwaysUseLod0",				mAlwaysUseLod0);
 		iniWriteFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
 
 		sec = "Camera";
@@ -4131,6 +4136,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		iniReadBool		(ini, sec, "mUseAlphaBlending",				mUseAlphaBlending);
 		iniReadFloat	(ini, sec, "mLodBias",						mLodBias);
 		iniReadBool		(ini, sec, "mLoadBiasTaaOnly",				mLoadBiasTaaOnly);
+		iniReadBool		(ini, sec, "mAlwaysUseLod0",				mAlwaysUseLod0);
 		iniReadFloat	(ini, sec, "mNormalMappingStrength",		mNormalMappingStrength);
 
 		sec = "Camera";
@@ -4287,6 +4293,7 @@ private: // v== Member variables ==v
 	float mAlphaThreshold = 0.5f; // 0.001f; // alpha threshold for rendering transparent parts (0.5 ok for alpha-testing, 0.001 for alpha-blending)
 	float mLodBias;
 	bool mLoadBiasTaaOnly = true;
+	bool mAlwaysUseLod0 = false;
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = false;

@@ -13,7 +13,8 @@
 // ideally we'd set a the lod bias when creating the sampler
 // this is not suitable here though, because we want to experiment with dynamic values
 
-#define SAMPLE_TEXTURE(t,u) textureLod((t),(u),(textureQueryLod((t), (u)).y + uboMatUsr.mLodBias))
+#define SAMPLE_TEXTURE(t,u) textureLod((t),(u),uboMatUsr.mAlwaysUseLod0 ? 0 : (textureQueryLod((t), (u)).y + uboMatUsr.mLodBias))
+//#define SAMPLE_TEXTURE(t,u) textureLod((t),(u),(textureQueryLod((t), (u)).y + uboMatUsr.mLodBias))
 //#define SAMPLE_TEXTURE(t,u) texture((t),(u))
 
 
@@ -91,9 +92,11 @@
 	vec4 mShadowMapMaxDepth;	/* for up to 4 cascades */															\
 																													\
 	float mLodBias;																									\
+	bool  mAlwaysUseLod0;																							\
 	bool mUseShadowMap;																								\
 	float mShadowBias;																								\
 	int mShadowNumCascades;																							\
+	float pad1, pad2, pad3;																								\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:
