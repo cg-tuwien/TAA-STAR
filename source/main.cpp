@@ -62,9 +62,11 @@
 													descriptor_binding(0,  6, mRtNormalsBuffersArray),					\
 													descriptor_binding(0,  7, mRtPixelOffsetBuffer),					\
 													descriptor_binding(0,  8, mRtAnimObjNormalsBufferView[fif_]),		\
-													descriptor_binding(0,  9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
+													descriptor_binding(0,  9, mRtAnimObjNTBOffsetBuffer[fif_]),			\
 													descriptor_binding(0, 10, mRtTangentsBuffersArray),					\
 													descriptor_binding(0, 11, mRtBitangentsBuffersArray),				\
+													descriptor_binding(0, 12, mRtAnimObjTangentsBufferView[fif_]),		\
+													descriptor_binding(0, 13, mRtAnimObjBitangentsBufferView[fif_]),	\
 													descriptor_binding(1,  0, mRtImageViews[fif_]->as_storage_image()),	\
 													descriptor_binding(2,  0, mSceneData.mTLASs[fif_])
 #endif
@@ -1326,6 +1328,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				mMovingObjectDefs[iMover].name = "Not available"; // (std::string("N/A (") + objdef.name + ")").c_str();
 				objdef = mMovingObjectDefs[0];
 			}
+			std::cout << "Loading model \"" << objdef.name << "\" ..." << std::endl;
 			auto model = model_t::load_from_file(objdef.filename, aiProcess_Triangulate | aiProcess_CalcTangentSpace);
 
 			auto &dynObj = mDynObjects.emplace_back(dynamic_object{});
@@ -1570,10 +1573,15 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				tbuf->fill(mesh.mTexCoords.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 				mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
 
-				// TODO: do we actually need this ? we don't access it...
-				auto nbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mNormals).describe_only_member(mesh.mNormals[0]));
-				nbuf->fill(mesh.mNormals.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
-				mRtNormalsBuffersArray.push_back( context().create_buffer_view(owned(nbuf)) );
+				auto nbufN = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mNormals   ).describe_only_member(mesh.mNormals   [0]));
+				auto nbufT = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mTangents  ).describe_only_member(mesh.mTangents  [0]));
+				auto nbufB = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mBitangents).describe_only_member(mesh.mBitangents[0]));
+				nbufN->fill(mesh.mNormals   .data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				nbufT->fill(mesh.mTangents  .data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				nbufB->fill(mesh.mBitangents.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				mRtNormalsBuffersArray   .push_back( context().create_buffer_view(owned(nbufN)) );
+				mRtTangentsBuffersArray  .push_back( context().create_buffer_view(owned(nbufT)) );
+				mRtBitangentsBuffersArray.push_back( context().create_buffer_view(owned(nbufB)) );
 
 				materialIndices.push_back(mesh.mMaterialIndex);
 			}
@@ -1750,16 +1758,23 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				maxAnimObjNormals = std::max(maxAnimObjNormals, cntNrm);
 			}
 		}
-		std::vector<glm::vec3> dummyNormals(maxAnimObjNormals);
-		std::vector<uint32_t>  dummyNrmOff(maxAnimObjMeshes);
+		std::vector<glm::vec3> dummyVec3s(maxAnimObjNormals);
+		std::vector<uint32_t>  dummyNTBOff(maxAnimObjMeshes);
 		for (decltype(numFif) i = 0; i < numFif; ++i) {
-			//mRtAnimObjNormalsBuffer[i]			= context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNormals));
-			mRtAnimObjNormalsBuffer[i]			= context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyNormals).set_format<glm::vec3>());
-			mRtAnimObjNormalsOffsetBuffer[i]	= context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNrmOff));
-			mRtAnimObjNormalsBuffer[i]			->fill(dummyNormals.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
-			mRtAnimObjNormalsOffsetBuffer[i]	->fill(dummyNrmOff.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
-			mRtAnimObjNormalsBuffer[i].enable_shared_ownership();
-			mRtAnimObjNormalsBufferView[i] = context().create_buffer_view(shared(mRtAnimObjNormalsBuffer[i]));
+			mRtAnimObjNormalsBuffer       [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
+			mRtAnimObjTangentsBuffer      [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
+			mRtAnimObjBitangentsBuffer    [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
+			mRtAnimObjNTBOffsetBuffer     [i] = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNTBOff));
+			mRtAnimObjNormalsBuffer       [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjTangentsBuffer      [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjBitangentsBuffer    [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjNTBOffsetBuffer     [i]->fill(dummyNTBOff.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjNormalsBuffer       [i].enable_shared_ownership();
+			mRtAnimObjTangentsBuffer      [i].enable_shared_ownership();
+			mRtAnimObjBitangentsBuffer    [i].enable_shared_ownership();
+			mRtAnimObjNormalsBufferView   [i] = context().create_buffer_view(shared(mRtAnimObjNormalsBuffer   [i]));
+			mRtAnimObjTangentsBufferView  [i] = context().create_buffer_view(shared(mRtAnimObjTangentsBuffer  [i]));
+			mRtAnimObjBitangentsBufferView[i] = context().create_buffer_view(shared(mRtAnimObjBitangentsBuffer[i]));
 			// note: storage buffers with vec3's are bad! that's why we use a uniform_texel_buffer for normals
 		}
 
@@ -1897,12 +1912,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// so update the TLASs afterwards too, then it's fine
 
 		// blas index buffer stays the same, but the vertex buffer needs to be changed   TODO: -> compute shader
-		std::vector<glm::vec3> allNewNormals;
+		std::vector<glm::vec3> allNewNormals, allNewTangents, allNewBitangents;
 		for (int iMesh = 0; iMesh < dynObj.mMeshData.size(); ++iMesh) {
 			auto &mesh = dynObj.mMeshData[iMesh];
 
 			//auto newPositions = calc_new_mesh_positions_for_testing_only(mesh.mPositions);
-			auto [newPositions, newNormals] = calc_new_mesh_positions_and_normals_for_animated_object(dynObj, iMesh);
+			auto [newPositions, newNormals, newTangents, newBitangents] = calc_new_mesh_positions_and_ntb_for_animated_object(dynObj, iMesh);
 
 			auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices));
 			auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(newPositions).describe_only_member(newPositions[0], content_description::position));
@@ -1921,8 +1936,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				)
 			);
 
-			insert_into(allNewNormals, newNormals);
-			//insert_into(allNewNormals, mesh.mNormals); // just for debugging!
+			insert_into(allNewNormals,    newNormals);
+			insert_into(allNewTangents,   newTangents);
+			insert_into(allNewBitangents, newBitangents);
 		}
 
 		if (alsoUpdateTLAS) {
@@ -1955,21 +1971,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// update normals- and vertex-count buffers for anim object
-		update_normals_buffer_for_animated_object(dynObj, allNewNormals, fif);
+		update_ntb_buffers_for_animated_object(dynObj, allNewNormals, allNewTangents, allNewBitangents, fif);
 	}
 
-	std::tuple<std::vector<glm::vec3>,std::vector<glm::vec3>> calc_new_mesh_positions_and_normals_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {
+	std::tuple<std::vector<glm::vec3>,std::vector<glm::vec3>,std::vector<glm::vec3>,std::vector<glm::vec3>> calc_new_mesh_positions_and_ntb_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {
+		// returns tuple { positions, normals, tangents, bitangents }
 		// bone matrices have to be calculated already
 		// TODO: do this in a compute shader
 		auto &mesh = dynObj.mMeshData[iMeshIndex];
 		int bonesBaseIndex = iMeshIndex * MAX_BONES;
 		auto &posOrg = dynObj.mMeshData[iMeshIndex].mPositions;
 		auto &nrmOrg = dynObj.mMeshData[iMeshIndex].mNormals;
+		auto &tanOrg = dynObj.mMeshData[iMeshIndex].mTangents;
+		auto &bitOrg = dynObj.mMeshData[iMeshIndex].mBitangents;
 
 		const size_t numVertices = posOrg.size();
 		assert(nrmOrg.size() == numVertices);
 
-		std::vector<glm::vec3> posNew(numVertices), nrmNew(numVertices);
+		std::vector<glm::vec3> posNew(numVertices), nrmNew(numVertices), tanNew(numVertices), bitNew(numVertices);
 		
 		for (auto i = 0; i < numVertices; ++i) {
 			auto &aBoneIndices = mesh.mBoneIndices[i];
@@ -1987,9 +2006,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 			glm::mat4 nrmMatrix = glm::inverse(glm::transpose(boneMat));
 			nrmNew[i] = glm::normalize(glm::vec3(nrmMatrix * glm::vec4(glm::normalize(nrmOrg[i]), 0)));
+			tanNew[i] = glm::normalize(glm::vec3(nrmMatrix * glm::vec4(glm::normalize(tanOrg[i]), 0)));
+			bitNew[i] = glm::normalize(glm::vec3(nrmMatrix * glm::vec4(glm::normalize(bitOrg[i]), 0)));
 		}
 
-		return std::make_tuple(std::move(posNew), std::move(nrmNew));
+		return std::make_tuple(std::move(posNew), std::move(nrmNew), std::move(tanNew), std::move(bitNew));
 	}
 
 	std::vector<glm::vec3> calc_new_mesh_positions_for_testing_only(std::vector<glm::vec3> &posOrg) {
@@ -2013,22 +2034,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		return posNew;
 	}
 
-	void update_normals_buffer_for_animated_object(dynamic_object &dynObj, std::vector<glm::vec3> &normals, gvk::window::frame_id_t fif) {
-		// normals-offset per mesh
+	void update_ntb_buffers_for_animated_object(dynamic_object &dynObj, std::vector<glm::vec3> &normals, std::vector<glm::vec3> &tangents, std::vector<glm::vec3> &bitangents, gvk::window::frame_id_t fif) {
+		// normals/tangents/bitangents-offset per mesh
 		uint32_t cnt = 0;
-		std::vector<uint32_t> nrmOff;
+		std::vector<uint32_t> ntbOff;
 		for (auto &mesh : dynObj.mMeshData) {
-			nrmOff.push_back(cnt);
+			ntbOff.push_back(cnt);
 			cnt += static_cast<uint32_t>(mesh.mPositions.size());
 		}
 
 		// sanity check		
-		if (normals.size() != cnt) {
+		if (normals.size() != cnt || tangents.size() != cnt || bitangents.size() != cnt) {
 			throw avk::runtime_error("update_normals_buffer_for_animated_object sanity check failed !");
 		}
 
-		mRtAnimObjNormalsBuffer[fif]		->fill(normals.data(), 0, 0, normals.size() * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
-		mRtAnimObjNormalsOffsetBuffer[fif]	->fill(nrmOff.data(),  0, 0, nrmOff.size()  * sizeof(uint32_t),  avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjNormalsBuffer   [fif]->fill(normals.data(),    0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjTangentsBuffer  [fif]->fill(tangents.data(),   0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjBitangentsBuffer[fif]->fill(bitangents.data(), 0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjNTBOffsetBuffer [fif]->fill(ntbOff.data(),     0, 0, ntbOff.size() * sizeof(uint32_t),  avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 	}
 
 	void update_acceleration_structures_test() {
@@ -4332,8 +4355,8 @@ private: // v== Member variables ==v
 		int       moverId = 0;
 		glm::vec3 translation = {};
 		float     rotationAngle;	// radians
-		glm::vec3 startPos = glm::vec3(-5, 1, 0);
-		glm::vec3 endPos   = glm::vec3(5,1,0);
+		glm::vec3 startPos = glm::vec3(0,1,0); // glm::vec3(-5, 1, 0);
+		glm::vec3 endPos   = glm::vec3(0,1,0); // glm::vec3(5,1,0);
 		glm::vec4 rotAxisAngle = glm::vec4(0,0,1,-90);		// axis, angle(degr.)
 		float     speed    = 5.f;
 		float     t = 0.f;
@@ -4499,8 +4522,12 @@ private: // v== Member variables ==v
 	int mRtSamplesPerPixel = 1;
 	std::vector<avk::geometry_instance> mAllGeometryInstances;					// all geometry instances in the current TLAS
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsBuffer;			// one normals buffer for *all* meshes of the current animated object
-	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsOffsetBuffer;	// start index of first normal in above buffer for each mesh of the current animated object
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjTangentsBuffer;		// same for tangents
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjBitangentsBuffer;		// same for bitangents
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNTBOffsetBuffer;		// start index of first normal/tangent/bitangent in above buffer for each mesh of the current animated object
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjNormalsBufferView;		// for uniform_texel_buffer
+	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjTangentsBufferView;		// for uniform_texel_buffer
+	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjBitangentsBufferView;		// for uniform_texel_buffer
 	bool mRtDebugSparse = false;
 #endif
 

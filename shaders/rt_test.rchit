@@ -21,8 +21,10 @@ layout(set = 0, binding =  6) uniform samplerBuffer  normalsBuffers[];        //
 layout(set = 0, binding = 10) uniform samplerBuffer  tangentsBuffers[];       // entries are vec3
 layout(set = 0, binding = 11) uniform samplerBuffer  bitangentsBuffers[];     // entries are vec3
 //layout (std430, set = 0, binding = 8) readonly buffer AnimObjNormalsBuffer       { vec3 animObjNormals[]; }; // contains normals of all meshes of current anim object
-layout (set = 0, binding = 8) uniform samplerBuffer animObjNormals; // contains normals of all meshes of current anim object
-layout (std430, set = 0, binding = 9) readonly buffer AnimObjNormalsOffsetBuffer { uint animObjNrmOff[];  }; // .[meshIndex] = start index in animObjNormals[] for mesh meshIndex of current anim object
+layout(set = 0, binding =  8) uniform samplerBuffer animObjNormals;  // contains normals of all meshes of current anim object
+layout(set = 0, binding = 12) uniform samplerBuffer animObjTangents;
+layout(set = 0, binding = 13) uniform samplerBuffer animObjBitangents;
+layout(std430, set = 0, binding = 9) readonly buffer AnimObjNTBOffsetBuffer { uint animObjNTBOff[];  }; // .[meshIndex] = start index in animObjNormals[] for mesh meshIndex of current anim object
 
 hitAttributeEXT vec2 bary2;
 
@@ -127,41 +129,27 @@ void main()
     // calc texture coordinates by interpolating barycentric coordinates
     const vec3 barycentrics = vec3(1.0 - bary2.x - bary2.y, bary2);
     ivec3 indices = ivec3(texelFetch(indexBuffers[meshgroupId], gl_PrimitiveID).xyz);   // get the indices of the 3 triangle corners
-    vec2 uv0 = texelFetch(texCoordsBuffers[meshgroupId], indices.x).xy;                 // and use them to look up the corresponding texture coordinates
-    vec2 uv1 = texelFetch(texCoordsBuffers[meshgroupId], indices.y).xy;
-    vec2 uv2 = texelFetch(texCoordsBuffers[meshgroupId], indices.z).xy;
-    vec2 uv  = INTERPOL_BARY(uv0, uv1, uv2);       // and interpolate
+    vec2 uv = INTERPOL_BARY_TEXELFETCH(texCoordsBuffers[meshgroupId], indices, xy);     // and interpolate
 
     uint matIndex = materialIndices[meshgroupId];
 
     // get normal, tangent, bitangent - this works different for animated objects
     bool isAnimObject = meshgroupId >= pushConstants.mAnimObjFirstMeshId && meshgroupId < (pushConstants.mAnimObjFirstMeshId + pushConstants.mAnimObjNumMeshes);
-    vec3 n0,n1,n2, t0,t1,t2, b0,b1,b2;
-    vec3 normalWS;
+    vec3 normalWS, normalOS, tangentOS, bitangentOS;
     if (isAnimObject) {
         int meshIndex = meshgroupId - pushConstants.mAnimObjFirstMeshId;
-        ivec3 newIndices = indices + int(animObjNrmOff[meshIndex]);
-        n0 = texelFetch(animObjNormals, newIndices.x).xyz;
-        n1 = texelFetch(animObjNormals, newIndices.y).xyz;
-        n2 = texelFetch(animObjNormals, newIndices.z).xyz;
+        ivec3 newIndices = indices + int(animObjNTBOff[meshIndex]);
 
-        // FIXME! tan,bitan
-        //vec3 normalOS    = normalize(INTERPOL_BARY(n0, n1, n2));
-        vec3 normalOS = normalize(INTERPOL_BARY_TEXELFETCH(animObjNormals, newIndices, xyz));
-        normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
+        normalOS    = normalize(INTERPOL_BARY_TEXELFETCH(animObjNormals,    newIndices, xyz));
+        tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(animObjTangents,   newIndices, xyz));
+        bitangentOS = normalize(INTERPOL_BARY_TEXELFETCH(animObjBitangents, newIndices, xyz));
     } else {
-        n0 = texelFetch(normalsBuffers[meshgroupId], indices.x).xyz; t0 = texelFetch(tangentsBuffers[meshgroupId], indices.x).xyz; b0 = texelFetch(bitangentsBuffers[meshgroupId], indices.x).xyz;
-        n1 = texelFetch(normalsBuffers[meshgroupId], indices.y).xyz; t1 = texelFetch(tangentsBuffers[meshgroupId], indices.y).xyz; b1 = texelFetch(bitangentsBuffers[meshgroupId], indices.y).xyz;
-        n2 = texelFetch(normalsBuffers[meshgroupId], indices.z).xyz; t2 = texelFetch(tangentsBuffers[meshgroupId], indices.z).xyz; b2 = texelFetch(bitangentsBuffers[meshgroupId], indices.z).xyz;
-
-        //vec3 normalOS    = normalize(INTERPOL_BARY(n0, n1, n2));
-        vec3 normalOS = normalize(INTERPOL_BARY_TEXELFETCH(normalsBuffers[meshgroupId], indices, xyz));
-        vec3 tangentOS   = normalize(INTERPOL_BARY(t0, t1, t2));
-        vec3 bitangentOS = normalize(INTERPOL_BARY(b0, b1, b2));
-        //normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
-        vec3 normalSample = sample_from_normals_texture(matIndex, uv).rgb;
-        normalWS = calc_normalized_normalWS(normalSample, normalOS, tangentOS, bitangentOS, matIndex);
+        normalOS    = normalize(INTERPOL_BARY_TEXELFETCH(normalsBuffers   [meshgroupId], indices, xyz));
+        tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(tangentsBuffers  [meshgroupId], indices, xyz));
+        bitangentOS = normalize(INTERPOL_BARY_TEXELFETCH(bitangentsBuffers[meshgroupId], indices, xyz));
     }
+    //normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
+    normalWS = calc_normalized_normalWS(sample_from_normals_texture(matIndex, uv).rgb, normalOS, tangentOS, bitangentOS, matIndex);
 
     // cast a shadow ray
     float shadowFactor;
