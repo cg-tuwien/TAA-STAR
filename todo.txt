@@ -14,6 +14,8 @@ TODOs:
 		is it really necessary to update TLAS after updating BLAS?
 		lighting on tree leaves and grass is slightly different from rastered version
 
+	normals on movers kaputt in raster version now?? - NOT only when ENABLE_RAYTRACING - when using normal mapping; already in debug build 2 days ago (15.04.'21)
+
 	!add new settings to save/load funcs - main and taa
 
 	test scene:	normal mapping wrong? (models have no proper tangents/bitangents?)

@@ -59,6 +59,7 @@
     vec4 mLightDir;																									\
 	vec4 mDirLightIntensity;																						\
 	vec4 mAmbientLightIntensity;																					\
+	float mNormalMappingStrength;																					\
 	float mMaxRayLength;																							\
 	int  mNumSamples;																								\
 	int  mAnimObjFirstMeshId;																						\

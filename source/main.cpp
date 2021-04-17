@@ -53,18 +53,20 @@
 #endif
 
 #if ENABLE_RAYTRACING
-#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)		descriptor_binding(0, 0, mMaterialBuffer),							\
-													descriptor_binding(0, 1, mImageSamplers),							\
-													descriptor_binding(0, 2, mRtIndexBuffersArray),						\
-													descriptor_binding(0, 3, mRtTexCoordBuffersArray),					\
-													descriptor_binding(0, 4, mRtMaterialIndexBuffer),					\
-													descriptor_binding(0, 5, mMatricesUserInputBuffer[fif_]),			\
-													descriptor_binding(0, 6, mRtNormalsBuffersArray),					\
-													descriptor_binding(0, 7, mRtPixelOffsetBuffer),						\
-													descriptor_binding(0, 8, mRtAnimObjNormalsBufferView[fif_]),		\
-													descriptor_binding(0, 9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
-													descriptor_binding(1, 0, mRtImageViews[fif_]->as_storage_image()),	\
-													descriptor_binding(2, 0, mSceneData.mTLASs[fif_])
+#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)		descriptor_binding(0,  0, mMaterialBuffer),							\
+													descriptor_binding(0,  1, mImageSamplers),							\
+													descriptor_binding(0,  2, mRtIndexBuffersArray),					\
+													descriptor_binding(0,  3, mRtTexCoordBuffersArray),					\
+													descriptor_binding(0,  4, mRtMaterialIndexBuffer),					\
+													descriptor_binding(0,  5, mMatricesUserInputBuffer[fif_]),			\
+													descriptor_binding(0,  6, mRtNormalsBuffersArray),					\
+													descriptor_binding(0,  7, mRtPixelOffsetBuffer),					\
+													descriptor_binding(0,  8, mRtAnimObjNormalsBufferView[fif_]),		\
+													descriptor_binding(0,  9, mRtAnimObjNormalsOffsetBuffer[fif_]),		\
+													descriptor_binding(0, 10, mRtTangentsBuffersArray),					\
+													descriptor_binding(0, 11, mRtBitangentsBuffersArray),				\
+													descriptor_binding(1,  0, mRtImageViews[fif_]->as_storage_image()),	\
+													descriptor_binding(2,  0, mSceneData.mTLASs[fif_])
 #endif
 
 // convenience macros
@@ -225,6 +227,7 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		glm::vec4 mLightDir;
 		glm::vec4 mDirLightIntensity;
 		glm::vec4 mAmbientLightIntensity;
+		float mNormalMappingStrength;
 		float mMaxRayLength;
 		int  mNumSamples;
 		int  mAnimObjFirstMeshId;
@@ -290,6 +293,8 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 			std::vector<glm::vec3> rtPositionData;
 			std::vector<glm::vec2> rtTexCoordData;
 			std::vector<glm::vec3> rtNormalsData;
+			std::vector<glm::vec3> rtTangentsData;
+			std::vector<glm::vec3> rtBitangentsData;
 		} rayTracingTmp;
 	};
 
@@ -1225,10 +1230,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 						#if ENABLE_RAYTRACING
 							// temp data for ray tracing - FIXME
-							mg.rayTracingTmp.rtIndexData    = indices;
-							mg.rayTracingTmp.rtPositionData = positions;
-							mg.rayTracingTmp.rtTexCoordData = texCoords;
-							mg.rayTracingTmp.rtNormalsData  = normals;
+							mg.rayTracingTmp.rtIndexData      = indices;
+							mg.rayTracingTmp.rtPositionData   = positions;
+							mg.rayTracingTmp.rtTexCoordData   = texCoords;
+							mg.rayTracingTmp.rtNormalsData    = normals;
+							mg.rayTracingTmp.rtTangentsData   = tangents;
+							mg.rayTracingTmp.rtBitangentsData = bitangents;
 						#endif			
 
 						mSceneData.mMeshgroups.push_back(mg);
@@ -1529,10 +1536,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			tbuf->fill(mg.rayTracingTmp.rtTexCoordData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 			mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
 
-			// and normals...
-			auto nbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtNormalsData).describe_only_member(mg.rayTracingTmp.rtNormalsData[0]));
-			nbuf->fill(mg.rayTracingTmp.rtNormalsData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
-			mRtNormalsBuffersArray.push_back( context().create_buffer_view(owned(nbuf)) );
+			// and normals, tangents, bitangents ...
+			auto nbufN = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtNormalsData   ).describe_only_member(mg.rayTracingTmp.rtNormalsData   [0]));
+			auto nbufT = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtTangentsData  ).describe_only_member(mg.rayTracingTmp.rtTangentsData  [0]));
+			auto nbufB = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtBitangentsData).describe_only_member(mg.rayTracingTmp.rtBitangentsData[0]));
+			nbufN->fill(mg.rayTracingTmp.rtNormalsData   .data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			nbufT->fill(mg.rayTracingTmp.rtTangentsData  .data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			nbufB->fill(mg.rayTracingTmp.rtBitangentsData.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+			mRtNormalsBuffersArray   .push_back( context().create_buffer_view(owned(nbufN)) );
+			mRtTangentsBuffersArray  .push_back( context().create_buffer_view(owned(nbufT)) );
+			mRtBitangentsBuffersArray.push_back( context().create_buffer_view(owned(nbufB)) );
 
 			// and store material index
 			materialIndices.push_back(mg.materialIndex);
@@ -1557,6 +1570,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				tbuf->fill(mesh.mTexCoords.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 				mRtTexCoordBuffersArray.push_back( context().create_buffer_view(owned(tbuf)) );
 
+				// TODO: do we actually need this ? we don't access it...
 				auto nbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mNormals).describe_only_member(mesh.mNormals[0]));
 				nbuf->fill(mesh.mNormals.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
 				mRtNormalsBuffersArray.push_back( context().create_buffer_view(owned(nbuf)) );
@@ -2702,6 +2716,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mLightDir					= glm::vec4(mDirLight.dir, 0.f);
 		pushc.mDirLightIntensity		= glm::vec4(mDirLight.intensity * mDirLight.boost, 0.f);
 		pushc.mAmbientLightIntensity	= glm::vec4(mAmbLight.col       * mAmbLight.boost, 0.f);
+		pushc.mNormalMappingStrength	= mNormalMappingStrength;
 		pushc.mMaxRayLength				= glm::distance(mSceneData.mBoundingBox.min, mSceneData.mBoundingBox.max); // use scene BB diagonal as max ray length
 		pushc.mNumSamples				= mRtSamplesPerPixel;
 		pushc.mAnimObjFirstMeshId		= static_cast<int>(mDynObjects[mMovingObject.moverId].mRtCustomIndexBase);
@@ -3559,7 +3574,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 2 : 3).get();
 			srcColorImages[i]    = &mFramebuffer[i]->image_view_at(0).get();
 			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4).get();
+#if ENABLE_RAYTRACING
 			srcRayTracedImages[i] = &mRtImageViews[i].get();
+#else
+			srcRayTracedImages[i] = nullptr;
+#endif
 		}
 
 		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages, srcMatIdImages, srcRayTracedImages);
@@ -4473,6 +4492,8 @@ private: // v== Member variables ==v
 	std::vector<avk::buffer_view> mRtIndexBuffersArray;
 	std::vector<avk::buffer_view> mRtTexCoordBuffersArray;
 	std::vector<avk::buffer_view> mRtNormalsBuffersArray;
+	std::vector<avk::buffer_view> mRtTangentsBuffersArray;
+	std::vector<avk::buffer_view> mRtBitangentsBuffersArray;
 	avk::buffer mRtMaterialIndexBuffer;
 	avk::buffer mRtPixelOffsetBuffer;
 	int mRtSamplesPerPixel = 1;
