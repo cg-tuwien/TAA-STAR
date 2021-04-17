@@ -13,9 +13,8 @@ TODOs:
 		determine mip level for texture sampling? -> see papers "Improved Shader and Texture Level of Detail Using Ray Cones" and "Texture Level of Detail Strategies for Real-Time Ray Tracing"
 		is it really necessary to update TLAS after updating BLAS?
 		lighting on tree leaves and grass is slightly different from rastered version
-		with fixed normal mapping -> floor on test scene looks different in RT
-		most anim objects (and dyn objects) don't use normal mapping -> don't need full NTB calc, just set a flag in ray tracer to ignore nrm.mapping
-
+		most anim objects (and other dyn objects) don't use normal mapping -> don't need full NTB calc, just set a flag in ray tracer to ignore nrm.mapping
+		use same render debug displays as in raster version
 
 	normals on movers kaputt in raster version now?? - NOT only when ENABLE_RAYTRACING - when using normal mapping; already in debug build 2 days ago (15.04.'21)
 		- OK if setting normalSample=vec3(0,0,1) in calc_normalized_normalVS()

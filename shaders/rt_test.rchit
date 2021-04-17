@@ -28,6 +28,8 @@ layout(std430, set = 0, binding = 9) readonly buffer AnimObjNTBOffsetBuffer { ui
 
 hitAttributeEXT vec2 bary2;
 
+mat3 matrixNormalsOStoWS;	// matrix to bring normals from object to world space
+
 vec4 sample_from_normals_texture(uint matIndex, vec2 uv)
 {
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
@@ -112,7 +114,7 @@ vec3 calc_normalized_normalWS(vec3 sampledNormal, in vec3 normalOS, in vec3 tang
 	float userDefinedDisplacementStrength = pushConstants.mNormalMappingStrength;
 	normalSample.xy *= userDefinedDisplacementStrength * normalMappingStrengthFactor;
 
-	vec3 normalWS = gl_ObjectToWorldEXT * vec4(matrixTStoOS * normalSample, 0); // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
+	vec3 normalWS = matrixNormalsOStoWS * matrixTStoOS * normalSample;
 
 	return normalize(normalWS);
 }
@@ -123,6 +125,8 @@ vec3 calc_normalized_normalWS(vec3 sampledNormal, in vec3 normalOS, in vec3 tang
 
 void main()
 {
+	matrixNormalsOStoWS = inverse(transpose(mat3(gl_ObjectToWorldEXT)));
+
     // which index buffer to use? -> meshgroupId (stored in geometry custom index)
     int meshgroupId = gl_InstanceCustomIndexEXT;
 
@@ -148,7 +152,7 @@ void main()
         tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(tangentsBuffers  [meshgroupId], indices, xyz));
         bitangentOS = normalize(INTERPOL_BARY_TEXELFETCH(bitangentsBuffers[meshgroupId], indices, xyz));
     }
-    //normalWS = normalize(gl_ObjectToWorldEXT * vec4(normalOS,0));   // note: gl_ObjectToWorldEXT is a mat4x3    // should we use inv transp ?
+    //normalWS = normalize(matrixNormalsOStoWS * normalOS);
     normalWS = calc_normalized_normalWS(sample_from_normals_texture(matIndex, uv).rgb, normalOS, tangentOS, bitangentOS, matIndex);
 
     // cast a shadow ray
@@ -190,7 +194,6 @@ void main()
 	vec4 blinnPhongColor = vec4(vec3(ambientIllumination + emissive + shadowFactor * diffAndSpec), 1.0);
 
     hitValue = blinnPhongColor.rgb;
-    //hitValue = normalOS * 0.5 + 0.5;
 
     // gl_PrimitiveID = triangle id. ; if multiple meshgroup-instances -> multiple triangles with same gl_PrimitiveID
     // gl_InstanceCustomIndexEXT = whatever is set in the GeometryInstance in user code

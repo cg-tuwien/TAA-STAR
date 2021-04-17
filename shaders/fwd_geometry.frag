@@ -313,6 +313,12 @@ void main()
 	}
 	//oFragColor = vec4(normalize(fs_in.normalOS.xyz) * 0.5 + 0.5, 1.0);
 	//oFragColor = vec4(normalize(normalVS.xyz) * 0.5 + 0.5, 1.0);
+
+	//vec3 toLightDirVS = normalize(-uboLights.mLightData[uboLights.mRangesAmbientDirectional[2]].mDirection.xyz);
+	//vec3 toLightDirWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * toLightDirVS);
+	//vec3 normalWS     = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
+	//oFragColor = vec4(normalWS,1);
+	//oFragColor = vec4(vec3(dot(toLightDirWS,normalWS)),1);
 }
 // -------------------------------------------------------
 
