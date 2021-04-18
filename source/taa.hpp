@@ -57,12 +57,12 @@ class taa : public gvk::invokee
 		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
 		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
-		uint32_t mRayTraceAugmentFlags		= 0x7f;
-		float    mRayTraceAugment_WNrm		= 1.0;				// weight for normals
-		float    mRayTraceAugment_WDpt		= 1.0;				// weight for depth
-		float    mRayTraceAugment_WMId		= 1.0;				// weight for material
-		float    mRayTraceAugment_WLum		= 1.0;				// weight for luminance
-		float    mRayTraceAugment_Thresh	= 1.0;				// threshold for sum of weighted indicators
+		uint32_t mRayTraceAugmentFlags		= 0xffffffff & ~(TAA_RTFLAG_ALL | TAA_RTFLAG_FXD);
+		float    mRayTraceAugment_WNrm		= 0.5f;				// weight for normals
+		float    mRayTraceAugment_WDpt		= 0.5f;				// weight for depth
+		float    mRayTraceAugment_WMId		= 0.5f;				// weight for material
+		float    mRayTraceAugment_WLum		= 0.5f;				// weight for luminance
+		float    mRayTraceAugment_Thresh	= 0.5f;				// threshold for sum of weighted indicators
 		int      mRayTraceHistoryCount      = 0;				// how long to keep ray trace flag around
 		//float pad1;
 
@@ -449,41 +449,6 @@ public:
 						InputFloatW(60, "max", &param.mVelBasedAlphaMax,    0.f, 0.f, "%.2f"); SameLine();
 						InputFloatW(60, "fac", &param.mVelBasedAlphaFactor, 0.f, 0.f, "%.3f");
 
-						if (CollapsingHeader("Ray trace augment")) {
-							PushID("RTaugment");
-							CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
-							
-							Text("Segmentation:");
-							static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum, flgCnt, flgAll;
-							flgOut = ((param.mRayTraceAugmentFlags & 0x01) != 0);
-							flgDis = ((param.mRayTraceAugmentFlags & 0x02) != 0);
-							flgNrm = ((param.mRayTraceAugmentFlags & 0x04) != 0);
-							flgDpt = ((param.mRayTraceAugmentFlags & 0x08) != 0);
-							flgMId = ((param.mRayTraceAugmentFlags & 0x10) != 0);
-							flgLum = ((param.mRayTraceAugmentFlags & 0x20) != 0);
-							flgCnt = ((param.mRayTraceAugmentFlags & 0x40) != 0);
-							flgAll = ((param.mRayTraceAugmentFlags & 0x80) != 0);
-							Checkbox("offscreen",   &flgOut);
-							Checkbox("disoccl. ",   &flgDis);
-							Checkbox("normals  ",   &flgNrm);	SameLine(); SliderFloatW(80, "##wNrm", &param.mRayTraceAugment_WNrm, 0.f, 1.f);
-							Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
-							Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
-							Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
-							Checkbox("use count",   &flgCnt);	HelpMarker("Use history counter - also ray trace pixels marked in previous frames");
-							Checkbox("RT ALL   ",   &flgAll);	HelpMarker("Just for debugging - raytrace everything");
-							param.mRayTraceAugmentFlags = (flgOut ? 0x01 : 0)
-														| (flgDis ? 0x02 : 0)
-														| (flgNrm ? 0x04 : 0)
-														| (flgDpt ? 0x08 : 0)
-														| (flgMId ? 0x10 : 0)
-														| (flgLum ? 0x20 : 0)
-														| (flgCnt ? 0x40 : 0)
-														| (flgAll ? 0x80 : 0);
-							SliderFloatW(80, "Threshold", &param.mRayTraceAugment_Thresh, 0.f, 1.f);
-							InputInt("History counter", &param.mRayTraceHistoryCount);
-							PopID();
-						}
-
 						if (isPrimary) {
 							ComboW(120,"##sharpener", &mSharpener, "no sharpening\0simple sharpening\0FidelityFX-CAS\0");
 							SameLine();
@@ -491,15 +456,63 @@ public:
 						} else {
 							SetCursorPosY(GetCursorPosY() + checkbox_height);
 						}
+					}
 
-						//
+					if (CollapsingHeader("Ray trace augment")) {
+						// technically belongs to Params, but keep it separate for a cleaner GUI
+						PushID("RTaugment");
+						static int  numSamples = mRayTraceCallback ? mRayTraceCallback->getNumRayTraceSamples() : 0;
+						static bool debugMode  = mRayTraceCallback ? mRayTraceCallback->getRayTraceAugmentTaaDebug() : false;
+
+						CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
+						HelpMarker("You should also set the rasterer to always use texture LOD level 0! (Menu Rendering)");
+						SameLine();
+						if (Checkbox("debug##debug sparse tracing", &debugMode) && mRayTraceCallback) mRayTraceCallback->setRayTraceAugmentTaaDebug(debugMode);
+						HelpMarker("Show areas to be sparsely traced instead of actually ray tracing them");
+						if (InputIntW(80, "RT samples##RtSamples", &numSamples) && mRayTraceCallback) mRayTraceCallback->setNumRayTraceSamples(numSamples);
+
+						Text("Segmentation:");
+						static bool flgOut, flgDis, flgNrm, flgDpt, flgMId, flgLum, flgCnt, flgAll, flgFxD, flgFxA;
+						flgOut = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_OUT) != 0);
+						flgDis = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_DIS) != 0);
+						flgNrm = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_NRM) != 0);
+						flgDpt = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_DPT) != 0);
+						flgMId = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_MID) != 0);
+						flgLum = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_LUM) != 0);
+						flgCnt = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_CNT) != 0);
+						flgAll = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_ALL) != 0);
+						flgFxD = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_FXD) != 0);
+						flgFxA = ((param.mRayTraceAugmentFlags & TAA_RTFLAG_FXA) != 0);
+						Checkbox("offscreen",   &flgOut);
+						Checkbox("disoccl. ",   &flgDis);
+						Checkbox("normals  ",   &flgNrm);	SameLine(); SliderFloatW(80, "##wNrm", &param.mRayTraceAugment_WNrm, 0.f, 1.f);
+						Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
+						Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
+						Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
+						Checkbox("use count",   &flgCnt);	SameLine(); InputIntW   (80, "##History counter", &param.mRayTraceHistoryCount); HelpMarker("Use history counter - also ray trace pixels marked in <x> previous frames");
+						Checkbox("RT ALL   ",   &flgAll);	HelpMarker("Just for debugging - mark everything for raytracing");
+						Checkbox("Fxaa dbg.",   &flgFxD);	HelpMarker("Generate a fixed size border to be handled by FXAA");
+						Checkbox("Use Fxaa ",   &flgFxA);
+						param.mRayTraceAugmentFlags = (flgOut ? TAA_RTFLAG_OUT : 0)
+													| (flgDis ? TAA_RTFLAG_DIS : 0)
+													| (flgNrm ? TAA_RTFLAG_NRM : 0)
+													| (flgDpt ? TAA_RTFLAG_DPT : 0)
+													| (flgMId ? TAA_RTFLAG_MID : 0)
+													| (flgLum ? TAA_RTFLAG_LUM : 0)
+													| (flgCnt ? TAA_RTFLAG_CNT : 0)
+													| (flgAll ? TAA_RTFLAG_ALL : 0)
+													| (flgFxD ? TAA_RTFLAG_FXD : 0)
+													| (flgFxA ? TAA_RTFLAG_FXA : 0);
+						SliderFloatW(80, "Threshold", &param.mRayTraceAugment_Thresh, 0.f, 1.f);
+						
+						PopID();
 					}
 
 					if (CollapsingHeader("Debug")) {
 						static const char* sDebugModeValues[] = { "color bb (rgb)", "color bb(size)", "rejection", "alpha", "velocity", "pixel-speed", "screen-result", "history-result", "seg mask", "debug" /* "debug" always last */ };
 						CheckboxB32("debug##show debug", &param.mDebugToScreenOutput);
 						SameLine();
-						Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues));
+						Combo("##debug mode", &param.mDebugMode, sDebugModeValues, IM_ARRAYSIZE(sDebugModeValues), IM_ARRAYSIZE(sDebugModeValues));
 						PushItemWidth(100);
 						SliderFloat("scale##debug scale", &param.mDebugScale, 0.f, 100.f, "%.0f");
 						PopItemWidth();

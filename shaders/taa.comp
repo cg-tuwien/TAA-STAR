@@ -580,17 +580,24 @@ vec2 sobel(float c00, float c01, float c02, float c10, /* float c11, */ float c1
 uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDepth) {
 	//gDebugValue = vec4(linearize_depth(texelFetch(uCurrentDepth, iuv, 0).r), 0, 0, 0);
 
+	// debug setting - fixed size border for FXAA?
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_FXD) != 0) {
+		const int b = 100;
+		if (any(lessThan(iuv, ivec2(b))) || any(greaterThanEqual(iuv, ivec2(textureSize_loRes-b))))
+			return 1;
+	}
+
 	// debug setting - ray trace everything?
-	if ((params.mRayTraceAugmentFlags & 0x80) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_ALL) != 0) {
 		return 2;
 	}
 
 	// use history counter?
-	bool useHistoryCount = ((params.mRayTraceAugmentFlags & 0x40) != 0);
+	bool useHistoryCount = ((params.mRayTraceAugmentFlags & TAA_RTFLAG_CNT) != 0);
 	uint newCountValue = useHistoryCount ? params.mRayTraceHistoryCount << 16 : 0;
 
 	// out of screen disocclusion?
-	if ((params.mRayTraceAugmentFlags & 0x01) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_OUT) != 0) {
 		if (any(lessThan(historyUv, vec2(0))) || any(greaterThanEqual(historyUv, vec2(1)))) {
 			return 1;
 		}
@@ -602,7 +609,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	uint matId = imageLoad(uCurrentMaterial, iuv).r;
 
 	// determine disocclusions by moving or animated objects
-	if ((params.mRayTraceAugmentFlags & 0x02) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_DIS) != 0) {
 		ivec2 tcPrev = uv_to_tc(historyUv, textureSize_loRes);
 		if (all(greaterThanEqual(tcPrev, ivec2(0))) && all(lessThan(tcPrev, textureSize_loRes))) {
 			uint prevMatId = imageLoad(uPreviousMaterial, uv_to_tc(historyUv, textureSize_loRes)).r;
@@ -621,7 +628,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	float lumValue = 0.0;
 
 	// depth dervative
-	if ((params.mRayTraceAugmentFlags & 0x08) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_DPT) != 0) {
 		dptValue = length( sobel( sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2(-1, -1))),
 			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 0, -1))),
 			                      sample_linear_depth(CLAMP_TO_TEX(iuv + ivec2( 1, -1))),
@@ -635,7 +642,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	// normals - TODO - do we even have them in forward shading?
 
 	// material id "derivative"
-	if ((params.mRayTraceAugmentFlags & 0x10) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_MID) != 0) {
 		if ((matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(-1,0))).r) || (matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(1,0))).r) ||
 			(matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(0,-1))).r) || (matId != imageLoad(uCurrentMaterial, CLAMP_TO_TEX(iuv + ivec2(0,1))).r)) {
 			matValue = 1.0;
@@ -643,7 +650,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	}
 
 	// luminance derivative
-	if ((params.mRayTraceAugmentFlags & 0x20) != 0) {
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_LUM) != 0) {
 		lumValue = length( sobel( sample_luminance(CLAMP_TO_TEX(iuv + ivec2(-1, -1))),
 			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 0, -1))),
 			                      sample_luminance(CLAMP_TO_TEX(iuv + ivec2( 1, -1))),
@@ -658,7 +665,7 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	            + dptValue * params.mRayTraceAugment_WDpt
 	            + matValue * params.mRayTraceAugment_WMId
 	            + lumValue * params.mRayTraceAugment_WLum;
-	if (total > params.mRayTraceAugment_Thresh) return 2 | newCountValue;
+	if (total >= params.mRayTraceAugment_Thresh) return 2 | newCountValue;
 
 	// TODO: take care of bootstrapping - when are the prevframe buffers valid?!
 	// TODO: consider prevoid frame's segmask ("segmask history")

@@ -380,6 +380,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 	}
 
+	virtual int  getNumRayTraceSamples() { return mRtSamplesPerPixel; };
+	virtual void setNumRayTraceSamples(int aNumSamples) { mRtSamplesPerPixel = glm::clamp(aNumSamples, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL); };
+	virtual bool getRayTraceAugmentTaaDebug() { return mRtDebugSparse; };
+	virtual void setRayTraceAugmentTaaDebug(bool aDebug) { mRtDebugSparse = aDebug; };
+
+
 	void prepare_matrices_ubo()
 	{
 		// Prepare a struct containing all the matrices.
@@ -4516,7 +4522,6 @@ private: // v== Member variables ==v
 	std::vector<avk::buffer_view> mRtBitangentsBuffersArray;
 	avk::buffer mRtMaterialIndexBuffer;
 	avk::buffer mRtPixelOffsetBuffer;
-	int mRtSamplesPerPixel = 1;
 	std::vector<avk::geometry_instance> mAllGeometryInstances;					// all geometry instances in the current TLAS
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsBuffer;			// one normals buffer for *all* meshes of the current animated object
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjTangentsBuffer;		// same for tangents
@@ -4525,8 +4530,9 @@ private: // v== Member variables ==v
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjNormalsBufferView;		// for uniform_texel_buffer
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjTangentsBufferView;		// for uniform_texel_buffer
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjBitangentsBufferView;		// for uniform_texel_buffer
-	bool mRtDebugSparse = false;
 #endif
+	int mRtSamplesPerPixel = 4;
+	bool mRtDebugSparse = false;
 
 };
 

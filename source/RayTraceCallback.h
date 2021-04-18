@@ -4,5 +4,9 @@
 
 class RayTraceCallback {
 public:
-	virtual void ray_trace_callback(avk::command_buffer &cmd) {};
+	virtual void ray_trace_callback(avk::command_buffer &cmd) = 0;
+	virtual int  getNumRayTraceSamples() = 0;
+	virtual void setNumRayTraceSamples(int aNumSamples) = 0;
+	virtual bool getRayTraceAugmentTaaDebug() = 0;
+	virtual void setRayTraceAugmentTaaDebug(bool aDebug) = 0;
 };

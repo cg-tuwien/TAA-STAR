@@ -3,25 +3,17 @@ TODOs:
 	raytracing:
 		using separate, duplicated index/vertex buffers (and others) for now... need to extend some avk functions, esp. for AS building
 		add subpixel jittering so taa can work on raytraced image? do we need that actually?
-		ok - animated objects?
 		do proper alpha-blending for transparents (accumulate hit counts + alpha-scaled colors) - need to traverse in ray sequence?
-		ok - use main shadow settings to enable/disable raytraced shadows
-		ok - see normalmap fix. lighting looks different from raster version in test scene?
 		do normal mapping
 		dark spots in anim-models are self-shadows.. need very high tmin
 		refactor tlas/blas rebuilding
 		determine mip level for texture sampling? -> see papers "Improved Shader and Texture Level of Detail Using Ray Cones" and "Texture Level of Detail Strategies for Real-Time Ray Tracing"
 		is it really necessary to update TLAS after updating BLAS?
-		lighting on tree leaves and grass is slightly different from rastered version
 		most anim objects (and other dyn objects) don't use normal mapping -> don't need full NTB calc, just set a flag in ray tracer to ignore nrm.mapping
 		use same render debug displays as in raster version
-
-	normals on movers kaputt in raster version now?? - NOT only when ENABLE_RAYTRACING - when using normal mapping; already in debug build 2 days ago (15.04.'21)
-		- OK if setting normalSample=vec3(0,0,1) in calc_normalized_normalVS()
-		- normals texture wrong when none is defined?
-		- normal sample from normals texture is vec4(1)
-		-> see material_image_helpers.cpp L231 ! -> should be (and was!) { 127, 127, 255, 0 } ! broken in gvk commit 9c2cf36f69364434ee2672608d5f399964b92b78 !
-		---> OK, fixed in gvk
+		FXAA for off-screen disocclusions
+		normals derivative for segmask
+		try to achieve SAME image when using RT ALL in taa - see eg. gob.ghosting scene for diff (use rt hist)
 
 	!add new settings to save/load funcs - main and taa
 
