@@ -58,6 +58,7 @@
     <ClInclude Include="source\BoundingBox.hpp" />
     <ClInclude Include="source\FrustumCulling.hpp" />
     <ClInclude Include="source\RayTraceCallback.h" />
+    <ClInclude Include="shaders\Fxaa3_11_mod.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\sky_gradient.frag">
@@ -173,6 +174,12 @@
       <Filter>shaders</Filter>
     </None>
     <None Include="shaders\rt_test_transp.rahit">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\antialias_fxaa_prepare.comp">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shaders\antialias_fxaa.comp">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

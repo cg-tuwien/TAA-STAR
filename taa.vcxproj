@@ -36,6 +36,11 @@
   <ItemGroup>
     <ClInclude Include="shaders\ffx_a.h" />
     <ClInclude Include="shaders\ffx_cas.h" />
+    <ClInclude Include="shaders\Fxaa3_11_mod.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Publish_Vulkan|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug_Vulkan|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release_Vulkan|x64'">true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="shaders\shader_common_main.glsl" />
     <ClInclude Include="shaders\shader_cpu_common.h" />
     <ClInclude Include="source\BoundingBox.hpp" />
@@ -58,6 +63,8 @@
     <None Include="assets\models\goblin.dae" />
     <None Include="gears_vk\assets\sponza_with_plants_and_terrain.fscene" />
     <None Include="shaders\animatedObject.vert" />
+    <None Include="shaders\antialias_fxaa.comp" />
+    <None Include="shaders\antialias_fxaa_prepare.comp" />
     <None Include="shaders\blinnphong_and_normal_mapping.frag" />
     <None Include="shaders\build_scene_buffers.comp" />
     <None Include="shaders\calc_shadows.glsl" />

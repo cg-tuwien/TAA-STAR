@@ -1,0 +1,27 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// ###### SRC/DST IMAGES #################################
+layout(set = 0, binding = 1) uniform texture2D uInput;
+layout(set = 0, binding = 2, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uOutput;
+// -------------------------------------------------------
+
+// ################## COMPUTE SHADER MAIN ###################
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+void main()
+{
+	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(iuv, textureSize(uInput, 0)))) return;
+
+	// FXAA needs luma in alpha channel - compute it (see fxaa3_11.h)
+
+	vec4 color;
+	color.rgb = texelFetch(uInput, iuv, 0).rgb;
+	color.a   = dot(color.rgb, vec3(0.299, 0.587, 0.114)); // compute luma
+	imageStore(uOutput, iuv, color);
+}
+

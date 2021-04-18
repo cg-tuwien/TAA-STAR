@@ -88,6 +88,14 @@ class taa : public gvk::invokee
 		varAU4(const1);
 	};
 
+	struct push_constants_for_fxaa {						// NOTE: These are only the required settings for FXAA QUALITY PC (FXAA_PC == 1)
+		glm::vec2 fxaaQualityRcpFrame;						// {x_} = 1.0/screenWidthInPixels, {_y} = 1.0/screenHeightInPixels
+		float     fxaaQualitySubpix				= 0.75f;	// amount of sub-pixel aliasing removal
+		float     fxaaQualityEdgeThreshold		= 0.116f;	// minimum amount of local contrast required to apply algorithm
+		float     fxaaQualityEdgeThresholdMin	= 0.0833f;	// trims the algorithm from processing darks
+		float     pad1, pad2, pad3;
+	};
+
 	struct push_constants_for_postprocess {	// !ATTN to alignment!
 		glm::ivec4 zoomSrcLTWH	= { 960 - 10, 540 - 10, 20, 20 };
 		glm::ivec4 zoomDstLTWH	= { 1920 - 200 - 10, 10, 200, 200 };
@@ -260,6 +268,9 @@ public:
 	{
 		std::vector<avk::command_buffer> layoutTransitions;
 
+		mSampler = gvk::context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0);	// ac: changed from clamp_to_border to clamp_to_edge
+		mSampler.enable_shared_ownership();
+
 		for (size_t i = 0; i < CF; ++i) {
 			
 			mSrcColor[i]	= aSourceColorImageViews[i];	// Store pointers to the source color result images
@@ -299,6 +310,12 @@ public:
 			);
 			rdoc::labelImage(mTempImages[1][i]->get_image().handle(), "taa.mTempImages_1", i);
 			layoutTransitions.emplace_back(std::move(mTempImages[1][i]->get_image().transition_to_layout({}, avk::sync::with_barriers_by_return({}, {})).value()));
+
+			mTempImages[0][i].enable_shared_ownership();
+			mTempImages[1][i].enable_shared_ownership();
+			mTempImageSamplers[0][i] = gvk::context().create_image_sampler(avk::shared(mTempImages[0][i]), avk::shared(mSampler));
+			mTempImageSamplers[1][i] = gvk::context().create_image_sampler(avk::shared(mTempImages[1][i]), avk::shared(mSampler));
+
 
 			mDebugImages[i] = gvk::context().create_image_view(
 				gvk::context().create_image(w, h, vk::Format::eR16G16B16A16Sfloat, 1, avk::memory_usage::device, avk::image_usage::general_storage_image)
@@ -611,7 +628,7 @@ public:
 	void init_updater() {
 		LOG_DEBUG("TAA: initing updater");
 		mUpdater.emplace();
-		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline, &mPostProcessPipeline };
+		std::vector<avk::compute_pipeline *> comp_pipes = { &mTaaPipeline, &mSharpenerPipeline, &mCasPipeline, &mPostProcessPipeline, &mPrepareFxaaPipeline, &mFxaaPipeline };
 		for (auto ppipe : comp_pipes) {
 			ppipe->enable_shared_ownership();
 			mUpdater->on(gvk::shader_files_changed_event(*ppipe)).update(*ppipe);
@@ -629,7 +646,7 @@ public:
 		// Create a descriptor cache that helps us to conveniently create descriptor sets:
 		mDescriptorCache = gvk::context().create_descriptor_cache();
 
-		mSampler = context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0);	// ac: changed from clamp_to_border to clamp_to_edge
+		// mSampler creation moved to set_source_image_views()
 
 		for (size_t i = 0; i < CF; ++i) {
 			mUniformsBuffer[i] = context().create_buffer(memory_usage::host_coherent, {}, uniform_buffer_meta::create_from_size(sizeof(uniforms_for_taa)));
@@ -667,6 +684,20 @@ public:
 			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
 			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image()),
 			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_cas) }
+		);
+
+		mPrepareFxaaPipeline = context().create_compute_pipeline_for(
+			compute_shader("shaders/antialias_fxaa_prepare.comp.spv"),
+			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image())
+		);
+
+		mFxaaPipeline = context().create_compute_pipeline_for(
+			compute_shader("shaders/antialias_fxaa.comp.spv"),
+			descriptor_binding(0, 1, mTempImageSamplers[0][0]),
+			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image()),
+			descriptor_binding(0, 3, mSegmentationImages[0]->as_storage_image()),
+			push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_fxaa) }
 		);
 
 		mPostProcessPipeline = context().create_compute_pipeline_for(
@@ -907,6 +938,8 @@ public:
 		mTaaUniforms.mCamNearPlane = quakeCamera->near_plane_distance();
 		mTaaUniforms.mCamFarPlane  = quakeCamera->far_plane_distance();
 
+		mFxaaPushConstants.fxaaQualityRcpFrame = 1.f / glm::vec2(mOutputResolution);	// {x_} = 1.0/screenWidthInPixels, {_y} = 1.0/screenHeightInPixels
+
 		mPostProcessPushConstants.splitX = mSplitScreen ? mSplitX : -1;
 		mPostProcessPushConstants.debugL_mask = mParameters[0].mDebugMask;
 		mPostProcessPushConstants.debugR_mask = mParameters[1].mDebugMask;
@@ -994,6 +1027,38 @@ public:
 
 						//blit_image(mSrcRayTraced[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
 						pLastProducedImageView_t = mSrcRayTraced[inFlightIndex];
+					}
+
+					if (((mParameters[0].mRayTraceAugmentFlags & TAA_RTFLAG_FXA) != 0) || (mSplitScreen && ((mParameters[1].mRayTraceAugmentFlags & TAA_RTFLAG_FXA) != 0))) {
+						// antialias pixels marked for FXAA in segmask
+
+						int tmpA = nextTempImageIndex;		// prepare pass renders result -> *ping*
+						int tmpB = nextTempImageIndex ^ 1;	// fxaa    pass renders *ping* -> *pong*
+
+						// prepare: FXAA should be run after tonemapping and requires luma in alpha channel!
+						cmdbfr->bind_pipeline(const_referenced(mPrepareFxaaPipeline));
+						cmdbfr->bind_descriptors(mPrepareFxaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+							descriptor_binding(0, 1, pLastProducedImageView_t->as_storage_image()),
+							descriptor_binding(0, 2, mTempImages[tmpA][inFlightIndex]->as_storage_image())
+							}));
+
+						cmdbfr->handle().dispatch((mTempImages[tmpA][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[tmpA][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+						gvk::context().device().waitIdle(); // FIXME - sync
+
+						// run FXAA
+						cmdbfr->bind_pipeline(const_referenced(mFxaaPipeline));
+						cmdbfr->bind_descriptors(mFxaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
+							descriptor_binding(0, 1, mTempImageSamplers[tmpA][inFlightIndex]),
+							descriptor_binding(0, 2, mTempImages[tmpB][inFlightIndex]->as_storage_image()),
+							descriptor_binding(0, 3, mSegmentationImages[inFlightIndex]->as_storage_image()),
+							}));
+						// TODO: set pushc!
+						cmdbfr->push_constants(mFxaaPipeline->layout(), mFxaaPushConstants);
+						cmdbfr->handle().dispatch((mTempImages[tmpB][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[tmpB][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
+						gvk::context().device().waitIdle(); // FIXME - sync
+
+						pLastProducedImageView_t = &mTempImages[tmpB][inFlightIndex].get();
+						// nextTempImageIndex is already correct
 					}
 				}
 			#endif
@@ -1257,6 +1322,9 @@ private:
 	std::array<avk::image_view, CF> mHistoryImages;			// use a separate history buffer for now, makes life easier..
 	std::array<avk::image_view, CF> mSegmentationImages;
 
+	// combined image-samplers for temp images
+	std::array<avk::image_sampler, CF> mTempImageSamplers[2];
+
 	// For each history frame's image content, also store the associated projection matrix:
 	std::array<glm::mat4, CF> mHistoryProjMatrices;
 	std::array<glm::mat4, CF> mHistoryViewMatrices;
@@ -1279,6 +1347,10 @@ private:
 
 	avk::compute_pipeline mCasPipeline;
 	push_constants_for_cas mCasPushConstants;
+
+	avk::compute_pipeline mPrepareFxaaPipeline;
+	avk::compute_pipeline mFxaaPipeline;
+	push_constants_for_fxaa mFxaaPushConstants;
 
 	Parameters mParameters[2];
 

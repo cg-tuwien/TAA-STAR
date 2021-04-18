@@ -1,0 +1,65 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+
+// ###### SRC/DST IMAGES #################################
+layout(set = 0, binding = 1) uniform sampler2D texInput;
+layout(set = 0, binding = 2, TAA_SHADER_OUTPUT_FORMAT) writeonly uniform restrict image2D uOutput;
+layout(set = 0, binding = 3, TAA_SHADER_FORMAT_SEGMASK) uniform uimage2D taaSegMask;
+// -------------------------------------------------------
+
+layout(push_constant) uniform PushConstants {
+		vec2  fxaaQualityRcpFrame;
+		float fxaaQualitySubpix;
+		float fxaaQualityEdgeThreshold;
+		float fxaaQualityEdgeThresholdMin;
+		float pad1, pad2, pad3;
+} pushConstants;
+
+// set main configuration for FXAA QUALITY PC and include FXAA code
+#define FXAA_PC 1
+#define FXAA_GLSL_130 1
+#define FXAA_QUALITY_PRESET 12
+//#define FXAA_QUALITY_PRESET 25
+#include "Fxaa3_11_mod.h"	// mod just renamed double-underscore-defines to single-underscore-defines
+
+// ################## COMPUTE SHADER MAIN ###################
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+void main()
+{
+	ivec2 iuv = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(iuv, textureSize(texInput, 0)))) return;
+
+	vec4 color;
+
+	// check if this pixel is marked for FXAA - if it is, do it, else just keep its current color
+    uint segMask = imageLoad(taaSegMask, iuv).r & 3;
+    if (segMask == 1) {
+		color = FxaaPixelShader(
+			(vec2(iuv) + 0.5) * pushConstants.fxaaQualityRcpFrame,	// pos								- center of pixel (uv coordinates)
+			vec4(0),												// fxaaConsolePosPos				- unused
+			texInput,												// tex
+			texInput,												// fxaaConsole360TexExpBiasNegOne
+			texInput,												// fxaaConsole360TexExpBiasNegTwo
+			pushConstants.fxaaQualityRcpFrame,						// fxaaQualityRcpFrame
+			vec4(0),												// fxaaConsoleRcpFrameOpt			- unused
+			vec4(0),												// fxaaConsoleRcpFrameOpt2			- unused
+			vec4(0),												// fxaaConsole360RcpFrameOpt2		- unused
+			pushConstants.fxaaQualitySubpix,						// fxaaQualitySubpix
+			pushConstants.fxaaQualityEdgeThreshold,					// fxaaQualityEdgeThreshold
+			pushConstants.fxaaQualityEdgeThresholdMin,				// fxaaQualityEdgeThresholdMin
+			0.0,													// fxaaConsoleEdgeSharpness			- unused
+			0.0,													// fxaaConsoleEdgeThreshold			- unused
+			0.0,													// fxaaConsoleEdgeThresholdMin		- unused
+			vec4(0)													// fxaaConsole360ConstDir			- unused
+		);
+    } else {
+        color = texelFetch(texInput, iuv, 0);
+	}
+	
+	imageStore(uOutput, iuv, color);
+}
+
