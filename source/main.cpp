@@ -68,6 +68,7 @@
 													descriptor_binding(0, 12, mRtAnimObjTangentsBufferView[fif_]),								\
 													descriptor_binding(0, 13, mRtAnimObjBitangentsBufferView[fif_]),							\
 													descriptor_binding(0, 14, avk::as_uniform_texel_buffer_views(mRtPositionsBuffersArray)),	\
+													descriptor_binding(0, 15, mRtAnimObjPositionsBufferView[fif_]),								\
 													descriptor_binding(1,  0, mRtImageViews[fif_]->as_storage_image()),							\
 													descriptor_binding(2,  0, mSceneData.mTLASs[fif_])
 #endif
@@ -227,6 +228,7 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 
 	struct push_constant_data_for_rt {
 		glm::mat4 mCameraTransform;
+		glm::mat4 mCameraViewProjMatrix;
 		glm::vec4 mLightDir;
 		glm::vec4 mDirLightIntensity;
 		glm::vec4 mAmbientLightIntensity;
@@ -238,7 +240,8 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		uint32_t mDoShadows;		// bit 0: general shadows, bit 1: shadows of transp. objs
 		VkBool32 mAugmentTAA;
 		VkBool32 mAugmentTAADebug;
-		// pad?
+		VkBool32 mApproximateLod;
+		float pad1, pad2, pad3;
 	};
 
 	struct CullingBoundingBox {
@@ -1779,17 +1782,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mRtAnimObjNormalsBuffer       [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
 			mRtAnimObjTangentsBuffer      [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
 			mRtAnimObjBitangentsBuffer    [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
+			mRtAnimObjPositionsBuffer     [i] = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(dummyVec3s).set_format<glm::vec3>());
 			mRtAnimObjNTBOffsetBuffer     [i] = context().create_buffer(memory_usage::device, bufferUsage, storage_buffer_meta::create_from_data(dummyNTBOff));
 			mRtAnimObjNormalsBuffer       [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
 			mRtAnimObjTangentsBuffer      [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
 			mRtAnimObjBitangentsBuffer    [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
+			mRtAnimObjPositionsBuffer     [i]->fill(dummyVec3s.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
 			mRtAnimObjNTBOffsetBuffer     [i]->fill(dummyNTBOff.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // filling isn't really necessary, is it?
 			mRtAnimObjNormalsBuffer       [i].enable_shared_ownership();
 			mRtAnimObjTangentsBuffer      [i].enable_shared_ownership();
 			mRtAnimObjBitangentsBuffer    [i].enable_shared_ownership();
+			mRtAnimObjPositionsBuffer     [i].enable_shared_ownership();
 			mRtAnimObjNormalsBufferView   [i] = context().create_buffer_view(shared(mRtAnimObjNormalsBuffer   [i]));
 			mRtAnimObjTangentsBufferView  [i] = context().create_buffer_view(shared(mRtAnimObjTangentsBuffer  [i]));
 			mRtAnimObjBitangentsBufferView[i] = context().create_buffer_view(shared(mRtAnimObjBitangentsBuffer[i]));
+			mRtAnimObjPositionsBufferView [i] = context().create_buffer_view(shared(mRtAnimObjPositionsBuffer [i]));
 			// note: storage buffers with vec3's are bad! that's why we use a uniform_texel_buffer for normals
 		}
 
@@ -1931,7 +1938,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// so update the TLASs afterwards too, then it's fine
 
 		// blas index buffer stays the same, but the vertex buffer needs to be changed   TODO: -> compute shader
-		std::vector<glm::vec3> allNewNormals, allNewTangents, allNewBitangents;
+		std::vector<glm::vec3> allNewNormals, allNewTangents, allNewBitangents, allNewPositions;
 		for (int iMesh = 0; iMesh < dynObj.mMeshData.size(); ++iMesh) {
 			auto &mesh = dynObj.mMeshData[iMesh];
 
@@ -1958,6 +1965,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			insert_into(allNewNormals,    newNormals);
 			insert_into(allNewTangents,   newTangents);
 			insert_into(allNewBitangents, newBitangents);
+			insert_into(allNewPositions,  newPositions);
 		}
 
 		if (alsoUpdateTLAS) {
@@ -1994,7 +2002,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// update normals- and vertex-count buffers for anim object
-		update_ntb_buffers_for_animated_object(dynObj, allNewNormals, allNewTangents, allNewBitangents, fif);
+		update_ntb_buffers_for_animated_object(dynObj, allNewNormals, allNewTangents, allNewBitangents, allNewPositions, fif);
 	}
 
 	std::tuple<std::vector<glm::vec3>,std::vector<glm::vec3>,std::vector<glm::vec3>,std::vector<glm::vec3>> calc_new_mesh_positions_and_ntb_for_animated_object(dynamic_object &dynObj, int iMeshIndex) {
@@ -2057,7 +2065,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		return posNew;
 	}
 
-	void update_ntb_buffers_for_animated_object(dynamic_object &dynObj, std::vector<glm::vec3> &normals, std::vector<glm::vec3> &tangents, std::vector<glm::vec3> &bitangents, gvk::window::frame_id_t fif) {
+	void update_ntb_buffers_for_animated_object(dynamic_object &dynObj, std::vector<glm::vec3> &normals, std::vector<glm::vec3> &tangents, std::vector<glm::vec3> &bitangents, std::vector<glm::vec3> &positions, gvk::window::frame_id_t fif) {
 		// normals/tangents/bitangents-offset per mesh
 		uint32_t cnt = 0;
 		std::vector<uint32_t> ntbOff;
@@ -2067,13 +2075,14 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		}
 
 		// sanity check		
-		if (normals.size() != cnt || tangents.size() != cnt || bitangents.size() != cnt) {
+		if (normals.size() != cnt || tangents.size() != cnt || bitangents.size() != cnt || positions.size() != cnt) {
 			throw avk::runtime_error("update_normals_buffer_for_animated_object sanity check failed !");
 		}
 
 		mRtAnimObjNormalsBuffer   [fif]->fill(normals.data(),    0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 		mRtAnimObjTangentsBuffer  [fif]->fill(tangents.data(),   0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 		mRtAnimObjBitangentsBuffer[fif]->fill(bitangents.data(), 0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
+		mRtAnimObjPositionsBuffer [fif]->fill(positions.data(),  0, 0, cnt           * sizeof(glm::vec3), avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 		mRtAnimObjNTBOffsetBuffer [fif]->fill(ntbOff.data(),     0, 0, ntbOff.size() * sizeof(uint32_t),  avk::sync::with_barriers(gvk::context().main_window()->command_buffer_lifetime_handler()));
 	}
 
@@ -2759,6 +2768,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			}));
 		push_constant_data_for_rt pushc;
 		pushc.mCameraTransform			= mQuakeCam.global_transformation_matrix();
+		pushc.mCameraViewProjMatrix		= mOriginalProjMat * mQuakeCam.view_matrix();
 		pushc.mLightDir					= glm::vec4(mDirLight.dir, 0.f);
 		pushc.mDirLightIntensity		= glm::vec4(mDirLight.intensity * mDirLight.boost, 0.f);
 		pushc.mAmbientLightIntensity	= glm::vec4(mAmbLight.col       * mAmbLight.boost, 0.f);
@@ -2770,6 +2780,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mDoShadows				= (mShadowMap.enable ? 0x01 : 0x00) | (mShadowMap.enableForTransparency ? 0x02 : 0x00);
 		pushc.mAugmentTAA				= taaAssist ? VK_TRUE : VK_FALSE;
 		pushc.mAugmentTAADebug			= taaAssist && mRtDebugSparse ? VK_TRUE : VK_FALSE;
+		pushc.mApproximateLod			= mRtApproximateLod;
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -3142,6 +3153,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					Checkbox("Ray trace whole scene", &mDoRayTraceTest);
 					if (InputIntW(80, "RT samples##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
 					Checkbox("RT debug sparse tracing", &mRtDebugSparse); HelpMarker("Show areas to be sparsely traced instead of actually ray tracing them");
+					Checkbox("RT approximate Lod", &mRtApproximateLod);
 #endif
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
 					if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
@@ -4544,13 +4556,16 @@ private: // v== Member variables ==v
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNormalsBuffer;			// one normals buffer for *all* meshes of the current animated object
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjTangentsBuffer;		// same for tangents
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjBitangentsBuffer;		// same for bitangents
+	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjPositionsBuffer;		// positions for Lod approximation
 	std::array<avk::buffer, cConcurrentFrames> mRtAnimObjNTBOffsetBuffer;		// start index of first normal/tangent/bitangent in above buffer for each mesh of the current animated object
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjNormalsBufferView;		// for uniform_texel_buffer
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjTangentsBufferView;		// for uniform_texel_buffer
 	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjBitangentsBufferView;		// for uniform_texel_buffer
+	std::array<avk::buffer_view, cConcurrentFrames> mRtAnimObjPositionsBufferView;		// for uniform_texel_buffer
 #endif
 	int mRtSamplesPerPixel = 4;
 	bool mRtDebugSparse = false;
+	bool mRtApproximateLod = false;
 
 };
 

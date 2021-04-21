@@ -56,6 +56,7 @@
 // Push constants for ray tracing
 #define PUSHCONSTANTSDEF_RAYTRACING uniform PushConstantsRayTracing {												\
 	mat4 mCameraTransform;																							\
+	mat4 mCameraViewProjMatrix;																						\
     vec4 mLightDir;																									\
 	vec4 mDirLightIntensity;																						\
 	vec4 mAmbientLightIntensity;																					\
@@ -67,6 +68,8 @@
 	uint mDoShadows;		/* bit 0: general shadows, bit 1: shadows of transp. objs */							\
 	bool mAugmentTAA;																								\
 	bool mAugmentTAADebug;																							\
+	bool mApproximateLod;																							\
+	float pad1, pad2, pad3;																							\
 }
 
 

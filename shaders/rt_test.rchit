@@ -16,6 +16,7 @@ layout(set = 0, binding =  1) uniform sampler2D textures[];
 layout(set = 0, binding =  2) uniform usamplerBuffer indexBuffers[];     // one index buffer per [meshgroupId]; contents of each buffer are in uvec3s
 layout(set = 0, binding =  3) uniform samplerBuffer  texCoordsBuffers[]; // ditto, entries are vec2  
 layout (std430, set = 0, binding = 4) readonly buffer MaterialIndexBuffer { uint materialIndices[]; };
+layout(set = 1, binding = 0, SHADER_FORMAT_RAYTRACE) uniform image2D image;
 layout(set = 2, binding =  0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding =  6) uniform samplerBuffer  normalsBuffers[];        // entries are vec3
 layout(set = 0, binding = 10) uniform samplerBuffer  tangentsBuffers[];       // entries are vec3
@@ -25,11 +26,14 @@ layout(set = 0, binding = 14) uniform samplerBuffer  positionsBuffers[];      //
 layout(set = 0, binding =  8) uniform samplerBuffer animObjNormals;  // contains normals of all meshes of current anim object
 layout(set = 0, binding = 12) uniform samplerBuffer animObjTangents;
 layout(set = 0, binding = 13) uniform samplerBuffer animObjBitangents;
+layout(set = 0, binding = 15) uniform samplerBuffer animObjPositions;
 layout(std430, set = 0, binding = 9) readonly buffer AnimObjNTBOffsetBuffer { uint animObjNTBOff[];  }; // .[meshIndex] = start index in animObjNormals[] for mesh meshIndex of current anim object
 
 hitAttributeEXT vec2 bary2;
 
 mat3 matrixNormalsOStoWS;	// matrix to bring normals from object to world space
+
+float textureLodValue = 0.0;
 
 vec4 sample_from_normals_texture(uint matIndex, vec2 uv)
 {
@@ -46,7 +50,7 @@ vec4 sample_from_diffuse_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return texture(textures[texIndex], texCoords);
+	return textureLod(textures[texIndex], texCoords, textureLodValue);
 }
 
 vec4 sample_from_specular_texture(uint matIndex, vec2 uv)
@@ -134,20 +138,29 @@ void main()
     // calc texture coordinates by interpolating barycentric coordinates
     const vec3 barycentrics = vec3(1.0 - bary2.x - bary2.y, bary2);
     ivec3 indices = ivec3(texelFetch(indexBuffers[meshgroupId], gl_PrimitiveID).xyz);   // get the indices of the 3 triangle corners
-    vec2 uv = INTERPOL_BARY_TEXELFETCH(texCoordsBuffers[meshgroupId], indices, xy);     // and interpolate
+    //vec2 uv = INTERPOL_BARY_TEXELFETCH(texCoordsBuffers[meshgroupId], indices, xy);     // and interpolate
+	// we need the 3 corner values later
+	vec2 uv0 = texelFetch(texCoordsBuffers[meshgroupId], indices.x).xy;
+	vec2 uv1 = texelFetch(texCoordsBuffers[meshgroupId], indices.y).xy;
+	vec2 uv2 = texelFetch(texCoordsBuffers[meshgroupId], indices.z).xy;
+	vec2 uv = INTERPOL_BARY(uv0, uv1, uv2);
 
     uint matIndex = materialIndices[meshgroupId];
 
-    // get normal, tangent, bitangent - this works different for animated objects
+	// animated objects have their own buffers, so indices into those need to be adjusted
     bool isAnimObject = meshgroupId >= pushConstants.mAnimObjFirstMeshId && meshgroupId < (pushConstants.mAnimObjFirstMeshId + pushConstants.mAnimObjNumMeshes);
-    vec3 normalWS, normalOS, tangentOS, bitangentOS;
+	ivec3 animObjIndices;
     if (isAnimObject) {
         int meshIndex = meshgroupId - pushConstants.mAnimObjFirstMeshId;
-        ivec3 newIndices = indices + int(animObjNTBOff[meshIndex]);
+        animObjIndices = indices + int(animObjNTBOff[meshIndex]);
+	}
 
-        normalOS    = normalize(INTERPOL_BARY_TEXELFETCH(animObjNormals,    newIndices, xyz));
-        tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(animObjTangents,   newIndices, xyz));
-        bitangentOS = normalize(INTERPOL_BARY_TEXELFETCH(animObjBitangents, newIndices, xyz));
+    // get normal, tangent, bitangent - this works different for animated objects
+    vec3 normalWS, normalOS, tangentOS, bitangentOS;
+    if (isAnimObject) {
+        normalOS    = normalize(INTERPOL_BARY_TEXELFETCH(animObjNormals,    animObjIndices, xyz));
+        tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(animObjTangents,   animObjIndices, xyz));
+        bitangentOS = normalize(INTERPOL_BARY_TEXELFETCH(animObjBitangents, animObjIndices, xyz));
     } else {
         normalOS    = normalize(INTERPOL_BARY_TEXELFETCH(normalsBuffers   [meshgroupId], indices, xyz));
         tangentOS   = normalize(INTERPOL_BARY_TEXELFETCH(tangentsBuffers  [meshgroupId], indices, xyz));
@@ -156,16 +169,47 @@ void main()
     //normalWS = normalize(matrixNormalsOStoWS * normalOS);
     normalWS = calc_normalized_normalWS(sample_from_normals_texture(matIndex, uv).rgb, normalOS, tangentOS, bitangentOS, matIndex);
 
-#if 0
-	if (!isAnimObject) {
-		vec3 P0_OS = texelFetch(positionsBuffers[meshgroupId], indices.x).xyz;
-		vec3 P1_OS = texelFetch(positionsBuffers[meshgroupId], indices.y).xyz;
-		vec3 P2_OS = texelFetch(positionsBuffers[meshgroupId], indices.z).xyz;
-		vec3 P0_WS = gl_ObjectToWorldEXT * vec4(P0_OS,1);
-		vec3 P1_WS = gl_ObjectToWorldEXT * vec4(P1_OS,1);
-		vec3 P2_WS = gl_ObjectToWorldEXT * vec4(P2_OS,1);
-		float doubleArea = length(cross((P1_WS - P0_WS), (P2_WS - P0_WS)));
-		hitValue = vec3(doubleArea); return;
+#if RAYTRACING_APPROXIMATE_LOD
+	if (pushConstants.mApproximateLod) {
+		// screen-space triangle
+		vec3 P0_OS, P1_OS, P2_OS;
+		if (isAnimObject) {
+			P0_OS = texelFetch(animObjPositions, animObjIndices.x).xyz;
+			P1_OS = texelFetch(animObjPositions, animObjIndices.y).xyz;
+			P2_OS = texelFetch(animObjPositions, animObjIndices.z).xyz;
+		} else {
+			P0_OS = texelFetch(positionsBuffers[meshgroupId], indices.x).xyz;
+			P1_OS = texelFetch(positionsBuffers[meshgroupId], indices.y).xyz;
+			P2_OS = texelFetch(positionsBuffers[meshgroupId], indices.z).xyz;
+		}
+		vec4 P0_CS = pushConstants.mCameraViewProjMatrix * vec4(gl_ObjectToWorldEXT * vec4(P0_OS,1), 1);
+		vec4 P1_CS = pushConstants.mCameraViewProjMatrix * vec4(gl_ObjectToWorldEXT * vec4(P1_OS,1), 1);
+		vec4 P2_CS = pushConstants.mCameraViewProjMatrix * vec4(gl_ObjectToWorldEXT * vec4(P2_OS,1), 1);
+		vec2 imSize = vec2(imageSize(image));
+		vec2 P0_SS = 0.5 * P0_CS.xy / P0_CS.w + 0.5;
+		vec2 P1_SS = 0.5 * P1_CS.xy / P1_CS.w + 0.5;
+		vec2 P2_SS = 0.5 * P2_CS.xy / P2_CS.w + 0.5;
+		//float doubleArea = length(cross((P1_SS - P0_SS), (P2_SS - P0_SS)));
+		vec2 v01 = P1_SS - P0_SS;
+		vec2 v02 = P2_SS - P0_SS;
+		float doubleAreaPixels = imSize.x * imSize.y * abs(v01.x * v02.y - v01.y * v02.x);
+
+		// texels triangle
+		int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+		vec2 texSize = textureSize(textures[texIndex], 0);
+		vec2 t01 = uv1 - uv0;
+		vec2 t02 = uv2 - uv0;
+		float doubleAreaTexels = texSize.x * texSize.y * abs(t01.x * t02.y - t01.y * t02.x);
+
+		textureLodValue = 0.5 * log2(doubleAreaTexels / doubleAreaPixels);
+
+		//hitValue = vec3(doubleAreaPixels / 1000.0); return;
+		//hitValue = vec3(doubleAreaTexels / 50000.0); return;
+		//hitValue = vec3(textureLodValue / 10.0); return;
+		//vec2 tmp= INTERPOL_BARY(P0_SS,P1_SS,P2_SS); hitValue = vec3(tmp.x, 0, 0); return;
+		//hitValue = vec3(imSize*P0_SS,0); return;
+		//hitValue = vec3(P0_OS); return;
+		//hitValue=(gl_ObjectToWorldEXT * vec4(P0_OS,1)); return;
 	}
 #endif
 
