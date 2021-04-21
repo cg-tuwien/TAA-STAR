@@ -17,7 +17,9 @@ TODOs:
 		should we merge ray traced (and FXAA'ed) pixels back into TAA history buffer?
 		use same jitter pattern as TAA for ray tracing sample distribution? optional!
 		test augmented taa with thin structures (wires, branches...)
-		latest sdk: now vali error on anim obj. rebuild barrier?
+		FIXME! vulkan sdk bug?: vali error on anim obj. rebuild barrier -> known issue: https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/2645
+			-> temporarily commenting out barrier for now 
+		goblin looks blurred in TAA when RTX-assist is on, even if segmask is all zero and fxaa disabled. wtf?
 
 	!add new settings to save/load funcs - main and taa
 

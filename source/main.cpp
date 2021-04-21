@@ -1895,14 +1895,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mSceneData.mTLASs[fif]->update(mAllGeometryInstances, {}, avk::sync::with_barriers(
 				gvk::context().main_window()->command_buffer_lifetime_handler(),
 				{}, // Nothing to wait for
-				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess){
-					// We want this update to be as efficient/as tight as possible
-					commandBuffer.establish_global_memory_barrier_rw(
-						srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
-						srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
-					);
-				}
+				// NOTE: this causes a validation error now - bug in current vulkan sdk (1.2.170.0)? -> see todo.txt
+				// THEREFORE TEMPORARILY REPLACED BY WAIT IDLE - FIXME!!!
+				//[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess){
+				//	// We want this update to be as efficient/as tight as possible
+				//	commandBuffer.establish_global_memory_barrier_rw(
+				//		srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
+				//		srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
+				//	);
+				//}
+				{} // <- FIXME
 			));
+			context().device().waitIdle(); // <- FIXME
 			PRINT_DEBUGMARK("TLAS-Update");
 		}
 	}
@@ -1972,14 +1976,18 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						avk::memory_access::acceleration_structure_write_access, readAccess
 					);
 				},
-				[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
-					// We want this update to be as efficient/as tight as possible
-					commandBuffer.establish_global_memory_barrier_rw(
-						srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
-						srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
-					);
-				}
-				));
+				// NOTE: this causes a validation error now - bug in current vulkan sdk (1.2.170.0)? -> see todo.txt
+				// THEREFORE TEMPORARILY REPLACED BY WAIT IDLE - FIXME!!!
+				//[](avk::command_buffer_t& commandBuffer, avk::pipeline_stage srcStage, std::optional<avk::write_memory_access> srcAccess) {
+				//	// We want this update to be as efficient/as tight as possible
+				//	commandBuffer.establish_global_memory_barrier_rw(
+				//		srcStage, avk::pipeline_stage::ray_tracing_shaders, // => ray tracing shaders must wait on the building of the acceleration structure
+				//		srcAccess, avk::memory_access::acceleration_structure_read_access // TLAS-update's memory must be made visible to ray tracing shader's caches (so they can read from)
+				//	);
+				//}
+				{} // <- FIXME
+			));
+			context().device().waitIdle(); // <- FIXME
 			//PRINT_DEBUGMARK("after anim TLAS-Update");
 		} else {
 			context().device().waitIdle(); // FIXME - wait for all BLASs to be rebuilt
