@@ -53,21 +53,22 @@
 #endif
 
 #if ENABLE_RAYTRACING
-#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)		descriptor_binding(0,  0, mMaterialBuffer),							\
-													descriptor_binding(0,  1, mImageSamplers),							\
-													descriptor_binding(0,  2, mRtIndexBuffersArray),					\
-													descriptor_binding(0,  3, mRtTexCoordBuffersArray),					\
-													descriptor_binding(0,  4, mRtMaterialIndexBuffer),					\
-													descriptor_binding(0,  5, mMatricesUserInputBuffer[fif_]),			\
-													descriptor_binding(0,  6, mRtNormalsBuffersArray),					\
-													descriptor_binding(0,  7, mRtPixelOffsetBuffer),					\
-													descriptor_binding(0,  8, mRtAnimObjNormalsBufferView[fif_]),		\
-													descriptor_binding(0,  9, mRtAnimObjNTBOffsetBuffer[fif_]),			\
-													descriptor_binding(0, 10, mRtTangentsBuffersArray),					\
-													descriptor_binding(0, 11, mRtBitangentsBuffersArray),				\
-													descriptor_binding(0, 12, mRtAnimObjTangentsBufferView[fif_]),		\
-													descriptor_binding(0, 13, mRtAnimObjBitangentsBufferView[fif_]),	\
-													descriptor_binding(1,  0, mRtImageViews[fif_]->as_storage_image()),	\
+#define RAYTRACING_DESCRIPTOR_BINDINGS(fif_)		descriptor_binding(0,  0, mMaterialBuffer),													\
+													descriptor_binding(0,  1, mImageSamplers),													\
+													descriptor_binding(0,  2, avk::as_uniform_texel_buffer_views(mRtIndexBuffersArray)),		\
+													descriptor_binding(0,  3, avk::as_uniform_texel_buffer_views(mRtTexCoordBuffersArray)),		\
+													descriptor_binding(0,  4, mRtMaterialIndexBuffer),											\
+													descriptor_binding(0,  5, mMatricesUserInputBuffer[fif_]),									\
+													descriptor_binding(0,  6, avk::as_uniform_texel_buffer_views(mRtNormalsBuffersArray)),		\
+													descriptor_binding(0,  7, mRtPixelOffsetBuffer),											\
+													descriptor_binding(0,  8, mRtAnimObjNormalsBufferView[fif_]),								\
+													descriptor_binding(0,  9, mRtAnimObjNTBOffsetBuffer[fif_]),									\
+													descriptor_binding(0, 10, avk::as_uniform_texel_buffer_views(mRtTangentsBuffersArray)),		\
+													descriptor_binding(0, 11, avk::as_uniform_texel_buffer_views(mRtBitangentsBuffersArray)),	\
+													descriptor_binding(0, 12, mRtAnimObjTangentsBufferView[fif_]),								\
+													descriptor_binding(0, 13, mRtAnimObjBitangentsBufferView[fif_]),							\
+													descriptor_binding(0, 14, avk::as_uniform_texel_buffer_views(mRtPositionsBuffersArray)),	\
+													descriptor_binding(1,  0, mRtImageViews[fif_]->as_storage_image()),							\
 													descriptor_binding(2,  0, mSceneData.mTLASs[fif_])
 #endif
 
@@ -1398,8 +1399,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				// Create all the GPU buffers, but don't fill yet:
-				meshData.mIndexBuffer			= context().create_buffer(memory_usage::device, bufferUsageFlags, index_buffer_meta::create_from_data(indices));
-				meshData.mPositionsBuffer		= context().create_buffer(memory_usage::device, bufferUsageFlags, vertex_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], content_description::position));
+				meshData.mIndexBuffer			= context().create_buffer(memory_usage::device, bufferUsageFlags, index_buffer_meta::        create_from_data(indices),
+																												  uniform_texel_buffer_meta::create_from_data(indices).set_format<glm::uvec3>());
+				meshData.mPositionsBuffer		= context().create_buffer(memory_usage::device, bufferUsageFlags, vertex_buffer_meta::       create_from_data(vertices).describe_only_member(vertices[0], content_description::position),
+																												  uniform_texel_buffer_meta::create_from_data(vertices).describe_only_member(vertices[0], content_description::position));
 				meshData.mTexCoordsBuffer		= context().create_buffer(memory_usage::device, bufferUsageFlags, vertex_buffer_meta::create_from_data(texCoords));
 				meshData.mNormalsBuffer			= context().create_buffer(memory_usage::device, bufferUsageFlags, vertex_buffer_meta::create_from_data(normals));
 				meshData.mTangentsBuffer		= context().create_buffer(memory_usage::device, bufferUsageFlags, vertex_buffer_meta::create_from_data(tangents));
@@ -1526,19 +1529,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// create temp buffers for indices, vertices - FIXME!
 		std::vector<uint32_t> materialIndices;
 		for (auto &mg : mSceneData.mMeshgroups) {
-			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData), uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
-			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
+			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage,
+																		  index_buffer_meta::        create_from_data(mg.rayTracingTmp.rtIndexData),
+																		  uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, bufferUsage,
+																		  vertex_buffer_meta::       create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position),
+																		  uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
 			mg.rayTracingTmp.rtIndexBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtPositionBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtIndexBuffer		->fill(mg.rayTracingTmp.rtIndexData.data(),    0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
 			mg.rayTracingTmp.rtPositionBuffer	->fill(mg.rayTracingTmp.rtPositionData.data(), 0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
 
-			// add index buffer to an array of (views to) the individual meshgroup index buffers
-			//mRtIndexBuffersArray.push_back( context().create_buffer_view(shared(mg.rayTracingTmp.rtIndexBuffer)) );
-			// FIXME - problems when using above line -> descriptor_binding always uses first meta
-			auto ibuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
-			ibuf->fill(mg.rayTracingTmp.rtIndexData.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
-			mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
+			// add buffers to arrays of buffer-views (to be indexed via meshgroup id in the shader)
+			mRtIndexBuffersArray.push_back( context().create_buffer_view(shared(mg.rayTracingTmp.rtIndexBuffer)) );
 
 			// add texture coords in the same way
 			auto tbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtTexCoordData).describe_only_member(mg.rayTracingTmp.rtTexCoordData[0]));
@@ -1556,6 +1559,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mRtTangentsBuffersArray  .push_back( context().create_buffer_view(owned(nbufT)) );
 			mRtBitangentsBuffersArray.push_back( context().create_buffer_view(owned(nbufB)) );
 
+			// and positions too (for LOD approximation)
+			mRtPositionsBuffersArray.push_back( context().create_buffer_view(shared(mg.rayTracingTmp.rtPositionBuffer)) );
+
 			// and store material index
 			materialIndices.push_back(mg.materialIndex);
 		}
@@ -1571,9 +1577,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				mesh.mIndexBuffer.enable_shared_ownership();
 				mesh.mPositionsBuffer.enable_shared_ownership();
 
-				auto ibuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mIndices).set_format<glm::uvec3>());
-				ibuf->fill(mesh.mIndices.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
-				mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
+				//auto ibuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mIndices).set_format<glm::uvec3>());
+				//ibuf->fill(mesh.mIndices.data(),     0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
+				//mRtIndexBuffersArray.push_back( context().create_buffer_view(owned(ibuf)) );
+				mRtIndexBuffersArray.push_back( context().create_buffer_view(shared(mesh.mIndexBuffer)) );
 
 				auto tbuf = context().create_buffer(memory_usage::device, bufferUsage, uniform_texel_buffer_meta::create_from_data(mesh.mTexCoords).describe_only_member(mesh.mTexCoords[0]));
 				tbuf->fill(mesh.mTexCoords.data(),  0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler()));
@@ -1588,6 +1595,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				mRtNormalsBuffersArray   .push_back( context().create_buffer_view(owned(nbufN)) );
 				mRtTangentsBuffersArray  .push_back( context().create_buffer_view(owned(nbufT)) );
 				mRtBitangentsBuffersArray.push_back( context().create_buffer_view(owned(nbufB)) );
+
+				mRtPositionsBuffersArray.push_back( context().create_buffer_view(shared(mesh.mPositionsBuffer)) );
 
 				materialIndices.push_back(mesh.mMaterialIndex);
 			}
@@ -4520,6 +4529,7 @@ private: // v== Member variables ==v
 	std::vector<avk::buffer_view> mRtNormalsBuffersArray;
 	std::vector<avk::buffer_view> mRtTangentsBuffersArray;
 	std::vector<avk::buffer_view> mRtBitangentsBuffersArray;
+	std::vector<avk::buffer_view> mRtPositionsBuffersArray;
 	avk::buffer mRtMaterialIndexBuffer;
 	avk::buffer mRtPixelOffsetBuffer;
 	std::vector<avk::geometry_instance> mAllGeometryInstances;					// all geometry instances in the current TLAS

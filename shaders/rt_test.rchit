@@ -20,6 +20,7 @@ layout(set = 2, binding =  0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding =  6) uniform samplerBuffer  normalsBuffers[];        // entries are vec3
 layout(set = 0, binding = 10) uniform samplerBuffer  tangentsBuffers[];       // entries are vec3
 layout(set = 0, binding = 11) uniform samplerBuffer  bitangentsBuffers[];     // entries are vec3
+layout(set = 0, binding = 14) uniform samplerBuffer  positionsBuffers[];      // entries are vec3, positions in OS
 //layout (std430, set = 0, binding = 8) readonly buffer AnimObjNormalsBuffer       { vec3 animObjNormals[]; }; // contains normals of all meshes of current anim object
 layout(set = 0, binding =  8) uniform samplerBuffer animObjNormals;  // contains normals of all meshes of current anim object
 layout(set = 0, binding = 12) uniform samplerBuffer animObjTangents;
@@ -154,6 +155,19 @@ void main()
     }
     //normalWS = normalize(matrixNormalsOStoWS * normalOS);
     normalWS = calc_normalized_normalWS(sample_from_normals_texture(matIndex, uv).rgb, normalOS, tangentOS, bitangentOS, matIndex);
+
+#if 0
+	if (!isAnimObject) {
+		vec3 P0_OS = texelFetch(positionsBuffers[meshgroupId], indices.x).xyz;
+		vec3 P1_OS = texelFetch(positionsBuffers[meshgroupId], indices.y).xyz;
+		vec3 P2_OS = texelFetch(positionsBuffers[meshgroupId], indices.z).xyz;
+		vec3 P0_WS = gl_ObjectToWorldEXT * vec4(P0_OS,1);
+		vec3 P1_WS = gl_ObjectToWorldEXT * vec4(P1_OS,1);
+		vec3 P2_WS = gl_ObjectToWorldEXT * vec4(P2_OS,1);
+		float doubleArea = length(cross((P1_WS - P0_WS), (P2_WS - P0_WS)));
+		hitValue = vec3(doubleArea); return;
+	}
+#endif
 
     // cast a shadow ray
     float shadowFactor;
