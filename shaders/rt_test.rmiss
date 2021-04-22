@@ -1,7 +1,10 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : enable
 
-layout(location = 0) rayPayloadInEXT vec3 hitValue;
+#include "shader_raytrace_common.glsl"
+
+layout(location = 0) rayPayloadInEXT MainRayPayload hitValue;
 
 void main()
 {
@@ -26,5 +29,5 @@ void main()
 	color = mix(vec4(0.1, 0.26, 0.4, 1.0), color, s*s*s*s * tf);
 	color = mix(color, vec4(0.0, 0.0, 0.5, 1.0), sin(clamp(-nc.y, 0.0, 1.0) * half_pi));
 
-	hitValue = color.rgb;
+	hitValue.color.rgb = color.rgb;
 }

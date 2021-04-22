@@ -319,6 +319,36 @@ void main()
 	//vec3 normalWS     = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
 	//oFragColor = vec4(normalWS,1);
 	//oFragColor = vec4(vec3(dot(toLightDirWS,normalWS)),1);
+
+#if 0
+	{
+	// why are the lods different ?? anisotropy?
+	uint matIndex = fs_in.materialIndex;
+	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
+	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
+	vec2 texSize = vec2(textureSize(textures[texIndex], 0));
+
+	float lod1 = textureQueryLod(textures[texIndex], texCoords).x;
+
+	vec2 dx_vtc = dFdx(fs_in.texCoords * texSize);
+	vec2 dy_vtc = dFdy(fs_in.texCoords * texSize);
+	float delta_max_sqr = max(dot(dx_vtc, dx_vtc), dot(dy_vtc, dy_vtc));
+	float lod2 = max(0, 0.5 * log2(delta_max_sqr));
+
+	float px = dot(dx_vtc, dx_vtc);
+	float py = dot(dy_vtc, dy_vtc);
+	float maxLod = 0.5 * log2(max(px,py));
+	float minLod = 0.5 * log2(min(px,py));
+	const float maxAniso = 32;
+	const float maxAnisoLog2 = log2(maxAniso);
+	float lod3 = maxLod - min(maxLod - minLod, maxAnisoLog2);
+
+	oFragColor = vec4(vec3(lod3/10.0),1);
+	//float diff = lod1-lod2;
+	//oFragColor = vec4(vec2(diff,-diff)*0.1,0,1);
+	}
+#endif
 }
 // -------------------------------------------------------
 

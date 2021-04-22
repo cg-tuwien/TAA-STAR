@@ -1479,6 +1479,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			mFlipTexturesInLoader,
 			mDisableMip ? image_usage::general_image : image_usage::general_texture,
 			[](){ return to_filter_mode(context().physical_device().getProperties().limits.maxSamplerAnisotropy, true); }(), // set to max. anisotropy
+			//avk::filter_mode::bilinear, // JUST TESTING manual lod calculation - REMOVEME!!
 			border_handling_mode::repeat,
 			sync::wait_idle(true)
 		);
