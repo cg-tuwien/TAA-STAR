@@ -88,27 +88,6 @@
 
 #define PRINT_DEBUGMARK(msg_) printf("Frame %lld, fif %lld %s\n", gvk::context().main_window()->current_frame(), gvk::context().main_window()->in_flight_index_for_frame(), msg_)
 
-void my_queue_submit_with_existing_fence(avk::queue &q, avk::command_buffer_t& aCommandBuffer, avk::fence &fen)
-{
-	using namespace avk;
-
-	const auto submitInfo = vk::SubmitInfo{}
-		.setCommandBufferCount(1u)
-		.setPCommandBuffers(aCommandBuffer.handle_ptr())
-		.setWaitSemaphoreCount(0u)
-		.setPWaitSemaphores(nullptr)
-		.setPWaitDstStageMask(nullptr)
-		.setSignalSemaphoreCount(0u)
-		.setPSignalSemaphores(nullptr);
-
-	q.handle().submit({ submitInfo }, fen->handle());
-
-	aCommandBuffer.invoke_post_execution_handler();
-
-	//aCommandBuffer.mState = command_buffer_state::submitted;	// cannot access :(
-}
-
-
 class wookiee : public gvk::invokee, public RayTraceCallback
 {
 	// Struct definition for data used as UBO across different pipelines, containing matrices and user input
@@ -331,7 +310,7 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		{ "Goblin",				"assets/goblin.dae",								 0,	glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,.95f,0)), glm::vec3(.02f)) },
 		{ "Dragon",				"assets/optional/dragon/Dragon_2.5_baked.dae",		 0,	glm::scale(glm::mat4(1), glm::vec3(.1f)) },
 		{ "Dude",				"assets/optional/dude/dudeTest03.dae",				 0,	glm::scale(glm::rotate(glm::mat4(1), glm::radians(180.f), glm::vec3(0,1,0)), glm::vec3(3.f)) },
-		{ "Strange weights",	"assets/optional/strange_weights.fbx",				 0,	glm::scale(glm::mat4(1), glm::vec3(.01f)) },
+		//{ "Strange weights",	"assets/optional/strange_weights.fbx",				 0,	glm::scale(glm::mat4(1), glm::vec3(.01f)) },
 	};
 
 	struct ImageDef {
@@ -346,6 +325,7 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		{ "Grid 2560x1440 inv",		"assets/images/thingrid_inv_2560x1440.png" },
 	};
 
+	enum class SceneType { Unknown, Sponza, EmeraldSquare, BistroExterior };
 
 
 public: // v== cgb::cg_element overrides which will be invoked by the framework ==v
@@ -1007,12 +987,28 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			auto assimpScene = models[iModel].mLoadedModel->handle();
 			std::cout << "Model #" << iModel << ", (" << assimpScene->mNumMeshes << " meshes):" << std::endl;
 			int meshCount = 0;
-			lukeMeshWalker(assimpScene, withMeshNames, assimpScene->mRootNode, meshCount);
+			lukeMeshWalker(assimpScene, assimpScene->mRootNode,
+				[&withMeshNames, &meshCount](std::string aFullName, unsigned int aMeshcount, std::string aMeshNames, aiNode *node)->bool {
+					std::cout << aFullName << ":\t" << aMeshcount << " meshes:";
+					for (size_t i = 0; i < node->mNumMeshes; i++) std::cout << " " << node->mMeshes[i];
+					if (withMeshNames) std::cout << " (" << aMeshNames << ")";
+					std::cout << std::endl;
+					meshCount += node->mNumMeshes;
+					return true;
+				}
+			);
 			std::cout << "Total # meshes in scene graph:" << meshCount << std::endl;
 		}
 	}
 
-	void lukeMeshWalker(const aiScene *aiscene, bool withMeshNames, aiNode *node, int &meshCount) {
+	bool lukeMeshWalker(
+		const aiScene *aiscene, aiNode *node,
+		std::function<bool(std::string, unsigned int, std::string, aiNode*)> callback =
+			[](std::string aFullName, unsigned int aMeshcount, std::string aMeshes, aiNode *node) {
+				return true;
+			}
+	) {
+		// passed function shall return true to continue or false to abort
 		std::string fullName = node->mName.C_Str();
 		aiNode *n = node->mParent;
 		while (n) {
@@ -1021,26 +1017,19 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			n = n ->mParent;
 		}
 		std::string meshNames;
-		std::cout << fullName << ":\t" << node->mNumMeshes << " meshes:";
 		for (size_t i = 0; i < node->mNumMeshes; i++) {
-			std::cout << " " << node->mMeshes[i];
-			if (withMeshNames) {
-				if (meshNames.length()) meshNames.append(",");
-				meshNames.append("\"");
-				meshNames.append(aiscene->mMeshes[node->mMeshes[i]]->mName.C_Str());
-				meshNames.append("\"");
-			}
+			if (meshNames.length()) meshNames.append(",");
+			meshNames.append("\"");
+			meshNames.append(aiscene->mMeshes[node->mMeshes[i]]->mName.C_Str());
+			meshNames.append("\"");
 		}
 
-		if (withMeshNames) {
-			std::cout << " (" << meshNames << ")" << std::endl;
-		} else {
-			std::cout << std::endl;
-		}
+		if (!callback(fullName, node->mNumMeshes, meshNames, node)) return false; // stop recursion
 
-		meshCount += node->mNumMeshes;
-		for (size_t iChild = 0; iChild < node->mNumChildren; iChild++)
-			lukeMeshWalker(aiscene, withMeshNames, node->mChildren[iChild], meshCount);
+		for (size_t iChild = 0; iChild < node->mNumChildren; iChild++) {
+			if (!lukeMeshWalker(aiscene, node->mChildren[iChild], callback)) return false; // stop recursion
+		}
+		return true; // continue recursion
 	}
 
 	uint32_t colToUint32(glm::vec4 col) {
@@ -1053,8 +1042,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	// ac: print material properties
-	void print_material_debug_info(gvk::orca_scene_t& aScene) {
-		auto distinctMaterialsOrca = aScene.distinct_material_configs_for_all_models(true);
+	void print_material_debug_info(avk::resource_reference<gvk::orca_scene_t> aScene) {
+		auto distinctMaterialsOrca = aScene->distinct_material_configs_for_all_models(true);
 		std::cout << "Material debug info" << std::endl;
 		int cnt = 0;
 		for (const auto& pair : distinctMaterialsOrca) {
@@ -1069,6 +1058,37 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			if (mc.mOpacity != 1.f)						{ std::cout << " Opacity:           " << mc.mOpacity << std::endl;							}
 			if (mc.mTwosided)							{ std::cout << " Twosided:          TRUE" << std::endl;										}
 		}
+	}
+
+	SceneType detect_scene_type(avk::resource_reference<gvk::orca_scene_t> aScene) {
+		SceneType typ = SceneType::Unknown;
+
+		auto &models = aScene->models();
+		for (int iModel = 0; iModel < models.size(); iModel++) {
+			auto assimpScene = models[iModel].mLoadedModel->handle();
+			lukeMeshWalker(assimpScene, assimpScene->mRootNode,
+				[&typ](std::string aFullName, unsigned int aMeshcount, std::string aMeshNames, aiNode *node)->bool {
+					if (std::string::npos != aFullName.find("/Sheleg/")) {
+						typ = SceneType::EmeraldSquare;
+					} else if (std::string::npos != aFullName.find("/BistroExterior/")) {
+						typ = SceneType::BistroExterior;
+					} else if (std::string::npos != aFullName.find("sponza_structure.obj")) {
+						typ = SceneType::Sponza;
+					}
+					return typ == SceneType::Unknown;
+				}
+			);
+		}
+
+		std::cout << "Detected scene: ";
+		switch (typ) {
+		case SceneType::EmeraldSquare:	std::cout << "Emerald Square"	<< std::endl; break;
+		case SceneType::Sponza:			std::cout << "Sponza"			<< std::endl; break;
+		case SceneType::BistroExterior:	std::cout << "Bistro exterior"	<< std::endl; break;
+		default:						std::cout << "Unknown"			<< std::endl; break;
+		}
+
+		return typ;
 	}
 
 	// Create a vector of transformation matrices for each instance of a given mesh id inside a model
@@ -1103,18 +1123,29 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		bool res = false;
 
 		// In Emerald Square v4, all materials with transparent parts are named "*.DoubleSided"
-		res |= (std::string::npos != mat.mName.find(".DoubleSided"));
+		if (mSceneType == SceneType::EmeraldSquare) {
+			res |= (std::string::npos != mat.mName.find(".DoubleSided"));
+		}
 
 		// In Sponza with plants: materials "leaf" and "Material__57" (vase plants)
-		res |= mat.mName == "leaf";
-		res |= mat.mName == "Material__57";
+		if (mSceneType == SceneType::Sponza) {
+			res |= mat.mName == "leaf";
+			res |= mat.mName == "Material__57";
+		}
+
+		if (mSceneType == SceneType::BistroExterior) {
+			res |= mat.mName == "MASTER_Curtains";
+			res |= mat.mName == "MASTER_Glass_Dirty_MASKED";
+			res |= mat.mName == "MASTER_Forge_Metal";
+			// TODO... more?
+		}
 
 		return res;
 	}
 
 	bool is_material_twosided(const gvk::material_config &mat) {
-		// also mark transparents as two sided (e.g. plants in sponza)
-		return mat.mTwosided || (std::string::npos != mat.mName.find(".DoubleSided")) || has_material_transparency(mat);	// Emerald-Square leaves are not marked twosided, but can be found by name
+		// also mark all transparents as two sided (e.g. plants in sponza)
+		return mat.mTwosided || has_material_transparency(mat);	// Emerald-Square leaves are not marked twosided, but can be found by name
 	}
 
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
@@ -1127,6 +1158,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		// Load a scene (in ORCA format) from file:
 		auto scene = orca_scene_t::load_from_file(mSceneFileName, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | (mFlipUvWithAssimp ? aiProcess_FlipUVs : 0) );
+
+		mSceneType = detect_scene_type(scene);
 
 		double tLoad = glfwGetTime();
 
@@ -4569,6 +4602,7 @@ private: // v== Member variables ==v
 	bool mRtDebugSparse = false;
 	bool mRtApproximateLod = false;
 
+	SceneType mSceneType = SceneType::Unknown;
 };
 
 static std::filesystem::path getExecutablePath() {
