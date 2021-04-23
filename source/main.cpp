@@ -3146,7 +3146,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 
 
-					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0SM cascade\0Debug\0Debug 2\0");
+					Combo("Lighting", &mLightingMode, "Blinn-Phong\0Color only\0SM cascade\0Normals\0Normals 2\0Lod\0");
 				}
 
 				if (CollapsingHeader("Rendering")) {

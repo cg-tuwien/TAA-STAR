@@ -304,13 +304,17 @@ void main()
 		// Debug: show normals
 		vec3 normalWS = normalize(mat3(transpose(uboMatUsr.mViewMatrix)) * normalVS);
 		oFragColor = vec4(normalWS.xyz, 1.0);
-	} else {
+	} else if (uboMatUsr.mUserInput.z < 5.f) {
 		// Debug2: show geometry normals (not affected by normal mapping)
 		vec3 normalWS = normalize(mat3(inverse(transpose(fs_in.modelMatrix))) * normalize(fs_in.normalOS));
 		oFragColor = vec4(normalWS.xyz, 1.0);
-
-		//oFragColor = vec4(sample_from_normals_texture().rgb, 1.0); return;
+	} else {
+		// show LOD level of diffuse texture
+		float lod = textureQueryLod(textures[materialsBuffer.materials[matIndex].mDiffuseTexIndex], fs_in.texCoords).x;	// TODO: also check .y
+		oFragColor = vec4(lod / 10.0, 0, 0, 1);
 	}
+
+
 	//oFragColor = vec4(normalize(fs_in.normalOS.xyz) * 0.5 + 0.5, 1.0);
 	//oFragColor = vec4(normalize(normalVS.xyz) * 0.5 + 0.5, 1.0);
 

@@ -482,7 +482,12 @@ public:
 						static bool debugMode  = mRayTraceCallback ? mRayTraceCallback->getRayTraceAugmentTaaDebug() : false;
 
 						CheckboxB32("enable##enableRTaugment", &param.mRayTraceAugment);
-						HelpMarker("You should also set the rasterer to always use texture LOD level 0! (Menu Rendering)");
+						HelpMarker(
+							"Make sure that ray tracer texture LOD levels match the rasterer:\n"
+							"- Either set the rasterer to always use texture LOD level 0\n"
+							"- Or set the ray tracer to approximate the LOD\n"
+							"(Menu Rendering in main settings)"
+						);
 						SameLine();
 						if (Checkbox("debug##debug sparse tracing", &debugMode) && mRayTraceCallback) mRayTraceCallback->setRayTraceAugmentTaaDebug(debugMode);
 						HelpMarker("Show areas to be sparsely traced instead of actually ray tracing them");
