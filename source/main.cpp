@@ -1113,7 +1113,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	}
 
 	bool is_material_twosided(const gvk::material_config &mat) {
-		return mat.mTwosided || (std::string::npos != mat.mName.find(".DoubleSided"));	// Emerald-Square leaves are not marked twosided, but can be found by name
+		// also mark transparents as two sided (e.g. plants in sponza)
+		return mat.mTwosided || (std::string::npos != mat.mName.find(".DoubleSided")) || has_material_transparency(mat);	// Emerald-Square leaves are not marked twosided, but can be found by name
 	}
 
 	void load_and_prepare_scene() // up to the point where all draw call data and material data has been assembled
