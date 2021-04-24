@@ -79,10 +79,11 @@
 																													\
 	float mLodBias;																									\
 	bool  mAlwaysUseLod0;																							\
+	bool  mAlphaUseLod0;																							\
 	bool mUseShadowMap;																								\
 	float mShadowBias;																								\
 	int mShadowNumCascades;																							\
-	float pad1, pad2, pad3;																								\
+	float pad1, pad2;																								\
 }
 
 // "mLightsources" uniform buffer containing all the light source data:

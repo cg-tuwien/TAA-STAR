@@ -98,6 +98,15 @@ vec4 sample_from_diffuse_texture()
 	return SAMPLE_TEXTURE(textures[texIndex], texCoords);
 }
 
+vec4 sample_from_diffuse_texture_lod0()
+{
+	uint matIndex = fs_in.materialIndex;
+	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
+	vec2 texCoords = fs_in.texCoords * offsetTiling.zw + offsetTiling.xy;
+	return textureLod(textures[texIndex], texCoords, 0);
+}
+
 vec4 sample_from_specular_texture()
 {
 	uint matIndex = fs_in.materialIndex;
@@ -253,10 +262,18 @@ void main()
 	float specTexValue     = sample_from_specular_texture().r;
 	vec3  emissiveTexColor = sample_from_emissive_texture().rgb;
 
-	float alpha = (transparentPass == SPECCONST_VAL_TRANSPARENT) ? diffTexColorRGBA.a : 1.0;
-
-	// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write, even when using alpha-blending
-	if (transparentPass == SPECCONST_VAL_TRANSPARENT && alpha < uboMatUsr.mUserInput.w) { discard; return; }
+	float alpha;
+	if (transparentPass == SPECCONST_VAL_TRANSPARENT) {
+		if (uboMatUsr.mAlphaUseLod0) {
+			alpha = sample_from_diffuse_texture_lod0().a;
+		} else {
+			alpha = diffTexColorRGBA.a;
+		}
+		// ac: ugly hack - discard very transparent parts ; this way we can get away without sorting and disabling depth_write, even when using alpha-blending
+		if (transparentPass == SPECCONST_VAL_TRANSPARENT && alpha < uboMatUsr.mUserInput.w) { discard; return; }
+	} else {
+		alpha = 1.0;
+	}
 
 	// write material // TODO: better flag specific/problematic materials that require different TAA handling
 	oFragMatId = (fs_in.materialIndex + 1) | (fs_in.movingObjectId != 0 ? 0x80000000 : 0);

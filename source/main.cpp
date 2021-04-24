@@ -114,10 +114,11 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 
 		float mLodBias;
 		VkBool32 mAlwaysUseLod0;
+		VkBool32 mAlphaUseLod0;
 		VkBool32 mUseShadowMap;
 		float mShadowBias;
 		int mShadowNumCascades;
-		float pad1, pad2, pad3;
+		float pad1, pad2;
 	};
 
 	// Struct definition for data used as UBO across different pipelines, containing lightsource data
@@ -401,6 +402,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		mMatricesAndUserInput.mUserInput			= glm::vec4{ 0.f, mNormalMappingStrength, (float)mLightingMode, mAlphaThreshold };
 		mMatricesAndUserInput.mLodBias				= (mLoadBiasTaaOnly && !mAntiAliasing.taa_enabled()) ? 0.f : mLodBias;
 		mMatricesAndUserInput.mAlwaysUseLod0		= mAlwaysUseLod0;
+		mMatricesAndUserInput.mAlphaUseLod0			= mAlphaUseLod0;
 		mMatricesAndUserInput.mUseShadowMap			= mShadowMap.enable;
 		mMatricesAndUserInput.mShadowBias			= mShadowMap.bias;
 		mMatricesAndUserInput.mShadowNumCascades	= mShadowMap.numCascades;
@@ -3199,6 +3201,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					Checkbox("taa only##lod bias taa only", &mLoadBiasTaaOnly);
 					Checkbox("always use lod 0", &mAlwaysUseLod0); HelpMarker("To match ray tracing image");
+					Checkbox("use lod 0 for alpha test", &mAlphaUseLod0); HelpMarker("To match ray tracing image");
 					SliderFloatW(100, "normal mapping", &mNormalMappingStrength, 0.0f, 1.0f);
 					if (Button("Re-record commands")) invalidate_command_buffers();
 				}
@@ -4403,6 +4406,7 @@ private: // v== Member variables ==v
 	float mLodBias;
 	bool mLoadBiasTaaOnly = true;
 	bool mAlwaysUseLod0 = false;
+	bool mAlphaUseLod0  = false;
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = false;

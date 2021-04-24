@@ -23,6 +23,9 @@ TODOs:
 		recheck - really? goblin looks blurred in TAA when RTX-assist is on, even if segmask is all zero and fxaa disabled. wtf?
 		!Bistro scene: wires great for RTX-TAA demonstration
 		Bistro scene: transparents not ok in rasterer? (eg. curtains at main balcony - but curtain above is ok; backface culling?)
+		Still some subtle color/shading differences on leaves between rasterer and ray tracer
+
+	didn't test or work with deferred renderer for a while. check that it is still ok or drop it.
 
 	auto-detect transparent materials by looking for alpha < 1 in diffuse texture?
 

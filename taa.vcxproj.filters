@@ -183,6 +183,7 @@
       <Filter>shaders</Filter>
     </None>
     <None Include="shaders\shader_raytrace_common.glsl" />
+    <None Include="shaders\shader_raytrace_lod_approximation.glsl" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
