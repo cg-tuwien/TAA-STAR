@@ -33,7 +33,7 @@ vec4 sample_from_diffuse_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return sampleTextureWithLodApprox(textures[texIndex], texCoords);
+	return sampleTextureWithLodApprox(textures[texIndex], texCoords, pushConstants.mApproximateLodMaxAnisotropy);
 }
 
 void main()

@@ -46,7 +46,7 @@ vec4 sample_from_normals_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mNormalsTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mNormalsTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	vec4 normalSample = sampleTextureWithLodApprox(textures[texIndex], texCoords);
+	vec4 normalSample = sampleTextureWithLodApprox(textures[texIndex], texCoords, pushConstants.mApproximateLodMaxAnisotropy);
 	FIX_NORMALMAPPING(normalSample);
 	return normalSample;
 }
@@ -56,7 +56,7 @@ vec4 sample_from_diffuse_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return sampleTextureWithLodApprox(textures[texIndex], texCoords);
+	return sampleTextureWithLodApprox(textures[texIndex], texCoords, pushConstants.mApproximateLodMaxAnisotropy);
 }
 
 vec4 sample_from_specular_texture(uint matIndex, vec2 uv)
@@ -64,7 +64,7 @@ vec4 sample_from_specular_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mSpecularTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mSpecularTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return sampleTextureWithLodApprox(textures[texIndex], texCoords);
+	return sampleTextureWithLodApprox(textures[texIndex], texCoords, pushConstants.mApproximateLodMaxAnisotropy);
 }
 
 vec4 sample_from_emissive_texture(uint matIndex, vec2 uv)
@@ -72,7 +72,7 @@ vec4 sample_from_emissive_texture(uint matIndex, vec2 uv)
 	int texIndex = materialsBuffer.materials[matIndex].mEmissiveTexIndex;
 	vec4 offsetTiling = materialsBuffer.materials[matIndex].mEmissiveTexOffsetTiling;
 	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
-	return sampleTextureWithLodApprox(textures[texIndex], texCoords);
+	return sampleTextureWithLodApprox(textures[texIndex], texCoords, pushConstants.mApproximateLodMaxAnisotropy);
 }
 
 
@@ -252,7 +252,7 @@ void main()
 		hitValue.color.rgb = normalWS.xyz;
 	} else {
 		// show LOD level of diffuse texture
-		float lod = approximate_lod_homebrewed_final(vec2(textureSize(textures[materialsBuffer.materials[matIndex].mDiffuseTexIndex], 0)));
+		float lod = approximate_lod_homebrewed_final(vec2(textureSize(textures[materialsBuffer.materials[matIndex].mDiffuseTexIndex], 0)), pushConstants.mApproximateLodMaxAnisotropy);
 		hitValue.color.rgb = vec3(lod / 10.0, 0, 0);
 	}
 

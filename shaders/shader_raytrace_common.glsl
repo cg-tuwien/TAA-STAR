@@ -41,7 +41,8 @@ void calc_ray(in vec2 pixelUV, in mat4 camTransform, float aspectRatio, out vec3
 	bool mAugmentTAA;																								\
 	bool mAugmentTAADebug;																							\
 	bool mApproximateLod;																							\
-	float pad1, pad2, pad3;																							\
+	int mApproximateLodMaxAnisotropy;																				\
+	float pad1, pad2;																								\
 }
 
 // ----- uniform structure definitions

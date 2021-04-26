@@ -221,7 +221,8 @@ class wookiee : public gvk::invokee, public RayTraceCallback
 		VkBool32 mAugmentTAA;
 		VkBool32 mAugmentTAADebug;
 		VkBool32 mApproximateLod;
-		float pad1, pad2, pad3;
+		int mApproximateLodMaxAnisotropy;
+		float pad1, pad2;
 	};
 
 	struct CullingBoundingBox {
@@ -2818,6 +2819,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mAugmentTAA				= taaAssist ? VK_TRUE : VK_FALSE;
 		pushc.mAugmentTAADebug			= taaAssist && mRtDebugSparse ? VK_TRUE : VK_FALSE;
 		pushc.mApproximateLod			= mRtApproximateLod;
+		pushc.mApproximateLodMaxAnisotropy = mRtApproximateLodMaxAnisotropy;
 		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
@@ -3191,6 +3193,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					if (InputIntW(80, "RT samples##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
 					Checkbox("RT debug sparse tracing", &mRtDebugSparse); HelpMarker("Show areas to be sparsely traced instead of actually ray tracing them");
 					Checkbox("RT approximate Lod", &mRtApproximateLod);
+					SameLine();
+					InputIntW(40, "aniso", &mRtApproximateLodMaxAnisotropy, 0, 0);
 #endif
 					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
 					if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
@@ -4605,6 +4609,7 @@ private: // v== Member variables ==v
 	int mRtSamplesPerPixel = 4;
 	bool mRtDebugSparse = false;
 	bool mRtApproximateLod = false;
+	int mRtApproximateLodMaxAnisotropy = 32;
 
 	SceneType mSceneType = SceneType::Unknown;
 };

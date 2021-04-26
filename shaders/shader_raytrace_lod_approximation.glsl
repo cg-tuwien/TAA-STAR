@@ -111,7 +111,7 @@ void approximate_lod_homebrewed_setup(vec3 P0_OS, vec3 P1_OS, vec3 P2_OS, vec2 u
 	gLodApprox_valid  = true;
 }
 
-float approximate_lod_homebrewed_final(in vec2 texSize) {
+float approximate_lod_homebrewed_final(in vec2 texSize, int maxAnisotropy) {
 	// finalize lod calculation for a particular texture
 
 	// approximate_lod_homebrewed_setup() must have been called before, so that gLod_dx_vuv and gLod_dy_vuv are valid!
@@ -121,23 +121,22 @@ float approximate_lod_homebrewed_final(in vec2 texSize) {
 	// calc lod
 	vec2 dx_vtc = texSize * gLodApprox_dx_vuv;
 	vec2 dy_vtc = texSize * gLodApprox_dy_vuv;
-	float delta_max_sqr = max(dot(dx_vtc, dx_vtc), dot(dy_vtc, dy_vtc));
-	float lod = max(0, 0.5 * log2(delta_max_sqr));
 
-	// aniso variant
-	float px = dot(dx_vtc, dx_vtc);
-	float py = dot(dy_vtc, dy_vtc);
-	float maxLod = 0.5 * log2(max(px,py));
-	float minLod = 0.5 * log2(min(px,py));
-	const float maxAniso = 32;
-	const float maxAnisoLog2 = log2(maxAniso);
-	lod = maxLod - min(maxLod - minLod, maxAnisoLog2);
-
-	return lod;
+	if (maxAnisotropy <= 0) {
+		float delta_max_sqr = max(dot(dx_vtc, dx_vtc), dot(dy_vtc, dy_vtc));
+		return max(0, 0.5 * log2(delta_max_sqr));
+	} else {
+		// aniso variant
+		float px = dot(dx_vtc, dx_vtc);
+		float py = dot(dy_vtc, dy_vtc);
+		float maxLod = 0.5 * log2(max(px,py));
+		float minLod = 0.5 * log2(min(px,py));
+		return maxLod - min(maxLod - minLod, log2(float(maxAnisotropy)));
+	}
 }
 
-vec4 sampleTextureWithLodApprox(in sampler2D tex, vec2 uv) {
-	float lod = approximate_lod_homebrewed_final(vec2(textureSize(tex, 0)));
+vec4 sampleTextureWithLodApprox(in sampler2D tex, vec2 uv, int maxAnisotropy) {
+	float lod = approximate_lod_homebrewed_final(vec2(textureSize(tex, 0)), maxAnisotropy);
 	return textureLod(tex, uv, lod);
 }
 // -------------------------------------------------------
