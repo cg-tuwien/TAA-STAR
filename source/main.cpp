@@ -1844,17 +1844,17 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			define_shader_table(
 				ray_generation_shader("shaders/rt_test.rgen.spv"),
 				triangles_hit_group::create_with_rahit_and_rchit("shaders/rt_test_transp.rahit.spv", "shaders/rt_test.rchit.spv"),
-				triangles_hit_group::create_with_rahit_and_rchit("shaders/rt_test_transp.rahit.spv", "shaders/rt_test_shadowray.rchit.spv"),
+				triangles_hit_group::create_with_rahit_and_rchit("shaders/rt_test_shadowray_transp.rahit.spv", "shaders/rt_test_shadowray.rchit.spv"),
 				miss_shader("shaders/rt_test.rmiss.spv"),
 				miss_shader("shaders/rt_test_shadowray.rmiss.spv")
 			),
 			context().get_max_ray_tracing_recursion_depth(),
-			push_constant_binding_data{shader_type::ray_generation | shader_type::closest_hit, 0, sizeof(push_constant_data_for_rt)},
+			push_constant_binding_data{shader_type::ray_generation | shader_type::closest_hit | shader_type::any_hit, 0, sizeof(push_constant_data_for_rt)},
 			RAYTRACING_DESCRIPTOR_BINDINGS(0),
 			descriptor_binding(3, 0, mRtImageViews[0]->as_storage_image()),	// when rendering, TASS result image is used
 			descriptor_binding(3, 1, mRtDummySegMask->as_storage_image())	// when rendering, TASS segmask is used
 		);
-		mPipelineRayTrace->print_shader_binding_table_groups();
+		//mPipelineRayTrace->print_shader_binding_table_groups();
 
 	}
 
@@ -2820,7 +2820,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		pushc.mAugmentTAADebug			= taaAssist && mRtDebugSparse ? VK_TRUE : VK_FALSE;
 		pushc.mApproximateLod			= mRtApproximateLod;
 		pushc.mApproximateLodMaxAnisotropy = mRtApproximateLodMaxAnisotropy;
-		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 0, sizeof(pushc), &pushc);
+		cmd->handle().pushConstants(mPipelineRayTrace->layout_handle(), vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR, 0, sizeof(pushc), &pushc);
 		cmd->trace_rays(
 			//for_each_pixel(context().main_window()),
 			vk::Extent3D{ mLoResolution.x, mLoResolution.y, 1u },

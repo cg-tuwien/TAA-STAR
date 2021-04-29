@@ -25,6 +25,8 @@ TODOs:
 		Bistro scene: transparents not ok in rasterer? (eg. curtains at main balcony - but curtain above is ok; backface culling?)
 		Still some subtle color/shading differences on leaves between rasterer and ray tracer
 
+	sample transparents shadows in rasterer also with lod 0
+
 	didn't test or work with deferred renderer for a while. check that it is still ok or drop it.
 
 	auto-detect transparent materials by looking for alpha < 1 in diffuse texture?

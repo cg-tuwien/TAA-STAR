@@ -1,0 +1,59 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "shader_cpu_common.h"
+#include "shader_common_main.glsl"
+#include "shader_raytrace_common.glsl"
+
+// difference to rt_test_transp.rahit: This shader does not use LOD approximation, since the (shadow) ray does not origin from the camera!
+
+layout(push_constant) PUSHCONSTANTSDEF_RAYTRACING pushConstants;
+
+layout(location = 0) rayPayloadInEXT MainRayPayload hitValue;
+
+layout(set = 0, binding = 0) BUFFERDEF_Material materialsBuffer;
+layout(set = 0, binding = 1) uniform sampler2D textures[];
+layout(set = 0, binding = 2) uniform usamplerBuffer indexBuffers[];     // one index buffer per [meshgroupId]; contents of each buffer are in uvec3s
+layout(set = 0, binding = 3) uniform samplerBuffer  texCoordsBuffers[]; // ditto, entries are vec2  
+layout (std430, set = 0, binding = 4) readonly buffer MaterialIndexBuffer { uint materialIndices[]; };
+layout(set = 0, binding = 5) UNIFORMDEF_MatricesAndUserInput uboMatUsr;
+layout(set = 0, binding = 14) uniform samplerBuffer  positionsBuffers[];      // entries are vec3, positions in OS
+
+layout(set = 2, binding = 0) uniform accelerationStructureEXT topLevelAS;
+
+hitAttributeEXT vec2 bary2;
+
+// ###### LOD APPROXIMATION ########################
+#include "shader_raytrace_lod_approximation.glsl"
+// -------------------------------------------------------
+
+
+vec4 sample_from_diffuse_texture(uint matIndex, vec2 uv)
+{
+	int texIndex = materialsBuffer.materials[matIndex].mDiffuseTexIndex;
+	vec4 offsetTiling = materialsBuffer.materials[matIndex].mDiffuseTexOffsetTiling;
+	vec2 texCoords = uv * offsetTiling.zw + offsetTiling.xy;
+	return texture(textures[texIndex], texCoords);
+}
+
+void main()
+{
+    // which index buffer to use? -> meshgroupId (stored in geometry custom index)
+    int meshgroupId = gl_InstanceCustomIndexEXT;
+
+    // calc texture coordinates by interpolating barycentric coordinates
+    const vec3 barycentrics = vec3(1.0 - bary2.x - bary2.y, bary2);
+    ivec3 indices = ivec3(texelFetch(indexBuffers[meshgroupId], gl_PrimitiveID).xyz);   // get the indices of the 3 triangle corners
+    vec2 uv0 = texelFetch(texCoordsBuffers[meshgroupId], indices.x).xy;                 // and use them to look up the corresponding texture coordinates
+    vec2 uv1 = texelFetch(texCoordsBuffers[meshgroupId], indices.y).xy;
+    vec2 uv2 = texelFetch(texCoordsBuffers[meshgroupId], indices.z).xy;
+    vec2 uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;       // and interpolate
+
+    uint matIndex = materialIndices[meshgroupId];
+
+    // alpha-test
+    float alpha = sample_from_diffuse_texture(matIndex, uv).a;
+	if (alpha < uboMatUsr.mUserInput.w) ignoreIntersectionEXT;
+}
