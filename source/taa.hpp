@@ -693,7 +693,7 @@ public:
 
 		mPrepareFxaaPipeline = context().create_compute_pipeline_for(
 			compute_shader("shaders/antialias_fxaa_prepare.comp.spv"),
-			descriptor_binding(0, 1, mResultImages[0]->as_storage_image()),
+			descriptor_binding(0, 1, *mResultImages[0]),
 			descriptor_binding(0, 2, mTempImages[0][0]->as_storage_image())
 		);
 
@@ -1043,7 +1043,7 @@ public:
 						// prepare: FXAA should be run after tonemapping and requires luma in alpha channel!
 						cmdbfr->bind_pipeline(const_referenced(mPrepareFxaaPipeline));
 						cmdbfr->bind_descriptors(mPrepareFxaaPipeline->layout(), mDescriptorCache.get_or_create_descriptor_sets({
-							descriptor_binding(0, 1, pLastProducedImageView_t->as_storage_image()),
+							descriptor_binding(0, 1, *pLastProducedImageView_t),
 							descriptor_binding(0, 2, mTempImages[tmpA][inFlightIndex]->as_storage_image())
 							}));
 
