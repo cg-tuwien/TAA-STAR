@@ -139,4 +139,11 @@ vec4 sampleTextureWithLodApprox(in sampler2D tex, vec2 uv, int maxAnisotropy) {
 	float lod = approximate_lod_homebrewed_final(vec2(textureSize(tex, 0)), maxAnisotropy);
 	return textureLod(tex, uv, lod);
 }
+
+// new version, using textureGrad - let the driver deal with anisotropy as configured for the sampler
+// !! does not seem to work correctly yet, esp. on grass
+//vec4 sampleTextureWithLodApprox(in sampler2D tex, vec2 uv, int maxAnisotropy) {
+//	return textureGrad(tex, uv, gLodApprox_dx_vuv, gLodApprox_dy_vuv);
+//}
+
 // -------------------------------------------------------

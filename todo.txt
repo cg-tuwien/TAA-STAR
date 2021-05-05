@@ -24,6 +24,9 @@ TODOs:
 		!Bistro scene: wires great for RTX-TAA demonstration
 		Bistro scene: transparents not ok in rasterer? (eg. curtains at main balcony - but curtain above is ok; backface culling?)
 		Still some subtle color/shading differences on leaves between rasterer and ray tracer
+		load approx with textureGrad? not quite working
+
+	!!! fix validation error on compute pipeline @ startup !!!
 
 	sample transparents shadows in rasterer also with lod 0
 
