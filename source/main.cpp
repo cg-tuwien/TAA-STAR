@@ -1511,13 +1511,12 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// "GPU-compatible format" in this sense means that we'll get two things out of the call to `convert_for_gpu_usage`:
 		//   1) Material data in a properly aligned format, suitable for being uploaded into a GPU buffer (but not uploaded into a buffer yet!)
 		//   2) Image samplers (which contain images and samplers) of all the used textures, already uploaded to the GPU.
-		std::tie(mMaterialData, mImageSamplers) = convert_for_gpu_usage(
+		std::tie(mMaterialData, mImageSamplers) = convert_for_gpu_usage<material_gpu_data>(
 			distinctMaterialConfigs, false,
 			mFlipTexturesInLoader,
 			mDisableMip ? image_usage::general_image : image_usage::general_texture,
 			[](){ return to_filter_mode(context().physical_device().getProperties().limits.maxSamplerAnisotropy, true); }(), // set to max. anisotropy
 			//avk::filter_mode::bilinear, // JUST TESTING manual lod calculation - REMOVEME!!
-			border_handling_mode::repeat,
 			sync::wait_idle(true)
 		);
 		std::cout << "done" << std::endl; 
