@@ -1171,7 +1171,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		//print_material_debug_info(scene);
 
 		// Change the materials of "terrain" and "debris", enable tessellation for them, and set displacement scaling:
-		//helpers::set_terrain_material_config(scene);
+		helpers::set_terrain_material_config(scene);
 
 		// set custom data to indicate two-sided materials	// TODO: move this into helpers::
 		for (auto& model : scene->models()) {

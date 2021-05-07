@@ -113,9 +113,9 @@
     <Image Include="assets\images\thingrid_2560x1440.png" />
     <Image Include="assets\images\thingrid_inv_2560x1440.png" />
     <Image Include="assets\models\goblin.dds" />
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg" />
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg" />
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg" />
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Base_Color.jpg" />
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Displacement.jpg" />
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Normal.jpg" />
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\models\sphere_smooth.obj">

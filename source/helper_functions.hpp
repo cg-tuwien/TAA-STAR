@@ -75,6 +75,7 @@ namespace helpers
 				m.mSpecularTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
 				m.mNormalsTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
 				m.mHeightTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 32.0f, 32.0f };
+
 			}
 			else {
 				m.mDiffuseTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 10.0f, 10.0f };
@@ -82,6 +83,12 @@ namespace helpers
 				m.mNormalsTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 10.0f, 10.0f };
 				m.mHeightTexOffsetTiling	= glm::vec4{ 0.0f, 0.0f, 10.0f, 10.0f };
 			}
+
+			// must now set the border handling to "repeat" manually
+			m.mDiffuseTexBorderHandlingMode  = { avk::border_handling_mode::repeat, avk::border_handling_mode::repeat };
+			m.mSpecularTexBorderHandlingMode = { avk::border_handling_mode::repeat, avk::border_handling_mode::repeat };
+			m.mNormalsTexBorderHandlingMode  = { avk::border_handling_mode::repeat, avk::border_handling_mode::repeat };
+			m.mHeightTexBorderHandlingMode   = { avk::border_handling_mode::repeat, avk::border_handling_mode::repeat };
 
 			auto meshes = aScene->model_at_index(i).mLoadedModel->select_all_meshes();
 			for (auto j : meshes) {

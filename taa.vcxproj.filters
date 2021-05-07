@@ -189,15 +189,6 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Base_Color.jpg">
-      <Filter>assets\terrain</Filter>
-    </Image>
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Displacement.jpg">
-      <Filter>assets\terrain</Filter>
-    </Image>
-    <Image Include="gears_vk\assets\3rd_party\textures\large_metal_debris\large_metal_debris_Normal.jpg">
-      <Filter>assets\terrain</Filter>
-    </Image>
     <Image Include="assets\images\Forest_Sunlight_Background-954.jpg">
       <Filter>assets\images</Filter>
     </Image>
@@ -215,6 +206,15 @@
     </Image>
     <Image Include="assets\images\thingrid_inv_2560x1440.png">
       <Filter>assets\images</Filter>
+    </Image>
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Base_Color.jpg">
+      <Filter>assets\terrain</Filter>
+    </Image>
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Displacement.jpg">
+      <Filter>assets\terrain</Filter>
+    </Image>
+    <Image Include="gears_vk\assets\3rd_party\models\terrain_and_debris\large_metal_debris\large_metal_debris_Normal.jpg">
+      <Filter>assets\terrain</Filter>
     </Image>
   </ItemGroup>
   <ItemGroup>
