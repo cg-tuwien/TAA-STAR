@@ -59,11 +59,12 @@ class taa : public gvk::invokee
 		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
 		uint32_t mRayTraceAugmentFlags		= 0xffffffff & ~(TAA_RTFLAG_ALL | TAA_RTFLAG_FXD);
 		float    mRayTraceAugment_WNrm		= 0.5f;				// weight for normals
-		float    mRayTraceAugment_WDpt		= 0.5f;				// weight for depth
-		float    mRayTraceAugment_WMId		= 0.5f;				// weight for material
+		float    mRayTraceAugment_WDpt		= 0.015f;			// weight for depth
+		float    mRayTraceAugment_WMId		= 0.25f;			// weight for material
 		float    mRayTraceAugment_WLum		= 0.5f;				// weight for luminance
 		float    mRayTraceAugment_Thresh	= 0.5f;				// threshold for sum of weighted indicators
-		int      mRayTraceHistoryCount      = 0;				// how long to keep ray trace flag around
+		int      mRayTraceHistoryCount      = -1;				// how long to keep ray trace flag around (-1 = auto)
+
 		//float pad1;
 
 		// -- aligned again here
@@ -145,7 +146,7 @@ public:
 	}
 
 	// Compute an offset for the projection matrix based on the given frame-id
-	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId, std::vector<glm::vec2> *copyPatternDst = nullptr) const
+	glm::vec2 get_jitter_offset_for_frame(gvk::window::frame_id_t aFrameId, std::vector<glm::vec2> *copyPatternDst = nullptr, size_t *outNumSamples = nullptr) const
 	{
 		//const static auto sResolution = gvk::context().main_window()->resolution();
 		assert(mInputResolution.x);
@@ -226,7 +227,7 @@ public:
 			pos = glm::vec2(pos.x * c - pos.y * s, pos.x * s + pos.y * c);
 		}
 
-
+		if (outNumSamples) *outNumSamples = numSampleOffsets;
 		return pos * mJitterExtraScale;
 	}
 
@@ -511,7 +512,7 @@ public:
 						Checkbox("depth    ",   &flgDpt);	SameLine(); SliderFloatW(80, "##wDpt", &param.mRayTraceAugment_WDpt, 0.f, 1.f);
 						Checkbox("material ",   &flgMId);	SameLine(); SliderFloatW(80, "##wMId", &param.mRayTraceAugment_WMId, 0.f, 1.f);
 						Checkbox("luminance",   &flgLum);	SameLine(); SliderFloatW(80, "##wLum", &param.mRayTraceAugment_WLum, 0.f, 1.f);
-						Checkbox("use count",   &flgCnt);	SameLine(); InputIntW   (80, "##History counter", &param.mRayTraceHistoryCount); HelpMarker("Use history counter - also ray trace pixels marked in <x> previous frames");
+						Checkbox("use count",   &flgCnt);	SameLine(); InputIntW   (80, "##History counter", &param.mRayTraceHistoryCount); HelpMarker("Use history counter - also ray trace pixels marked in <x> previous frames\n-1 = auto (from jitter pattern)");
 						Checkbox("RT ALL   ",   &flgAll);	HelpMarker("Just for debugging - mark everything for raytracing");
 						Checkbox("Fxaa dbg.",   &flgFxD);	HelpMarker("Generate a fixed size border to be handled by FXAA");
 						Checkbox("Use Fxaa ",   &flgFxA);
@@ -928,10 +929,12 @@ public:
 		if (mResetHistory) mLastResetHistoryTime = static_cast<float>(glfwGetTime());
 
 		mHistoryViewMatrices[inFlightIndex] = quakeCamera->view_matrix();
-		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame());
+		size_t numJitterSamples = 0;
+		const auto jitter = get_jitter_offset_for_frame(gvk::context().main_window()->current_frame(), nullptr, &numJitterSamples);
 		//printf("jitter %f %f\n", jitter.x, jitter.y);
 		for (int i = 0; i < 2; ++i) {
 			mTaaUniforms.param[i] = mParameters[i];
+			if (mParameters[i].mRayTraceHistoryCount < 0) mTaaUniforms.param[i].mRayTraceHistoryCount = static_cast<int>(numJitterSamples); // auto = jitter count
 		}
 		mTaaUniforms.mJitterNdc  = glm::vec4(jitter.x, jitter.y, 0.f, 0.f);
 		mTaaUniforms.mSinTime    = glm::sin(glm::vec4(.125f, .25f, .5f, 1.f) * static_cast<float>(glfwGetTime()));
