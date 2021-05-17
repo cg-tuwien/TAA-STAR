@@ -3671,7 +3671,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 		}
 
-		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcVelocityImages, srcMatIdImages, srcRayTracedImages);
+		mAntiAliasing.set_source_image_views(mHiResolution, srcColorImages, srcDepthImages, srcUvNrmImages, srcVelocityImages, srcMatIdImages, srcRayTracedImages);
 		mAntiAliasing.register_raytrace_callback(this);
 		current_composition()->add_element(mAntiAliasing);
 

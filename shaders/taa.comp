@@ -25,6 +25,7 @@ layout(set = 0, binding =  0) uniform sampler uSampler;
 layout(set = 0, binding =  1) uniform texture2D uCurrentFrame;
 layout(set = 0, binding =  2) uniform texture2D uCurrentDepth;
 layout(set = 0, binding =  7) uniform texture2D uCurrentVelocity;
+layout(set = 0, binding = 13) uniform texture2D uCurrentUvNrm;
 //layout(set = 0, binding = 10) uniform texture2D uCurrentMaterial;
 layout(set = 0, binding = 10, r32ui) readonly uniform restrict uimage2D uCurrentMaterial;
 layout(set = 0, binding = 11, r32ui) readonly uniform restrict uimage2D uPreviousMaterial;
@@ -570,6 +571,14 @@ float sample_luminance(ivec2 iuv) {
 	return rgb_to_ycocg(texelFetch(uCurrentFrame, iuv, 0).rgb).x;
 }
 
+vec3 sample_normal(ivec2 iuv) {
+	vec4 uvNormal = texelFetch(uCurrentUvNrm, iuv, 0);
+	// unpack uv and normal
+	//vec2 uv = uvNormal.rg;
+	vec3 normalVS = vec3(cos(uvNormal.z) * cos(uvNormal.w), sin(uvNormal.z) * cos(uvNormal.w), sin(uvNormal.w));
+	return normalVS;
+}
+
 vec2 sobel(float c00, float c01, float c02, float c10, /* float c11, */ float c12, float c20, float c21, float c22) {
 	vec2 g;
 	g.x = c00 - c20 + 2 * c01 - 2 * c21 + c02 - c22;
@@ -626,6 +635,17 @@ uint calc_segmentation_value(ivec2 iuv, vec2 uv, vec2 historyUv, float historyDe
 	float dptValue = 0.0;
 	float matValue = 0.0;
 	float lumValue = 0.0;
+
+	// normals "derivative" - we just dot the normals
+	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_NRM) != 0) {
+		vec3 nC = sample_normal(iuv);
+		vec3 nL = sample_normal(CLAMP_TO_TEX(iuv + ivec2(-1,  0)));
+		vec3 nR = sample_normal(CLAMP_TO_TEX(iuv + ivec2( 1,  0)));
+		vec3 nT = sample_normal(CLAMP_TO_TEX(iuv + ivec2( 0, -1)));
+		vec3 nB = sample_normal(CLAMP_TO_TEX(iuv + ivec2( 0,  1)));
+		float mind = max(0, min(min(min(dot(nC, nL), dot(nC, nR)), dot(nC, nT)), dot(nC, nB)));
+		nrmValue = 1.0 - mind;
+	}
 
 	// depth dervative
 	if ((params.mRayTraceAugmentFlags & TAA_RTFLAG_DPT) != 0) {

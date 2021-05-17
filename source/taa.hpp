@@ -263,6 +263,7 @@ public:
 		glm::uvec2 targetResolution,
 		std::array<avk::image_view_t*, CF>& aSourceColorImageViews,
 		std::array<avk::image_view_t*, CF>& aSourceDepthImageViews,
+		std::array<avk::image_view_t*, CF>& aSourceUvNrmImageViews,
 		std::array<avk::image_view_t*, CF>& aSourceVelocityImageViews,
 		std::array<avk::image_view_t*, CF>& aSourceMatIdImageViews,
 		std::array<avk::image_view_t*, CF>& aRayTracedImageViews)
@@ -276,6 +277,7 @@ public:
 			
 			mSrcColor[i]	= aSourceColorImageViews[i];	// Store pointers to the source color result images
 			mSrcDepth[i]	= aSourceDepthImageViews[i];	// Store pointers to the source depth images
+			mSrcUvNrm[i]	= aSourceUvNrmImageViews[i];	// Store pointers to the source uv and normals images
 			mSrcVelocity[i]	= aSourceVelocityImageViews[i];	// Store pointers to the source velocity images
 			mSrcMatId[i]	= aSourceMatIdImageViews[i];	// Store pointers to the source material id images
 			mSrcRayTraced[i]= aRayTracedImageViews[i];
@@ -673,6 +675,7 @@ public:
 			descriptor_binding(0, 10, (mSrcMatId[0])->as_storage_image()),
 			descriptor_binding(0, 11, (mSrcMatId[0])->as_storage_image()),
 			descriptor_binding(0, 12, mSegmentationImages[0]->as_storage_image()),
+			descriptor_binding(0, 13, *mSrcUvNrm[0]),
 			descriptor_binding(1,  0, mUniformsBuffer[0])
 			//push_constant_binding_data{ shader_type::compute, 0, sizeof(push_constants_for_taa) }
 		);
@@ -1016,6 +1019,7 @@ public:
 				descriptor_binding(0, 10, (mSrcMatId[inFlightIndex])->as_storage_image()),			// -> shader: uCurrentMaterial
 				descriptor_binding(0, 11, (mSrcMatId[inFlightLastIndex])->as_storage_image()),		// -> shader: uPreviousMaterial
 				descriptor_binding(0, 12, mSegmentationImages[inFlightLastIndex]->as_storage_image()),	// -> shader: uPreviousSegMask
+				descriptor_binding(0, 13, *mSrcUvNrm[inFlightIndex]),								// -> shader: uCurrentUvNrm
 				descriptor_binding(1,  0, mUniformsBuffer[inFlightIndex])
 				}));
 			//cmdbfr->push_constants(mTaaPipeline->layout(), mTaaPushConstants);
@@ -1319,6 +1323,7 @@ private:
 	// Source color images per frame in flight:
 	std::array<avk::image_view_t*, CF> mSrcColor;
 	std::array<avk::image_view_t*, CF> mSrcDepth;
+	std::array<avk::image_view_t*, CF> mSrcUvNrm;
 	std::array<avk::image_view_t*, CF> mSrcVelocity;
 	std::array<avk::image_view_t*, CF> mSrcMatId;
 	std::array<avk::image_view_t*, CF> mSrcRayTraced;
