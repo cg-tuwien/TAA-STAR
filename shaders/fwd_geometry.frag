@@ -74,6 +74,7 @@ layout (location = 0) in VertexData
 layout (location = 0) out vec4 oFragColor;
 layout (location = 1) out uint oFragMatId;
 layout (location = 2) out vec4 oFragVelocity;
+layout (location = 3) out vec4 oFragUvNrm;
 // -------------------------------------------------------
 
 // ###### HELPER FUNCTIONS ###############################
@@ -274,6 +275,12 @@ void main()
 	} else {
 		alpha = 1.0;
 	}
+
+	// write normals (and also uv coords, to be consistent with deferred shading variant) - we need those for RT-assisted TAA
+	float l = length(normalVS.xy);
+	vec2 sphericalVS = vec2((l == 0) ? 0 : acos(clamp(normalVS.x / l, -1, 1)), asin(normalVS.z));
+	if (normalVS.y < 0) sphericalVS.x = TAU - sphericalVS.x;
+	oFragUvNrm = vec4(fs_in.texCoords, sphericalVS);
 
 	// write material // TODO: better flag specific/problematic materials that require different TAA handling
 	oFragMatId = (fs_in.materialIndex + 1) | (fs_in.movingObjectId != 0 ? 0x80000000 : 0);

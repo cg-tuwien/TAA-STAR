@@ -694,6 +694,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			colorAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto depthAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_DEPTH,    1, memory_usage::device, image_usage::general_depth_stencil_attachment | image_usage::input_attachment);
 			depthAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
+			auto uvNrmAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
+			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
 			auto matIdAttachment    = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_MATERIAL, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment | image_usage::general_storage_image);
 			matIdAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it when applying the post processing effects
 			auto velocityAttachment = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_VELOCITY, 1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
@@ -702,28 +704,21 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			// label them for Renderdoc
 			rdoc::labelImage(colorAttachment->handle(),    "colorAttachment",    i);
 			rdoc::labelImage(depthAttachment->handle(),    "depthAttachment",    i);
+			rdoc::labelImage(uvNrmAttachment->handle(),    "uvNrmAttachment",    i);
 			rdoc::labelImage(matIdAttachment->handle(),    "matIdAttachment",    i);
 			rdoc::labelImage(velocityAttachment->handle(), "velocityAttachment", i);
-
-#if (!FORWARD_RENDERING)
-			auto uvNrmAttachment = context().create_image(loRes.x, loRes.y, IMAGE_FORMAT_NORMAL,   1, memory_usage::device, image_usage::general_color_attachment | image_usage::input_attachment);
-			uvNrmAttachment->set_target_layout(vk::ImageLayout::eShaderReadOnlyOptimal); // <-- because afterwards, we are going to read from it whene applying the post processing effects
-
-			rdoc::labelImage(uvNrmAttachment->handle(), "uvNrmAttachment", i);
-#endif
 
 			// Before we are attaching the images to a framebuffer, we have to "wrap" them with an image view:
 			auto colorAttachmentView = context().create_image_view(std::move(colorAttachment));
 			auto depthAttachmentView = context().create_depth_image_view(std::move(depthAttachment));
+			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
 			auto matIdAttachmentView = context().create_image_view(std::move(matIdAttachment));
 			auto velocityAttachmentView = context().create_image_view(std::move(velocityAttachment));
 			colorAttachmentView.enable_shared_ownership(); // We are using this attachment in both, the mFramebuffer and the mSkyboxFramebuffer
 			depthAttachmentView.enable_shared_ownership(); // set all that are used in taa to shared ownership too
+			uvNrmAttachmentView.enable_shared_ownership();
 			matIdAttachmentView.enable_shared_ownership();
 			velocityAttachmentView.enable_shared_ownership();
-#if (!FORWARD_RENDERING)
-			auto uvNrmAttachmentView = context().create_image_view(std::move(uvNrmAttachment));
-#endif
 
 			// Create the renderpass only once, ...
 			if (0 == i) {
@@ -745,6 +740,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #if FORWARD_RENDERING
 						attachment::declare_for(colorAttachmentView,    on_load::load,         color(0) ->             color(0),		on_store::store),
 						attachment::declare_for(depthAttachmentView,    on_load::clear, depth_stencil() ->             depth_stencil(),	on_store::store),
+						attachment::declare_for(uvNrmAttachmentView,	on_load::clear,        color(3) ->             unused(),		on_store::store),
 						attachment::declare_for(matIdAttachmentView,    on_load::clear,        color(1) ->             unused(),		on_store::store),
 						attachment::declare_for(velocityAttachmentView, on_load::clear,        color(2) ->             unused(),		on_store::store),
 #else
@@ -784,9 +780,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				shared(mRenderpass),
 				shared(   colorAttachmentView),
 				shared(   depthAttachmentView),
-#if (!FORWARD_RENDERING)
-				owned(    uvNrmAttachmentView),
-#endif
+				shared(   uvNrmAttachmentView),
 				shared(   matIdAttachmentView),
 				shared(   velocityAttachmentView)
 			);
@@ -3658,7 +3652,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		upload_materials_and_vertex_data_to_gpu();
 
 		std::array<image_view_t*, cConcurrentFrames> srcDepthImages;
-//		std::array<image_view_t*, cConcurrentFrames> srcUvNrmImages;
+		std::array<image_view_t*, cConcurrentFrames> srcUvNrmImages;
 		std::array<image_view_t*, cConcurrentFrames> srcMatIdImages;
 		std::array<image_view_t*, cConcurrentFrames> srcColorImages;
 		std::array<image_view_t*, cConcurrentFrames> srcVelocityImages;
@@ -3666,10 +3660,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		auto fif = wnd->number_of_frames_in_flight();
 		for (decltype(fif) i = 0; i < fif; ++i) {
 			srcDepthImages[i]    = &mFramebuffer[i]->image_view_at(1).get();
-//			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2).get();
-			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 2 : 3).get();
+			srcUvNrmImages[i]    = &mFramebuffer[i]->image_view_at(2).get();
+			srcMatIdImages[i]    = &mFramebuffer[i]->image_view_at(3).get();
 			srcColorImages[i]    = &mFramebuffer[i]->image_view_at(0).get();
-			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(FORWARD_RENDERING ? 3 : 4).get();
+			srcVelocityImages[i] = &mFramebuffer[i]->image_view_at(4).get();
 #if ENABLE_RAYTRACING
 			srcRayTracedImages[i] = &mRtImageViews[i].get();
 #else
