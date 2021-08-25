@@ -1134,6 +1134,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			res |= mat.mName == "MASTER_Curtains";
 			res |= mat.mName == "MASTER_Glass_Dirty_MASKED";
 			res |= mat.mName == "MASTER_Forge_Metal";
+			res |= (std::string::npos != mat.mName.find(".DoubleSided"));
 			// TODO... more?
 		}
 
