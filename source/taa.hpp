@@ -18,6 +18,7 @@
 #include "ffx_a.h"
 #include "ffx_cas.h"
 
+#define BETTER_RAYTRACE_SYNC	1
 
 // This class handles the anti-aliasing post-processing effect(s).
 // It is templated on the number of concurrent frames, i.e. some resources
@@ -1033,9 +1034,25 @@ public:
 					// sparse ray trace pixels marked for RTX in segmask
 					// callback main
 					if (mRayTraceCallback) {
-						gvk::context().device().waitIdle(); // FIXME - sync
+						#if BETTER_RAYTRACE_SYNC
+							cmdbfr->establish_global_memory_barrier(
+								pipeline_stage::compute_shader,                        /* -> */ pipeline_stage::ray_tracing_shaders,
+								memory_access::shader_buffers_and_images_write_access, /* -> */ memory_access::shader_buffers_and_images_read_access
+							);
+						#else
+							gvk::context().device().waitIdle(); // FIXME - sync
+						#endif
+
 						mRayTraceCallback->ray_trace_callback(cmdbfr);
-						gvk::context().device().waitIdle(); // FIXME - sync
+
+						#if BETTER_RAYTRACE_SYNC
+							cmdbfr->establish_global_memory_barrier(
+								pipeline_stage::ray_tracing_shaders,                    /* -> */ pipeline_stage::compute_shader,
+								memory_access::shader_buffers_and_images_write_access,  /* -> */ memory_access::shader_buffers_and_images_any_access
+							);
+						#else
+							gvk::context().device().waitIdle(); // FIXME - sync
+						#endif
 
 						//blit_image(mSrcRayTraced[inFlightIndex]->get_image(), mResultImages[inFlightIndex]->get_image(), sync::with_barriers_into_existing_command_buffer(*cmdbfr));
 						pLastProducedImageView_t = mSrcRayTraced[inFlightIndex];
@@ -1055,7 +1072,15 @@ public:
 							}));
 
 						cmdbfr->handle().dispatch((mTempImages[tmpA][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[tmpA][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
-						gvk::context().device().waitIdle(); // FIXME - sync
+
+						#if BETTER_RAYTRACE_SYNC
+							cmdbfr->establish_global_memory_barrier(
+								pipeline_stage::compute_shader,                         /* -> */ pipeline_stage::compute_shader,
+								memory_access::shader_buffers_and_images_write_access,  /* -> */ memory_access::shader_buffers_and_images_read_access
+							);
+						#else
+							gvk::context().device().waitIdle(); // FIXME - sync
+						#endif
 
 						// run FXAA
 						cmdbfr->bind_pipeline(const_referenced(mFxaaPipeline));
@@ -1067,7 +1092,15 @@ public:
 						// TODO: set pushc!
 						cmdbfr->push_constants(mFxaaPipeline->layout(), mFxaaPushConstants);
 						cmdbfr->handle().dispatch((mTempImages[tmpB][inFlightIndex]->get_image().width() + 15u) / 16u, (mTempImages[tmpB][inFlightIndex]->get_image().height() + 15u) / 16u, 1);
-						gvk::context().device().waitIdle(); // FIXME - sync
+
+						#if BETTER_RAYTRACE_SYNC
+							cmdbfr->establish_global_memory_barrier(
+								pipeline_stage::compute_shader,                         /* -> */ pipeline_stage::compute_shader,
+								memory_access::shader_buffers_and_images_write_access,  /* -> */ memory_access::shader_buffers_and_images_any_access
+							);
+						#else
+							gvk::context().device().waitIdle(); // FIXME - sync
+						#endif
 
 						pLastProducedImageView_t = &mTempImages[tmpB][inFlightIndex].get();
 						// nextTempImageIndex is already correct
