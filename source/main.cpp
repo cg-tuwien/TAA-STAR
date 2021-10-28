@@ -925,7 +925,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						//context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_border, 0.f, [](avk::sampler_t & smp) { smp.config().setBorderColor(vk::BorderColor::eFloatOpaqueWhite); })
 						context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
 							[](avk::sampler_t & smp) {
-								smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
+								smp.create_info().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
 							}
 						)
 					);
@@ -946,7 +946,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 								avk::shared(depthViews[i][0]), // set to cascade #0
 								context().create_sampler(avk::filter_mode::bilinear, avk::border_handling_mode::clamp_to_edge, 0.f,
 									[](avk::sampler_t & smp) {
-										smp.config().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
+										smp.create_info().setCompareEnable(VK_TRUE).setCompareOp(vk::CompareOp::eLess);
 									}
 								)
 							);
@@ -3064,6 +3064,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 
+				/*
+				// NOTE: Showing framebuffer images in GUI does not work anymore.
+				// The "new way" using imguiManager->get_or_create_texture_descriptor() needs combined image samplers, which we don't have
+
 				static auto smplr = context().create_sampler(filter_mode::bilinear, border_handling_mode::clamp_to_edge);
 				static auto texIdsAndDescriptions = [&]() {
 
@@ -3075,16 +3079,16 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #endif
 					std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
 					for (size_t i = 0; i < pViews.size(); ++i) {
-						if (pViews[i]->get_image().config().samples != vk::SampleCountFlagBits::e1) {
+						if (pViews[i]->get_image().create_info().samples != vk::SampleCountFlagBits::e1) {
 							LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
 							v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 						} else {
-							if (!is_norm_format(pViews[i]->get_image().config().format) && !is_float_format(pViews[i]->get_image().config().format)) {
+							if (!is_norm_format(pViews[i]->get_image().create_info().format) && !is_float_format(pViews[i]->get_image().create_info().format)) {
 								LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
 								v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
 							} else {
 								v.emplace_back(
-									ImGui_ImplVulkan_AddTexture(smplr->handle(), pViews[i]->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
+									//ImGui_ImplVulkan_AddTexture(smplr->handle(), pViews[i]->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
 									fmt::format("Attachment #{}", i)
 								);
 							}
@@ -3092,27 +3096,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					}
 					return v;
 
-					//std::vector<std::tuple<std::optional<ImTextureID>, std::string>> v;
-					//const auto n = mFramebuffer[0]->image_views().size();
-					//for (size_t i = 0; i < n; ++i) {
-					//	if (mFramebuffer[0]->image_view_at(i)->get_image().config().samples != vk::SampleCountFlagBits::e1) {
-					//		LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has a sample count != 1. Wouldn't be displayed properly, sorry.", i));
-					//		v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
-					//	} else {
-					//		if (!is_norm_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format) && !is_float_format(mFramebuffer[0]->image_view_at(i)->get_image().config().format)) {
-					//			LOG_INFO(fmt::format("Excluding framebuffer attachment #{} from the UI because it has format that can not be sampled with a (floating point-type) sampler2D.", i));
-					//			v.emplace_back(std::optional<ImTextureID>{}, fmt::format("Not displaying attachment #{}", i));
-					//		} else {
-					//			v.emplace_back(
-					//				ImGui_ImplVulkan_AddTexture(smplr->handle(), mFramebuffer[0]->image_view_at(i)->handle(), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)),
-					//				fmt::format("Attachment #{}", i)
-					//			);
-					//		}
-					//	}
-					//}
-					//return v;
-
 				}();
+				*/
 
 				auto inFlightIndex = context().main_window()->in_flight_index_for_frame();
 
@@ -3382,6 +3367,9 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					PopID();
 				}
 
+				/*
+				// Not working anymore, see comment at top
+
 				if (CollapsingHeader("Result images")) {
 					for (auto& tpl : texIdsAndDescriptions) {
 						auto texId = std::get<std::optional<ImTextureID>>(tpl);
@@ -3392,6 +3380,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						Text(description.c_str());
 					}
 				}
+				*/
 
 				static std::string lastSettingsFn = "settings.ini";
 
