@@ -23,6 +23,13 @@
 // use forward rendering? (if 0: use deferred shading)
 #define FORWARD_RENDERING 1
 
+// experimental: use variable rate shading?
+#define USE_VARIABLE_RATE_SHADING 1
+
+#if (!FORWARD_RENDERING) && USE_VARIABLE_RATE_SHADING
+#error "Variable rate shading only supported for forward rendering for now"
+#endif
+
 // use the gvk updater for shader hot reloading and window resizing ?
 #define USE_GVK_UPDATER 1
 
@@ -2159,6 +2166,102 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 #endif
 
+#if USE_VARIABLE_RATE_SHADING
+	void init_variable_rate_shading() {
+		using namespace avk;
+		using namespace gvk;
+
+		// init extension function pointers for VRS;
+		vkCmdBindShadingRateImageNV          = reinterpret_cast<PFN_vkCmdBindShadingRateImageNV>         (vkGetDeviceProcAddr(context().device(), "vkCmdBindShadingRateImageNV"));
+		vkCmdSetViewportShadingRatePaletteNV = reinterpret_cast<PFN_vkCmdSetViewportShadingRatePaletteNV>(vkGetDeviceProcAddr(context().device(), "vkCmdSetViewportShadingRatePaletteNV"));
+		assert(vkCmdBindShadingRateImageNV != nullptr && vkCmdSetViewportShadingRatePaletteNV != nullptr);
+
+		// get shading rate image properties
+		auto props2 = vk::PhysicalDeviceProperties2();
+		props2.pNext = &mShadingRateImageProps;
+		vkGetPhysicalDeviceProperties2(context().physical_device(), reinterpret_cast<VkPhysicalDeviceProperties2 *>(&props2));
+		LOG_INFO("Shading rate texel size is " + std::to_string(mShadingRateImageProps.shadingRateTexelSize.width) + " x " + std::to_string(mShadingRateImageProps.shadingRateTexelSize.height));
+
+		// set up shading rate palette and a PipelineViewportShadingRateImageStateCreateInfoNV for pipeline creation
+		mShadingRatePipelineInfo.palette.setShadingRatePaletteEntries(mShadingRatePipelineInfo.paletteEntries);
+		mShadingRatePipelineInfo.pipelineViewportShadingRateImageStateCreateInfo.
+			setShadingRateImageEnable(VK_TRUE).
+			setViewportCount(1u).
+			setPShadingRatePalettes(&mShadingRatePipelineInfo.palette);
+
+		// create shading rate images
+		auto extMain = context().main_window()->swap_chain_extent();
+		vk::Extent2D ext;
+		ext.width  = static_cast<uint32_t>(ceil(extMain.width  / static_cast<float>(mShadingRateImageProps.shadingRateTexelSize.width )));
+		ext.height = static_cast<uint32_t>(ceil(extMain.height / static_cast<float>(mShadingRateImageProps.shadingRateTexelSize.height)));
+
+		auto numFif = context().main_window()->number_of_frames_in_flight();
+		for (decltype(numFif) i = 0; i < numFif; ++i) {
+			mShadingRateImageViews[i] = context().create_image_view(
+				context().create_image(ext.width, ext.height, vk::Format::eR8Uint, 1, memory_usage::device, image_usage::shading_rate_image | image_usage::transfer_destination)
+			);
+		}
+
+		// init images with a sample pattern for testing
+		auto patternBuf = context().create_buffer(memory_usage::host_visible, vk::BufferUsageFlagBits::eTransferSrc, avk::generic_buffer_meta::create_from_size(ext.width * ext.height));
+		{
+			// we will use a 1:1 mapping from palette indices to shading rates, so rateIdx has the same numeric value as the actual shading rate flag
+			const int testPattern = 2;
+			auto mapping = patternBuf->map_memory(mapping_access::write);
+			uint8_t *p = reinterpret_cast<uint8_t *>(mapping.get());
+			for (unsigned int y = 0; y < ext.height; ++y) {
+				uint8_t rateIdx = 5; // = VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_PIXEL_NV in default settings
+				for (unsigned int x = 0; x < ext.width; ++x) {
+					if (testPattern == 1) {
+						// 3 stripes
+						switch (int(3 * y / ext.height)) {
+						case 0: rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_PIXEL_NV);      break;
+						case 1: rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_2X2_PIXELS_NV); break;
+						case 2: rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_4X4_PIXELS_NV); break;
+						}
+					} else if (testPattern == 2) {
+						// circular
+						float dx = 2.f * (float(x) - float(ext.width  / 2)) / float(ext.width);
+						float dy = 2.f * (float(y) - float(ext.height / 2)) / float(ext.height);
+						float d = sqrt(dx * dx + dy * dy);
+						if      (d < 0.25f) rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_PIXEL_NV);
+						else if (d < 0.5f)  rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_2X2_PIXELS_NV);
+						else                rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_4X4_PIXELS_NV);
+					} else {
+						rateIdx = uint8_t(VK_SHADING_RATE_PALETTE_ENTRY_1_INVOCATION_PER_PIXEL_NV);
+					}
+
+					assert(rateIdx >= 0 && rateIdx <= 11);
+					*(p++) = rateIdx;
+				}
+			}
+
+			// copy pattern to images
+			for (decltype(numFif) i = 0; i < numFif; ++i) {
+				auto &img = mShadingRateImageViews[i]->get_image();
+				img.transition_to_layout(vk::ImageLayout::eTransferDstOptimal);
+				copy_buffer_to_image(patternBuf, img);
+				img.transition_to_layout(vk::ImageLayout::eShadingRateOptimalNV);
+			}
+		}
+	}
+#endif
+
+	std::function<void(avk::graphics_pipeline_t&)> get_pipeline_alter_config_function_for_shading_rate(bool enable) {
+		#if USE_VARIABLE_RATE_SHADING
+			if (enable) {
+				return [this](avk::graphics_pipeline_t& pipe) {
+					assert(pipe.viewport_state_create_info().pNext == nullptr);
+					pipe.viewport_state_create_info().pNext = &mShadingRatePipelineInfo.pipelineViewportShadingRateImageStateCreateInfo;
+				};
+			} else {
+				return {};
+			}
+		#else
+			return {};
+		#endif
+	}
+
 	void upload_materials_and_vertex_data_to_gpu()
 	{
 		std::cout << "Uploading data to GPU..."; std::cout.flush();
@@ -2306,121 +2409,143 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		using namespace avk;
 		using namespace gvk;
 
-		const char * vert_shader_name = "shaders/transform_and_pass_on.vert.spv";
-		const char * frag_shader_name = "shaders/fwd_geometry.frag.spv";
+		for (int iShadingRatePass = 0; iShadingRatePass < 2; ++iShadingRatePass) { // create normal and variable rate shading pipelines
 
-		mPipelineFwdOpaque = context().create_graphics_pipeline_for(
-			vertex_shader(vert_shader_name),
-			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
-																																  // The next lines define the format and location of the vertex shader inputs:
-			// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
-			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
-			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
-			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
-			// Some further settings:
-			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
-			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // subpass #0
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
-			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
-			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
-			descriptor_binding(1, 1, mLightsourcesBuffer[0])
-		);
+			const char * vert_shader_name = "shaders/transform_and_pass_on.vert.spv";
+			const char * frag_shader_name = "shaders/fwd_geometry.frag.spv";
 
-		// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
-		mPipelineFwdTransparent = context().create_graphics_pipeline_for(
-			vertex_shader(vert_shader_name),
-			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
+			auto tmpPipelineFwdOpaque = context().create_graphics_pipeline_for(
+				vertex_shader(vert_shader_name),
+				fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
+																																	  // The next lines define the format and location of the vertex shader inputs:
+				// (The dummy values (like glm::vec3) tell the pipeline the format of the respective input)
+				from_buffer_binding(0)->stream_per_vertex<glm::vec3>()->to_location(0),		// <-- corresponds to vertex shader's aPosition
+				from_buffer_binding(1)->stream_per_vertex<glm::vec2>()->to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+				from_buffer_binding(2)->stream_per_vertex<glm::vec3>()->to_location(2),		// <-- corresponds to vertex shader's aNormal
+				from_buffer_binding(3)->stream_per_vertex<glm::vec3>()->to_location(3),		// <-- corresponds to vertex shader's aTangent
+				from_buffer_binding(4)->stream_per_vertex<glm::vec3>()->to_location(4),		// <-- corresponds to vertex shader's aBitangent
+				// Some further settings:
+				cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+				cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+				mRenderpass, 0u, // subpass #0
+				get_pipeline_alter_config_function_for_shading_rate(iShadingRatePass == 1),
+				push_constant_binding_data{ shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+				descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+				descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+				SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
+				SHADOWMAP_DESCRIPTOR_BINDINGS(0)
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+				descriptor_binding(1, 1, mLightsourcesBuffer[0])
+			);
+			if (iShadingRatePass == 0) mPipelineFwdOpaque = std::move(tmpPipelineFwdOpaque); else mPipelineVrsFwdOpaque = std::move(tmpPipelineFwdOpaque);
 
-			//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
-			cfg::color_blending_config::enable_alpha_blending_for_attachment(0),
-			cfg::culling_mode::disabled,
-			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
-			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
+			// this is almost the same, except for the specialization constant, alpha blending (and backface culling? depth write?)
+			auto tmpPipelineFwdTransparent = context().create_graphics_pipeline_for(
+				vertex_shader(vert_shader_name),
+				fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
-			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
-			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
-			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
-			// Some further settings:
-			cfg::front_face::define_front_faces_to_be_clockwise(),
-			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // subpass #0
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
-			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
-			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
-			descriptor_binding(1, 1, mLightsourcesBuffer[0])
-		);
+				//cfg::color_blending_config::enable_alpha_blending_for_all_attachments(),
+				cfg::color_blending_config::enable_alpha_blending_for_attachment(0),
+				cfg::culling_mode::disabled,
+				// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
+				// cfg::depth_test::disabled(),  // not good, definitely needs sorting
 
-		// alternative pipeline - render transparency with simple alpha test only, no blending
-		mPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
-			vertex_shader(vert_shader_name),
-			fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
+				from_buffer_binding(0)->stream_per_vertex<glm::vec3>()->to_location(0),		// <-- corresponds to vertex shader's aPosition
+				from_buffer_binding(1)->stream_per_vertex<glm::vec2>()->to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+				from_buffer_binding(2)->stream_per_vertex<glm::vec3>()->to_location(2),		// <-- corresponds to vertex shader's aNormal
+				from_buffer_binding(3)->stream_per_vertex<glm::vec3>()->to_location(3),		// <-- corresponds to vertex shader's aTangent
+				from_buffer_binding(4)->stream_per_vertex<glm::vec3>()->to_location(4),		// <-- corresponds to vertex shader's aBitangent
+				// Some further settings:
+				cfg::front_face::define_front_faces_to_be_clockwise(),
+				cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+				mRenderpass, 0u, // subpass #0
+				get_pipeline_alter_config_function_for_shading_rate(iShadingRatePass == 1),
+				push_constant_binding_data{ shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+				descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+				descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+				SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
+				SHADOWMAP_DESCRIPTOR_BINDINGS(0)
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+				descriptor_binding(1, 1, mLightsourcesBuffer[0])
+			);
+			if (iShadingRatePass == 0) mPipelineFwdTransparent = std::move(tmpPipelineFwdTransparent); else mPipelineVrsFwdTransparent = std::move(tmpPipelineFwdTransparent);
 
-			cfg::culling_mode::disabled,
-			// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
-			// cfg::depth_test::disabled(),  // not good, definitely needs sorting
+			// alternative pipeline - render transparency with simple alpha test only, no blending
+			auto tmpPipelineFwdTransparentNoBlend = context().create_graphics_pipeline_for(
+				vertex_shader(vert_shader_name),
+				fragment_shader(frag_shader_name).set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_TRANSPARENT }), // transparent pass
 
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// <-- corresponds to vertex shader's aPosition
-			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// <-- corresponds to vertex shader's aTexCoords
-			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// <-- corresponds to vertex shader's aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// <-- corresponds to vertex shader's aTangent
-			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// <-- corresponds to vertex shader's aBitangent
-																							// Some further settings:
-			cfg::front_face::define_front_faces_to_be_clockwise(),
-			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // subpass #0
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
-			descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
-			descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
-			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
-			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
-			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
-			descriptor_binding(1, 1, mLightsourcesBuffer[0])
-		);
+				cfg::culling_mode::disabled,
+				// cfg::depth_write::disabled(), // would need back-to-front sorting, also a problem for TAA... so leave it on (and render only stuff with alpha >= threshold)
+				// cfg::depth_test::disabled(),  // not good, definitely needs sorting
 
+				from_buffer_binding(0)->stream_per_vertex<glm::vec3>()->to_location(0),		// <-- corresponds to vertex shader's aPosition
+				from_buffer_binding(1)->stream_per_vertex<glm::vec2>()->to_location(1),		// <-- corresponds to vertex shader's aTexCoords
+				from_buffer_binding(2)->stream_per_vertex<glm::vec3>()->to_location(2),		// <-- corresponds to vertex shader's aNormal
+				from_buffer_binding(3)->stream_per_vertex<glm::vec3>()->to_location(3),		// <-- corresponds to vertex shader's aTangent
+				from_buffer_binding(4)->stream_per_vertex<glm::vec3>()->to_location(4),		// <-- corresponds to vertex shader's aBitangent
+																								// Some further settings:
+				cfg::front_face::define_front_faces_to_be_clockwise(),
+				cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+				mRenderpass, 0u, // subpass #0
+				get_pipeline_alter_config_function_for_shading_rate(iShadingRatePass == 1),
+				push_constant_binding_data{ shader_type::all, 0, sizeof(push_constant_data_for_dii) }, // We also have to declare that we're going to submit push constants
+				descriptor_binding(0, 0, mMaterialBuffer),						// As far as used resources are concerned, we need the materials buffer (type: vk::DescriptorType::eStorageBuffer),
+				descriptor_binding(0, 1, mImageSamplers),						// multiple images along with their sampler (array of vk::DescriptorType::eCombinedImageSampler),
+				SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
+				SHADOWMAP_DESCRIPTOR_BINDINGS(0)
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+				descriptor_binding(1, 1, mLightsourcesBuffer[0])
+			);
+			if (iShadingRatePass == 0) mPipelineFwdTransparentNoBlend = std::move(tmpPipelineFwdTransparentNoBlend); else mPipelineVrsFwdTransparentNoBlend = std::move(tmpPipelineFwdTransparentNoBlend);
+
+			#if !USE_VARIABLE_RATE_SHADING
+				break;
+			#endif
+		}
 	}
 
 	void prepare_common_pipelines() {
 		using namespace avk;
 		using namespace gvk;
 
-		mPipelineAnimObject = context().create_graphics_pipeline_for(
-			vertex_shader("shaders/animatedObject.vert.spv"),
-#if FORWARD_RENDERING
-			fragment_shader("shaders/fwd_geometry.frag.spv").set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
-#else
-			fragment_shader("shaders/blinnphong_and_normal_mapping.frag.spv"),
-#endif
-			from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
-			from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
-			from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
-			from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// aTangent
-			from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// aBitangent
-			from_buffer_binding(5) -> stream_per_vertex<glm::vec4>() -> to_location(5),		// aBoneWeights
-			from_buffer_binding(6) -> stream_per_vertex<glm::uvec4>()-> to_location(6),		// aBoneIndices
-			cfg::front_face::define_front_faces_to_be_counter_clockwise(),
-			cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
-			mRenderpass, 0u, // subpass #0
-			push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
-			descriptor_binding(0, 0, mMaterialBuffer),
-			descriptor_binding(0, 1, mImageSamplers),
-			SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
-			SHADOWMAP_DESCRIPTOR_BINDINGS(0)
-			descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
-			descriptor_binding(1, 1, mLightsourcesBuffer[0]),
-			descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
-			descriptor_binding(3, 1, mBoneMatricesPrevBuffer[0])
-		);
+		for (int iShadingRatePass = 0; iShadingRatePass < 2; ++iShadingRatePass) { // create normal and variable rate shading pipelines
+
+			auto tmpPipelineAnimObject = context().create_graphics_pipeline_for(
+				vertex_shader("shaders/animatedObject.vert.spv"),
+				#if FORWARD_RENDERING
+					fragment_shader("shaders/fwd_geometry.frag.spv").set_specialization_constant(SPECCONST_ID_TRANSPARENCY, uint32_t{ SPECCONST_VAL_OPAQUE }), //  opaque pass
+				#else
+					fragment_shader("shaders/blinnphong_and_normal_mapping.frag.spv"),
+				#endif
+				from_buffer_binding(0) -> stream_per_vertex<glm::vec3>() -> to_location(0),		// aPosition
+				from_buffer_binding(1) -> stream_per_vertex<glm::vec2>() -> to_location(1),		// aTexCoords
+				from_buffer_binding(2) -> stream_per_vertex<glm::vec3>() -> to_location(2),		// aNormal
+				from_buffer_binding(3) -> stream_per_vertex<glm::vec3>() -> to_location(3),		// aTangent
+				from_buffer_binding(4) -> stream_per_vertex<glm::vec3>() -> to_location(4),		// aBitangent
+				from_buffer_binding(5) -> stream_per_vertex<glm::vec4>() -> to_location(5),		// aBoneWeights
+				from_buffer_binding(6) -> stream_per_vertex<glm::uvec4>()-> to_location(6),		// aBoneIndices
+				cfg::front_face::define_front_faces_to_be_counter_clockwise(),
+				cfg::viewport_depth_scissors_config::from_framebuffer(mFramebuffer[0]),
+				mRenderpass, 0u, // subpass #0
+				get_pipeline_alter_config_function_for_shading_rate(iShadingRatePass == 1),
+				push_constant_binding_data { shader_type::all, 0, sizeof(push_constant_data_for_dii) },
+				descriptor_binding(0, 0, mMaterialBuffer),
+				descriptor_binding(0, 1, mImageSamplers),
+				SCENE_DRAW_DESCRIPTOR_BINDINGS(0)
+				SHADOWMAP_DESCRIPTOR_BINDINGS(0)
+				descriptor_binding(1, 0, mMatricesUserInputBuffer[0]),
+				descriptor_binding(1, 1, mLightsourcesBuffer[0]),
+				descriptor_binding(3, 0, mBoneMatricesBuffer[0]),
+				descriptor_binding(3, 1, mBoneMatricesPrevBuffer[0])
+			);
+			if (iShadingRatePass == 0) mPipelineAnimObject = std::move(tmpPipelineAnimObject); else mPipelineVrsAnimObject = std::move(tmpPipelineAnimObject);
+
+			#if !USE_VARIABLE_RATE_SHADING
+				break;
+			#endif
+		}
+
 
 		uint32_t subpass = (FORWARD_RENDERING) ? 1u : 2u;
 
@@ -2615,7 +2740,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		if (mDynObjects[mMovingObject.moverId].mIsAnimated) {
 			// animated
 			rdoc::beginSection(cmd->handle(), "render dynamic object (animated)");
-			auto &pipe = shadowPass ? mPipelineShadowmapAnimObject : mPipelineAnimObject;
+			auto &pipe = shadowPass ? mPipelineShadowmapAnimObject : (mEnableVrs ? mPipelineVrsAnimObject : mPipelineAnimObject);
 
 			cmd->bind_pipeline(const_referenced(pipe));
 
@@ -2693,7 +2818,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						avk::const_referenced(md.mPositionsBuffer)
 					);
 				} else {
-					const auto &pipe = FORWARD_RENDERING ? mPipelineFwdOpaque : mPipelineFirstPass;
+					const auto &pipe = FORWARD_RENDERING ? (mEnableVrs ? mPipelineVrsFwdOpaque : mPipelineFwdOpaque) : mPipelineFirstPass;
 					cmd->push_constants(pipe->layout(), pushc_dii);
 					cmd->draw_indexed(
 						avk::const_referenced(md.mIndexBuffer),
@@ -2838,8 +2963,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 	void record_single_command_buffer_for_models(avk::command_buffer &commandBuffer, gvk::window::frame_id_t fif)
 	{
 #if FORWARD_RENDERING
-		const auto &firstPipe  = mPipelineFwdOpaque;
-		const auto &secondPipe = mUseAlphaBlending ? mPipelineFwdTransparent : mPipelineFwdTransparentNoBlend;
+		const auto &firstPipe  = mEnableVrs ? mPipelineVrsFwdOpaque : mPipelineFwdOpaque;
+		const auto &secondPipe = mUseAlphaBlending
+			                   ? (mEnableVrs ? mPipelineVrsFwdTransparent        : mPipelineFwdTransparent)
+			                   : (mEnableVrs ? mPipelineVrsFwdTransparentNoBlend : mPipelineFwdTransparentNoBlend);
 #else
 		const auto &firstPipe  = mPipelineFirstPass;
 		const auto &secondPipe = mPipelineLightingPass;
@@ -2851,6 +2978,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		push_constant_data_for_dii pushc_dii = {};
 
 		commandBuffer->begin_recording();
+
+		// bind shading rate image
+#if USE_VARIABLE_RATE_SHADING
+		if (mEnableVrs) {
+			vkCmdBindShadingRateImageNV(commandBuffer->handle(), mShadingRateImageViews[fif]->handle(), VkImageLayout::VK_IMAGE_LAYOUT_SHADING_RATE_OPTIMAL_NV);
+		}
+#endif
 
 #if ENABLE_RAYTRACING
 		if (mDoRayTraceTest) {
@@ -3323,6 +3457,10 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 						PopItemWidth();
 					}
 
+					#if USE_VARIABLE_RATE_SHADING
+						Checkbox("Variable rate shading", &mEnableVrs);
+					#endif
+	
 					if (Button("Show ImGui demo window")) showImguiDemoWindow = true;
 				}
 
@@ -3606,18 +3744,22 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 
 		load_and_prepare_scene();
 
-#if FORWARD_RENDERING
-		prepare_forward_rendering_pipelines();
-#else
-		prepare_deferred_shading_pipelines();
-#endif
+		#if USE_VARIABLE_RATE_SHADING
+			init_variable_rate_shading();
+		#endif
+
+		#if FORWARD_RENDERING
+			prepare_forward_rendering_pipelines();
+		#else
+			prepare_deferred_shading_pipelines();
+		#endif
 		prepare_common_pipelines();
 
 		// print_pipelines_info();
 
-#if ENABLE_RAYTRACING
-		init_raytracing();
-#endif
+		#if ENABLE_RAYTRACING
+			init_raytracing();
+		#endif
 
 		// alloc command buffers for drawing the scene, but don't record them yet
 		alloc_command_buffers_for_models();
@@ -4374,6 +4516,13 @@ private: // v== Member variables ==v
 	avk::graphics_pipeline mPipelineDrawCamPath;
 	avk::graphics_pipeline mPipelineTestImage;
 
+	// Variable rate shading pipelines
+	avk::graphics_pipeline mPipelineVrsFwdOpaque;
+	avk::graphics_pipeline mPipelineVrsFwdTransparent;
+	avk::graphics_pipeline mPipelineVrsFwdTransparentNoBlend;
+	avk::graphics_pipeline mPipelineVrsAnimObject;
+	// TODO: VRS - other pipelines, esp. shadowmaps?
+
 	const int mMaxCamPathPositions = 10'000;
 	int mNumCamPathPositions = 0;
 	bool mDrawCamPathPositions_valid = false;
@@ -4596,6 +4745,38 @@ private: // v== Member variables ==v
 	int mRtApproximateLodMaxAnisotropy = 32;
 
 	SceneType mSceneType = SceneType::Unknown;
+
+
+	// extension functions used for VRS
+	PFN_vkCmdBindShadingRateImageNV          vkCmdBindShadingRateImageNV          = nullptr;
+	PFN_vkCmdSetViewportShadingRatePaletteNV vkCmdSetViewportShadingRatePaletteNV = nullptr;
+
+#if USE_VARIABLE_RATE_SHADING
+	vk::PhysicalDeviceShadingRateImagePropertiesNV mShadingRateImageProps;
+
+	std::array<avk::image_view, cConcurrentFrames> mShadingRateImageViews;
+
+	struct {
+		std::vector<vk::ShadingRatePaletteEntryNV> paletteEntries = {
+			vk::ShadingRatePaletteEntryNV::eNoInvocations,
+			vk::ShadingRatePaletteEntryNV::e16InvocationsPerPixel,
+			vk::ShadingRatePaletteEntryNV::e8InvocationsPerPixel,
+			vk::ShadingRatePaletteEntryNV::e4InvocationsPerPixel,
+			vk::ShadingRatePaletteEntryNV::e2InvocationsPerPixel,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPerPixel,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer2X1Pixels,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer1X2Pixels,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer2X2Pixels,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer4X2Pixels,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer2X4Pixels,
+			vk::ShadingRatePaletteEntryNV::e1InvocationPer4X4Pixels
+		};
+		vk::ShadingRatePaletteNV palette;
+		vk::PipelineViewportShadingRateImageStateCreateInfoNV pipelineViewportShadingRateImageStateCreateInfo;
+	} mShadingRatePipelineInfo;
+#endif
+
+	bool mEnableVrs = false;
 };
 
 static std::filesystem::path getExecutablePath() {
@@ -4817,6 +4998,11 @@ int main(int argc, char **argv) // <== Starting point ==
 			.add_extension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)
 			.add_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
 			.add_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
+#endif
+
+#if USE_VARIABLE_RATE_SHADING
+		// add extensions necessary for variable rate shading
+		dev_extensions.add_extension(VK_NV_SHADING_RATE_IMAGE_EXTENSION_NAME);
 #endif
 
 		// GO:
