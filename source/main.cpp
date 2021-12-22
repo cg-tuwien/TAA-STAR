@@ -24,7 +24,7 @@
 #define FORWARD_RENDERING 1
 
 // experimental: use variable rate shading?
-#define USE_VARIABLE_RATE_SHADING 1
+#define USE_VARIABLE_RATE_SHADING 0
 
 #if (!FORWARD_RENDERING) && USE_VARIABLE_RATE_SHADING
 #error "Variable rate shading only supported for forward rendering for now"
@@ -5018,6 +5018,9 @@ int main(int argc, char **argv) // <== Starting point ==
 			[](vk::PhysicalDeviceFeatures& pdf) {
 				pdf.independentBlend  = VK_TRUE;	// request independent blending
 				pdf.multiDrawIndirect = VK_TRUE;	// request support for multiple draw indirect
+			},
+			[](vk::PhysicalDeviceVulkan11Features& pdf) {
+				pdf.shaderDrawParameters = VK_TRUE;	// this is needed to use gl_DrawID (aka DrawIndex) in shaders
 			},
 			[](vk::PhysicalDeviceVulkan12Features& pdf) {
 				pdf.drawIndirectCount = VK_TRUE;	// needed for vkCmdDrawIndexedIndirectCount
