@@ -1573,11 +1573,13 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		std::vector<uint32_t> materialIndices;
 		for (auto &mg : mSceneData.mMeshgroups) {
 			mg.rayTracingTmp.rtIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage,
-																		  index_buffer_meta::        create_from_data(mg.rayTracingTmp.rtIndexData),
-																		  uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
+																		  index_buffer_meta::                                           create_from_data(mg.rayTracingTmp.rtIndexData),
+																		  read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(mg.rayTracingTmp.rtIndexData),
+																		  uniform_texel_buffer_meta::                                   create_from_data(mg.rayTracingTmp.rtIndexData).set_format<glm::uvec3>());
 			mg.rayTracingTmp.rtPositionBuffer	= context().create_buffer(memory_usage::device, bufferUsage,
-																		  vertex_buffer_meta::       create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position),
-																		  uniform_texel_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
+																		  vertex_buffer_meta::                                          create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position),
+																		  read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(mg.rayTracingTmp.rtPositionData),
+																		  uniform_texel_buffer_meta::                                   create_from_data(mg.rayTracingTmp.rtPositionData).describe_only_member(mg.rayTracingTmp.rtPositionData[0], content_description::position));
 			mg.rayTracingTmp.rtIndexBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtPositionBuffer.enable_shared_ownership();
 			mg.rayTracingTmp.rtIndexBuffer		->fill(mg.rayTracingTmp.rtIndexData.data(),    0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
@@ -1708,8 +1710,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 #else
 
 				// --- debug! this works
-				auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices));
-				auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(mesh.mPositions).describe_only_member(mesh.mPositions[0], content_description::position));
+				auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices), read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(mesh.mIndices));
+				auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(mesh.mPositions).describe_only_member(mesh.mPositions[0], content_description::position), read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(mesh.mPositions));
 				tmpIndexBuffer.enable_shared_ownership();
 				tmpPositionsBuffer.enable_shared_ownership();
 				tmpIndexBuffer		->fill(mesh.mIndices.data(),   0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
@@ -1785,7 +1787,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			auto offscreenImage = context().create_image(wdth, hght, frmt, 1, memory_usage::device, image_usage::general_storage_image);
 			offscreenImage->transition_to_layout({}, sync::with_barriers(win->command_buffer_lifetime_handler()));
 			mRtImageViews[i] = context().create_image_view(owned(offscreenImage));
-			assert((mRtImageViews[i]->config().subresourceRange.aspectMask & vk::ImageAspectFlagBits::eColor) == vk::ImageAspectFlagBits::eColor);
+			assert((mRtImageViews[i]->create_info().subresourceRange.aspectMask & vk::ImageAspectFlagBits::eColor) == vk::ImageAspectFlagBits::eColor);
 		}
 		{
 			auto dummySegMask = context().create_image(1, 1, TAA_IMAGE_FORMAT_SEGMASK, 1, memory_usage::device, image_usage::general_storage_image);
