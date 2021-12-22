@@ -1987,8 +1987,8 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 			//auto newPositions = calc_new_mesh_positions_for_testing_only(mesh.mPositions);
 			auto [newPositions, newNormals, newTangents, newBitangents] = calc_new_mesh_positions_and_ntb_for_animated_object(dynObj, iMesh);
 
-			auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices));
-			auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(newPositions).describe_only_member(newPositions[0], content_description::position));
+			auto tmpIndexBuffer		= context().create_buffer(memory_usage::device, bufferUsage, index_buffer_meta::create_from_data(mesh.mIndices), read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(mesh.mIndices));
+			auto tmpPositionsBuffer	= context().create_buffer(memory_usage::device, bufferUsage, vertex_buffer_meta::create_from_data(newPositions).describe_only_member(newPositions[0], content_description::position), read_only_input_to_acceleration_structure_builds_buffer_meta::create_from_data(newPositions));
 			tmpIndexBuffer.enable_shared_ownership();
 			tmpPositionsBuffer.enable_shared_ownership();
 			tmpIndexBuffer		->fill(mesh.mIndices.data(),   0, sync::with_barriers(context().main_window()->command_buffer_lifetime_handler())); // FIXME - sync ok?
