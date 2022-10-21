@@ -4823,6 +4823,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		bool fullscreen = false;
 		bool vali_GpuAssisted = false;
 		bool vali_BestPractices = false;
+		bool use_vsync = false;
 		std::string devicehint = "";
 
 		std::string sceneFileName = "";
@@ -4884,6 +4885,8 @@ int main(int argc, char **argv) // <== Starting point ==
 					i++;
 					if (i >= argc) { badCmd = true; break; }
 					devicehint = argv[i];
+				} else if (0 == _stricmp(argv[i], "-vsync")) {
+					use_vsync = true;
 				} else {
 					badCmd = true;
 					break;
@@ -4915,6 +4918,7 @@ int main(int argc, char **argv) // <== Starting point ==
 				"-blend                 use alpha blending for transparent parts\n"
 				"-noblend               use alpha testing for transparent parts\n"
 				"-nomip                 disable mip-map generation for loaded textures\n"
+				"-vsync                 enable vsync (cap frames/sec to monitor refresh rate)\n"
 				"-hidewindow            hide render window while scene loading is in progress\n"
 				"-capture <numFrames>   capture the first <numFrames> with RenderDoc (only when started FROM RenderDoc)\n"
 				"--                     terminate argument list, everything after is ignored\n"
@@ -4930,7 +4934,7 @@ int main(int argc, char **argv) // <== Starting point ==
 		mainWnd->set_additional_back_buffer_attachments({ 
 			avk::attachment::declare(vk::Format::eD32Sfloat, avk::on_load::clear, avk::depth_stencil(), avk::on_store::dont_care)
 		});
-		mainWnd->set_presentaton_mode(gvk::presentation_mode::mailbox);
+		mainWnd->set_presentaton_mode(use_vsync ? gvk::presentation_mode::fifo : gvk::presentation_mode::mailbox);
 		mainWnd->set_number_of_presentable_images(wookiee::cSwapchainImages);
 		mainWnd->set_number_of_concurrent_frames (wookiee::cConcurrentFrames);
 		mainWnd->request_srgb_framebuffer(true);
