@@ -3304,6 +3304,11 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 				}
 
 				if (CollapsingHeader("Rendering")) {
+					Checkbox("Cap framerate", &mCapFramerate.enabled);
+					if (mCapFramerate.enabled) {
+						SameLine();
+						InputIntW(80, "##desired_fps", &mCapFramerate.desiredFps, 10);
+					}
 #if ENABLE_RAYTRACING
 					Checkbox("Ray trace whole scene", &mDoRayTraceTest);
 					if (InputIntW(80, "RT samples##RtSamples", &mRtSamplesPerPixel)) mRtSamplesPerPixel = glm::clamp(mRtSamplesPerPixel, 1, RAYTRACING_MAX_SAMPLES_PER_PIXEL);
@@ -3971,6 +3976,24 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 		// global GUI toggle
 		if (gvk::input().key_pressed(gvk::key_code::f3)) imgui_helper::globalEnable = !imgui_helper::globalEnable;
 
+		// cap fps
+		{
+			static float tCapLast = 0.f;
+			float t = static_cast<float>(glfwGetTime());
+			float dtCap = tCapLast ? t - tCapLast : 0.f;
+			if (mCapFramerate.enabled && mCapFramerate.desiredFps > 0 && dtCap > 0) {
+				float desired_frametime = 1.f / float(mCapFramerate.desiredFps);
+				float desired_t = tCapLast + desired_frametime;
+				float ms_to_wait = (desired_frametime - dtCap) * 1000.f;
+				//printf("desired_time %.3f waitms=%.3f\n", desired_frametime, ms_to_wait);
+				if (ms_to_wait > 0) {
+					//if (ms_to_wait > 11) Sleep(long(ms_to_wait - 10)); // way too imprecise
+					while (static_cast<float>(glfwGetTime()) < desired_t);
+				}
+			}
+			tCapLast = static_cast<float>(glfwGetTime());
+		}
+
 		// "slow-motion"
 		static bool slowMoToggle = false;
 		if (gvk::input().key_pressed(gvk::key_code::f2)) slowMoToggle = !slowMoToggle;
@@ -4546,6 +4569,11 @@ private: // v== Member variables ==v
 	bool mLoadBiasTaaOnly = true;
 	bool mAlwaysUseLod0 = false;
 	bool mAlphaUseLod0  = false;
+
+	struct {
+		bool enabled = false;
+		int  desiredFps = 60;
+	} mCapFramerate;
 
 	glm::vec2 mAutoRotateDegrees = glm::vec2(-45, 0);
 	bool mAutoRotate = false;
