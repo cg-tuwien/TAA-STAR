@@ -55,7 +55,8 @@ DEF_WITH_ITEMWIDTH(InputInt3,	PASS_PARAMETERS((const char* label, int v[3], ImGu
 DEF_WITH_ITEMWIDTH(InputInt4,	PASS_PARAMETERS((const char* label, int v[4], ImGuiInputTextFlags flags = 0)),																			(label, v, flags))
 
 DEF_WITH_ITEMWIDTH(InputText,	PASS_PARAMETERS((const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = NULL, void* user_data = NULL)),	(label, buf, buf_size, flags, callback, user_data))
-DEF_WITH_ITEMWIDTH(SliderFloat,	PASS_PARAMETERS((const char* label, float* v, float v_min, float v_max, const char* format = "%.3f", float power = 1.0f)),											(label, v, v_min, v_max, format, power))
+//DEF_WITH_ITEMWIDTH(SliderFloat,	PASS_PARAMETERS((const char* label, float* v, float v_min, float v_max, const char* format = "%.3f", float power = 1.0f)),											(label, v, v_min, v_max, format, power))
+DEF_WITH_ITEMWIDTH(SliderFloat,	PASS_PARAMETERS((const char* label, float* v, float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0)),									(label, v, v_min, v_max, format, flags))
 DEF_WITH_ITEMWIDTH(SliderInt,	PASS_PARAMETERS((const char* label, int* v, int v_min, int v_max, const char* format = "%d")),																		(label, v, v_min, v_max, format))
 
 #undef DEF_WITH_ITEMWIDTH

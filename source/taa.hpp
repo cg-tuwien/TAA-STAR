@@ -57,7 +57,7 @@ class taa : public gvk::invokee
 		float    mVelBasedAlphaMax			= 0.2f;
 		float    mVelBasedAlphaFactor		= 1.f/40.f;		// final alpha = lerp(intermed.alpha, max, pixelvel*factor)
 
-		VkBool32 mRayTraceAugment			= true;//false;		// ray tracing augmentation
+		VkBool32 mRayTraceAugment			= false;		// ray tracing augmentation
 		uint32_t mRayTraceAugmentFlags		= 0xffffffff & ~(TAA_RTFLAG_ALL | TAA_RTFLAG_FXD);
 		float    mRayTraceAugment_WNrm		= 0.5f;				// weight for normals
 		float    mRayTraceAugment_WDpt		= 0.015f;			// weight for depth
@@ -458,7 +458,7 @@ public:
 
 						CheckboxB32("noise", &param.mAddNoise);
 						SameLine();
-						SliderFloat("##noisefac", &param.mNoiseFactor, 0.f, 0.01f, "%.4f", 2.f);
+						SliderFloat("##noisefac", &param.mNoiseFactor, 0.f, 0.01f, "%.4f", ImGuiSliderFlags_Logarithmic);
 
 						CheckboxB32("reduce blend near clamp", &param.mReduceBlendNearClamp);
 						HelpMarker("Anti-flicker: Reduce blend factor when history is near clamping [Karis14]");

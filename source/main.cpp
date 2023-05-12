@@ -3317,7 +3317,7 @@ public: // v== cgb::cg_element overrides which will be invoked by the framework 
 					SameLine();
 					InputIntW(40, "aniso", &mRtApproximateLodMaxAnisotropy, 0, 0);
 #endif
-					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", 2.f); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
+					SliderFloatW(100, "alpha thresh.", &mAlphaThreshold, 0.f, 1.f, "%.3f", ImGuiSliderFlags_Logarithmic); HelpMarker("Consider anything with less alpha completely invisible (even if alpha blending is enabled).");
 					if (Checkbox("alpha blending", &mUseAlphaBlending)) invalidate_command_buffers();
 					HelpMarker("When disabled, simple alpha-testing is used.");
 					PushItemWidth(60);
